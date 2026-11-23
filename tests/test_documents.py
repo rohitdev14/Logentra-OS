@@ -7,8 +7,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from logbook_server.app import create_app
-from logbook_server.config import Settings
+from logentra_server.app import create_app
+from logentra_server.config import Settings
 
 
 def _pdf(name: str = "sheet") -> tuple[str, bytes, str]:
@@ -189,7 +189,7 @@ def test_approval_webhooks(client: TestClient):
         return httpx.Response(200, text="ok")
 
     did = _upload(client, title="Hook sheet").json()["id"]
-    with patch("logbook_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
         client.post(f"/api/documents/{did}/submit", json={"route_id": route_id})
         client.post(f"/api/documents/{did}/approve", json={})
         client.post(f"/api/documents/{did}/approve", json={})
@@ -198,14 +198,14 @@ def test_approval_webhooks(client: TestClient):
 
     captured.clear()
     did2 = _upload(client, title="Return hook").json()["id"]
-    with patch("logbook_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
         client.post(f"/api/documents/{did2}/submit", json={"route_id": route_id})
         client.post(f"/api/documents/{did2}/return", json={"comment": "Revise section 2"})
     assert [c["event"] for c in captured] == ["document.submitted", "document.returned"]
 
     captured.clear()
     did3 = _upload(client, title="Reject hook").json()["id"]
-    with patch("logbook_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
         client.post(f"/api/documents/{did3}/submit", json={"route_id": route_id})
         client.post(f"/api/documents/{did3}/reject", json={"comment": "Wrong asset"})
     assert [c["event"] for c in captured] == ["document.submitted", "document.rejected"]

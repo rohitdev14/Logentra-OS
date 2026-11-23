@@ -4,11 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## 0.5.0 – early release
 
+The product is named **Logentra OS** (Logbook + Engineering + Traceability). Display name, short name, and tagline live in [`logentra_server/branding.py`](logentra_server/branding.py). The Python package directory is now `logentra_server` (a `logbook_server` import shim remains). User-facing environment variables are `LOGENTRA_*`; the older `LOGBOOK_*` names are still accepted as a deprecated fallback.
+
 A rebuilt web UI (light and dark) and a document approval workflow so technicians can submit test sheets, reports, and photos for sequential sign-off.
 
 - Modern sidebar UI with cards, status pills, a Kanban work-order board, and an annotated trend chart on the dashboard
 - Light (indigo accent, Linear/Notion-like) and dark (industrial control-room, cyan/amber) themes via CSS variables, toggled in the top bar, remembered in `localStorage`, defaulting to the OS `prefers-color-scheme`
-- Product name still comes from `logbook_server/branding.py` (Logbook placeholder)
+- Product name **Logentra OS** comes from `logentra_server/branding.py`
 - Documents with versioned files under `data/attachments` (sha256, MIME, size), linked to equipment, a record, or a work order
 - Admin-defined approval routes (ordered steps by role or named user, optional document-type / site rules)
 - Submit → approve / reject (comment required) / return for changes; resubmit creates a new version and restarts the route; the approved version is locked read-only
@@ -36,7 +38,7 @@ On-prem users, roles, work orders, and scale provisions so a site can run Logboo
 - Alembic migrations (initial v0.3 schema + v0.4 upgrade) so the schema can be appended as more users and equipment are onboarded
 - Indexes on equipment tag/site and `readings(equipment_id, parameter_key, ts)`, plus an `out_of_range` flag for event queries
 - Load-test script (`scripts/load_test.py`) for 5,000 equipment and a realistic volume of readings
-- Product name centralised in `logbook_server/branding.py` (still the Logbook placeholder; likely PlantOps later)
+- Product name centralised in `logentra_server/branding.py` (still the Logbook placeholder; likely PlantOps later)
 
 ## 0.3.0 – early release
 

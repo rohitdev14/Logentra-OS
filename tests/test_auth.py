@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from logbook_server.app import create_app
-from logbook_server.config import Settings
+from logentra_server.app import create_app
+from logentra_server.config import Settings
 
 
 @pytest.fixture

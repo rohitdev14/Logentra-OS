@@ -7,10 +7,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
-from logbook_server import service, workorders as wo
-from logbook_server.auth import Principal
-from logbook_server.models import AutoWorkOrderRule, WorkOrder
-from logbook_server.utils import uid
+from logentra_server import service, workorders as wo
+from logentra_server.auth import Principal
+from logentra_server.models import AutoWorkOrderRule, WorkOrder
+from logentra_server.utils import uid
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 ATTACH_DIR = ROOT / "data" / "attachments"

@@ -19,9 +19,9 @@ os.chdir(ROOT)
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from logbook_server.config import Settings
-from logbook_server.database import init_db, make_engine, make_session_factory
-from logbook_server.utils import utcnow_iso
+from logentra_server.config import Settings
+from logentra_server.database import init_db, make_engine, make_session_factory
+from logentra_server.utils import utcnow_iso
 
 
 def _pct(values: list[float], p: float) -> float:
@@ -172,7 +172,7 @@ def measure(client, method: str, path: str, repeats: int, warmup: int = 3) -> di
 
 def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: str) -> dict:
     from fastapi.testclient import TestClient
-    from logbook_server.app import create_app
+    from logentra_server.app import create_app
 
     settings = Settings(database_url=url, open_browser=False, auth_mode="open")
     # init / migrate first so we can seed with a raw connection
@@ -215,13 +215,13 @@ def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Logbook v0.5 load test")
+    parser = argparse.ArgumentParser(description="Logentra OS v0.5 load test")
     parser.add_argument("--equipment", type=int, default=5000)
     parser.add_argument("--readings-per", type=int, default=100)
     parser.add_argument("--work-orders", type=int, default=2000)
     parser.add_argument("--repeats", type=int, default=30)
     parser.add_argument("--db", default=str(ROOT / "data" / "loadtest.db"))
-    parser.add_argument("--postgres-url", default=os.environ.get("LOGBOOK_LOADTEST_POSTGRES", ""))
+    parser.add_argument("--postgres-url", default=os.environ.get("LOGENTRA_LOADTEST_POSTGRES") or os.environ.get("LOGBOOK_LOADTEST_POSTGRES", ""))
     parser.add_argument("--out", default=str(ROOT / "docs" / "load-test-results.json"))
     args = parser.parse_args()
 
@@ -234,7 +234,7 @@ def main() -> int:
         print("=== PostgreSQL ===")
         reports.append(run(args.postgres_url, args.equipment, args.readings_per, args.work_orders, args.repeats, "postgresql"))
     else:
-        print("PostgreSQL skipped (no --postgres-url / LOGBOOK_LOADTEST_POSTGRES). The service was not running on this box.")
+        print("PostgreSQL skipped (no --postgres-url / LOGENTRA_LOADTEST_POSTGRES). The service was not running on this box.")
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(reports, indent=2), encoding="utf-8")

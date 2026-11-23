@@ -1,4 +1,4 @@
--- Logbook v0.4 schema
+-- Logentra OS v0.5 schema
 -- Portable SQL for SQLite (default) and PostgreSQL.
 -- Preferred apply path: `python run.py` runs Alembic (migrations/versions).
 -- This file is the human-readable schema. On a new database Alembic creates

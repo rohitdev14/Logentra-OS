@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from logbook_server import service
+from logentra_server import service
 
 
 def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor: str = "migrate") -> dict[str, Any]:

@@ -6,10 +6,10 @@ import logging
 import threading
 from typing import Any
 
-from logbook_server.config import Settings
-from logbook_server.service import ingest_readings
+from logentra_server.config import Settings
+from logentra_server.service import ingest_readings
 
-log = logging.getLogger("logbook.mqtt")
+log = logging.getLogger("logentra.mqtt")
 
 
 def _match_pattern(pattern: str, topic: str) -> dict[str, str]:

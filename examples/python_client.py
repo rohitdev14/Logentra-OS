@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal example: write a reading and query a trend from Logbook v0.3."""
+"""Minimal example: write a reading and query a trend from Logentra OS."""
 from __future__ import annotations
 
 import os
@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 
 import httpx
 
-BASE = os.environ.get("LOGBOOK_URL", "http://127.0.0.1:8787/api")
+BASE = os.environ.get("LOGENTRA_URL") or os.environ.get("LOGBOOK_URL", "http://127.0.0.1:8787/api")
 HEADERS = {}
-if os.environ.get("LOGBOOK_API_KEY"):
-    HEADERS["X-API-Key"] = os.environ["LOGBOOK_API_KEY"]
+key = os.environ.get("LOGENTRA_API_KEY") or os.environ.get("LOGBOOK_API_KEY")
+if key:
+    HEADERS["X-API-Key"] = key
 
 
 def main() -> None:

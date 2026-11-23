@@ -1,4 +1,4 @@
-# Pointing other tools at Logbook
+# Pointing other tools at Logentra OS
 
 All examples assume the server is at `http://127.0.0.1:8787`. Add `X-API-Key` if you enabled one. Demo limits and tag names below are fictional.
 
@@ -8,8 +8,8 @@ Two workable paths:
 
 ### A. SQL data source (simplest for trends)
 
-1. SQLite: install a Grafana SQLite plugin (for example *frser-sqlite-datasource*) and point it at `data/logbook.db`.
-2. PostgreSQL: use Grafana’s built-in Postgres data source and the same connection string as `LOGBOOK_DATABASE_URL`.
+1. SQLite: install a Grafana SQLite plugin (for example *frser-sqlite-datasource*) and point it at `data/logentra.db` (or `data/logbook.db` if you still have the older default file).
+2. PostgreSQL: use Grafana’s built-in Postgres data source and the same connection string as `LOGENTRA_DATABASE_URL`.
 
 Example panel query (vibration for P-101):
 
@@ -55,7 +55,7 @@ A Grafana alert can also call `GET /api/events/out-of-range?unacknowledged=true`
 A minimal flow (also saved as `examples/nodered_flow.json`):
 
 - **mqtt in** (or **inject**) → **function** that builds `{ tag, parameter, value, ts }` → **http request** `POST http://127.0.0.1:8787/api/ingest/readings` with `Content-Type: application/json`.
-- The other direction: **http in** `/hook` to receive Logbook’s out-of-range webhook, or a periodic **http request** to `GET /api/events/out-of-range?unacknowledged=true`.
+- The other direction: **http in** `/hook` to receive Logentra OS’s out-of-range webhook, or a periodic **http request** to `GET /api/events/out-of-range?unacknowledged=true`.
 
 Function node example:
 
@@ -222,7 +222,7 @@ curl -s -X POST http://127.0.0.1:8787/api/approval-routes \
 
 Outbound webhooks can subscribe to `document.submitted`, `document.step_approved`, `document.approved`, `document.rejected`, and `document.returned`. An approved document is locked read-only; further versions or decisions are rejected.
 
-## Login (when LOGBOOK_AUTH_MODE=users)
+## Login (when LOGENTRA_AUTH_MODE=users)
 
 ```bash
 TOKEN=$(curl -s -X POST http://127.0.0.1:8787/api/auth/login \

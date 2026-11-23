@@ -1,4 +1,4 @@
-# Contributing to Logbook
+# Contributing to Logentra OS
 
 Thanks for considering a contribution. This is an early-release project; small, focused changes are easier to review than large rewrites.
 
@@ -39,4 +39,4 @@ The Playwright smoke test (`tests/test_ui.py`) is optional and needs Chrome or C
 
 ## Reporting issues
 
-Include the Logbook version (`GET /api/health` or the footer), the database backend (SQLite or PostgreSQL), and steps to reproduce. Feature ideas are welcome; please check existing issues first.
+Include the Logentra OS version (`GET /api/health` or the footer), the database backend (SQLite or PostgreSQL), and steps to reproduce. Feature ideas are welcome; please check existing issues first.

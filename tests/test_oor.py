@@ -53,7 +53,7 @@ def test_outbound_webhook_on_oor(client: TestClient):
         captured.append({"url": url, "body": content, "headers": headers})
         return httpx.Response(200, text="ok")
 
-    with patch("logbook_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
         r = client.post("/api/readings", json={
             "tag": "P-101", "parameter": "vibration", "value": 9.1,
             "ts": "2026-11-22T12:00:00", "source": "api",
@@ -71,7 +71,7 @@ def test_outbound_webhook_on_oor(client: TestClient):
 
     # in-range reading should not fire
     captured.clear()
-    with patch("logbook_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
         r = client.post("/api/readings", json={
             "tag": "P-101", "parameter": "vibration", "value": 2.0, "ts": "2026-11-22T13:00:00",
         })

@@ -5,8 +5,8 @@ from typing import Any
 from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, selectinload
 
-from logbook_server import events
-from logbook_server.models import (
+from logentra_server import events
+from logentra_server.models import (
     Annotation,
     AuditLog,
     Equipment,
@@ -28,9 +28,9 @@ from logbook_server.models import (
     TemplateColumn,
     TemplateItem,
 )
-from logbook_server.branding import APP_VERSION, PRODUCT_NAME
-from logbook_server.pagination import clamp_page, page_result
-from logbook_server.utils import as_float, dumps, loads, out_of_range, parse_ts, split_ts, uid, utcnow_iso
+from logentra_server.branding import APP_VERSION, PRODUCT_NAME
+from logentra_server.pagination import clamp_page, page_result
+from logentra_server.utils import as_float, dumps, loads, out_of_range, parse_ts, split_ts, uid, utcnow_iso
 
 
 def audit(db: Session, action: str, *, actor: str | None = "api", entity_type: str | None = None,
@@ -135,7 +135,7 @@ def list_equipment(
         query = query.filter(or_(Equipment.tag.ilike(like), Equipment.id.ilike(like), val_exists))
     if category:
         # category lives in the EAV bag — join field_definitions.key == 'category'
-        from logbook_server.models import FieldDefinition
+        from logentra_server.models import FieldDefinition
         cat_exists = exists().where(
             EquipmentFieldValue.equipment_id == Equipment.id,
             EquipmentFieldValue.field_id == FieldDefinition.id,
@@ -358,7 +358,7 @@ def logs_to_ui(db: Session) -> list[dict[str, Any]]:
 
 def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500, principal=None) -> dict[str, Any]:
     ensure_default_fields(db)
-    from logbook_server import seed as _seed
+    from logentra_server import seed as _seed
     _seed.ensure_default_routes(db)
     db.commit()
     fields = db.query(FieldDefinition).order_by(FieldDefinition.sort_order, FieldDefinition.key).all()
@@ -807,7 +807,7 @@ def ingest_readings(
         if fire_webhooks:
             for reading, tag, label in oor_events:
                 hook_results.extend(events.deliver(db, "out_of_range", events.oor_payload(reading, tag, label)))
-        from logbook_server.workorders import maybe_auto_create
+        from logentra_server.workorders import maybe_auto_create
         for reading, tag, label in oor_events:
             wo = maybe_auto_create(db, reading, tag, label)
             if wo:
@@ -965,7 +965,7 @@ def delete_entry(db: Session, entry_id: str) -> int:
 
 def clear_all(db: Session, *, actor: str = "ui") -> None:
     # order respects FKs; cascade covers most. Users/roles/sessions are kept.
-    from logbook_server.models import (
+    from logentra_server.models import (
         ApprovalRoute,
         ApprovalRouteStep,
         AutoWorkOrderRule,
@@ -1010,6 +1010,6 @@ def clear_all(db: Session, *, actor: str = "ui") -> None:
     audit(db, "clear", actor=actor, entity_type="database")
     db.commit()
     ensure_default_fields(db)
-    from logbook_server import seed as _seed
+    from logentra_server import seed as _seed
     _seed.ensure_default_routes(db)
     db.commit()

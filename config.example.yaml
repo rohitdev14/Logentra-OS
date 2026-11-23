@@ -1,15 +1,16 @@
-# Copy this file to config.yaml (same folder as run.py) or set LOGBOOK_* environment variables.
+# Copy this file to config.yaml (same folder as run.py) or set LOGENTRA_* environment variables
+# (deprecated LOGBOOK_* names are still accepted).
 
 host: 127.0.0.1
 port: 8787
 open_browser: true
 
 # SQLite is the default — a single file, zero setup.
-database_url: sqlite:///data/logbook.db
+database_url: sqlite:///data/logentra.db
 
 # To use PostgreSQL instead, install psycopg and point at your server:
 #   pip install "psycopg[binary]"
-# database_url: postgresql+psycopg://logbook:logbook@127.0.0.1:5432/logbook
+# database_url: postgresql+psycopg://logentra:logentra@127.0.0.1:5432/logentra
 
 # Auth mode:
 #   open  — single-user / standalone (default). No login. Optional api_key still works.
@@ -33,13 +34,15 @@ mqtt:
   port: 1883
   username: ""
   password: ""
-  client_id: logbook
+  client_id: logentra
   topics:
-    - logbook/readings
+    - logentra/readings
+    - logentra/+/+
+    - logbook/readings      # deprecated alias, still accepted
     - logbook/+/+
-  # When a message arrives on logbook/{tag}/{parameter}, tag and parameter
-  # are taken from the topic if the JSON body does not include them.
-  topic_pattern: logbook/{tag}/{parameter}
+  # When a message arrives on logentra/{tag}/{parameter} (or the older logbook/… pattern),
+  # tag and parameter are taken from the topic if the JSON body does not include them.
+  topic_pattern: logentra/{tag}/{parameter}
 
 # Optional outbound webhooks registered at first start (you can also POST /api/webhooks).
 # outbound_webhooks:

@@ -80,7 +80,7 @@ def run_migrations(engine) -> None:
 
 
 def init_db(engine) -> None:
-    from logbook_server import models  # noqa: F401 — register models
+    from logentra_server import models  # noqa: F401 — register models
 
     run_migrations(engine)
     with engine.begin() as conn:

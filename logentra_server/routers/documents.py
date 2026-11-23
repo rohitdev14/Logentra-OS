@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from logbook_server import documents as docs
-from logbook_server.auth import Principal
-from logbook_server.models import ApprovalRoute
+from logentra_server import documents as docs
+from logentra_server.auth import Principal
+from logentra_server.models import ApprovalRoute
 
 
 def build_router(get_db, get_principal, settings) -> APIRouter:

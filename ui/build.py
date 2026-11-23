@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble the self-contained Logbook HTML file from ui/src."""
+"""Assemble the self-contained Logentra OS HTML file from ui/src."""
 from __future__ import annotations
 
 import json
@@ -10,11 +10,12 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from logbook_server.branding import APP_VERSION, PRODUCT_NAME, PRODUCT_TAGLINE, RELEASE_LABEL
+from logentra_server.branding import APP_VERSION, PRODUCT_INITIALS, PRODUCT_NAME, PRODUCT_SHORT, PRODUCT_TAGLINE, RELEASE_LABEL
 
 SRC = ROOT / "ui" / "src"
-OUT = ROOT / "ui" / "Logbook.html"
+OUT = ROOT / "ui" / "Logentra.html"
 OUT2 = ROOT / "ui" / "index.html"
+OUT_ALIAS = ROOT / "ui" / "Logbook.html"  # compatibility copy
 PACKS = SRC / "starter_packs.json"
 
 
@@ -31,6 +32,8 @@ def main() -> None:
     shell = (SRC / "shell.html").read_text(encoding="utf-8")
     html = (
         shell.replace("__PRODUCT_NAME__", PRODUCT_NAME)
+        .replace("__PRODUCT_SHORT__", PRODUCT_SHORT)
+        .replace("__PRODUCT_INITIALS__", PRODUCT_INITIALS)
         .replace("__PRODUCT_TAGLINE__", PRODUCT_TAGLINE)
         .replace("__APP_VERSION__", APP_VERSION)
         .replace("__RELEASE_LABEL__", RELEASE_LABEL)
@@ -45,7 +48,8 @@ def main() -> None:
     )
     OUT.write_text(html, encoding="utf-8")
     OUT2.write_text(html, encoding="utf-8")
-    print(f"Wrote {OUT} and {OUT2} ({OUT.stat().st_size} bytes), packs={len(packs)}")
+    OUT_ALIAS.write_text(html, encoding="utf-8")
+    print(f"Wrote {OUT}, {OUT2} and {OUT_ALIAS} ({OUT.stat().st_size} bytes), packs={len(packs)}")
 
 
 if __name__ == "__main__":

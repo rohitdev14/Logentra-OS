@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Start the Logbook local server:  python run.py
+"""Start the Logentra OS local server:  python run.py
 
-Create the first admin (when LOGBOOK_AUTH_MODE=users):
+Create the first admin (when LOGENTRA_AUTH_MODE=users):
     python run.py create-admin --username admin --password '...'
 """
 from __future__ import annotations
@@ -18,17 +18,18 @@ os.chdir(ROOT)
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from logbook_server.branding import PRODUCT_NAME, RELEASE_LABEL  # noqa: E402
-from logbook_server.config import load_settings  # noqa: E402
+from logentra_server.branding import PRODUCT_NAME, RELEASE_LABEL  # noqa: E402
+from logentra_server.config import env_value, load_settings  # noqa: E402
 
 
 def _create_admin(argv: list[str]) -> int:
-    from logbook_server.database import init_db, make_engine, make_session_factory
-    from logbook_server import seed
+    from logentra_server.database import init_db, make_engine, make_session_factory
+    from logentra_server import seed
 
     parser = argparse.ArgumentParser(prog="run.py create-admin", description="Create a bootstrap admin user")
-    parser.add_argument("--username", default=os.environ.get("LOGBOOK_BOOTSTRAP_ADMIN_USER") or "admin")
-    parser.add_argument("--password", default=os.environ.get("LOGBOOK_BOOTSTRAP_ADMIN_PASSWORD") or "")
+    from logentra_server.config import env_value  # noqa: PLC0415
+    parser.add_argument("--username", default=env_value("LOGENTRA_BOOTSTRAP_ADMIN_USER", "LOGENTRA_BOOTSTRAP_ADMIN_USERNAME", "LOGBOOK_BOOTSTRAP_ADMIN_USER", "LOGBOOK_BOOTSTRAP_ADMIN_USERNAME") or "admin")
+    parser.add_argument("--password", default=env_value("LOGENTRA_BOOTSTRAP_ADMIN_PASSWORD", "LOGBOOK_BOOTSTRAP_ADMIN_PASSWORD") or "")
     parser.add_argument("--display-name", default="")
     parser.add_argument("--email", default="")
     args = parser.parse_args(argv)
@@ -62,7 +63,7 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "create-admin":
         raise SystemExit(_create_admin(sys.argv[2:]))
 
-    from logbook_server.app import create_app
+    from logentra_server.app import create_app
 
     settings = load_settings()
     parser = argparse.ArgumentParser(description=f"{PRODUCT_NAME} {RELEASE_LABEL} local server")
@@ -72,7 +73,9 @@ def main() -> None:
     parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes (dev)")
     args = parser.parse_args()
 
-    open_browser = settings.open_browser and not args.no_browser and os.environ.get("LOGBOOK_OPEN_BROWSER", "1") not in ("0", "false", "no")
+    from logentra_server.config import env_value
+    flag = env_value("LOGENTRA_OPEN_BROWSER", "LOGBOOK_OPEN_BROWSER", default="1")
+    open_browser = settings.open_browser and not args.no_browser and flag.lower() not in ("0", "false", "no")
     url = f"http://{args.host}:{args.port}/"
     docs = f"http://{args.host}:{args.port}/docs"
     print(f"{PRODUCT_NAME} {RELEASE_LABEL}  {url}")
@@ -86,7 +89,7 @@ def main() -> None:
     import uvicorn
 
     if args.reload:
-        uvicorn.run("logbook_server.app:create_app", factory=True, host=args.host, port=args.port, reload=True)
+        uvicorn.run("logentra_server.app:create_app", factory=True, host=args.host, port=args.port, reload=True)
     else:
         app = create_app(settings)
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")

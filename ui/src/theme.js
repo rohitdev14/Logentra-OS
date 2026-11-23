@@ -1,7 +1,8 @@
 /* Light / dark theme: localStorage wins, otherwise prefers-color-scheme. */
 (function (global) {
   "use strict";
-  var KEY = "logbook.theme";
+  var KEY = "logentra.theme";
+  var LEGACY_KEY = "logbook.theme";
 
   function systemTheme() {
     try {
@@ -9,10 +10,19 @@
     } catch (e) { return "light"; }
   }
   function stored() {
-    try { return global.localStorage && localStorage.getItem(KEY); } catch (e) { return null; }
+    try {
+      if (!global.localStorage) return null;
+      var t = localStorage.getItem(KEY);
+      if (t === "light" || t === "dark") return t;
+      t = localStorage.getItem(LEGACY_KEY);
+      if (t === "light" || t === "dark") return t;
+      return null;
+    } catch (e) { return null; }
   }
   function save(theme) {
-    try { localStorage.setItem(KEY, theme); } catch (e) {}
+    try {
+      localStorage.setItem(KEY, theme);
+    } catch (e) {}
   }
   function resolved() {
     var t = stored();

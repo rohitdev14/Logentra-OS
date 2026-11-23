@@ -1,4 +1,4 @@
-/* Talk to the local Logbook API instead of localStorage. */
+/* Talk to the local Logentra OS API instead of localStorage. */
 (function (global) {
   "use strict";
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from logbook_server.mqtt_worker import parse_message
+from logentra_server.mqtt_worker import parse_message
 
 
 def _seed_pump(client: TestClient):

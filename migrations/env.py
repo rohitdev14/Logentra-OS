@@ -1,4 +1,4 @@
-"""Alembic environment. Uses Logbook settings so the same URL works for SQLite and Postgres."""
+"""Alembic environment. Uses Logentra OS settings so the same URL works for SQLite and Postgres."""
 from __future__ import annotations
 
 import sys
@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from logbook_server.config import load_settings  # noqa: E402
-from logbook_server.database import Base  # noqa: E402
-from logbook_server import models as _models  # noqa: F401,E402
+from logentra_server.config import load_settings  # noqa: E402
+from logentra_server.database import Base  # noqa: E402
+from logentra_server import models as _models  # noqa: F401,E402
 
 config = context.config
 if config.config_file_name is not None:

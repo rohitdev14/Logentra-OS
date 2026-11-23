@@ -4,8 +4,10 @@
 
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
-  const APP_VERSION = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.version) || "0.5.0";
-  const PRODUCT_NAME = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.name) || "Logbook";
+  const _prod = window.LOGENTRA_PRODUCT || window.LOGBOOK_PRODUCT || {};
+  const APP_VERSION = _prod.version || "0.5.0";
+  const PRODUCT_NAME = _prod.name || "Logentra OS";
+  const RELEASE_LABEL = _prod.label || "v0.5 – early release";
 
   const FIELD_TYPES = [
     { id: "text", label: "Text" },
@@ -1044,7 +1046,7 @@
             }).join("") + "</ul>" : ""}
         </div>
       </div>
-      <p class="help" style="margin-top:1rem">This is <b>Logbook v0.3 – early release</b>. Data lives in a local SQLite (or PostgreSQL) database and is available over the API at <a href="/docs">/docs</a>. Optional starter packs are on the Backup tab. Do not store passwords or confidential site data here.</p>
+      <p class="help" style="margin-top:1rem">This is <b>${esc(PRODUCT_NAME)} ${esc(RELEASE_LABEL)}</b>. Data lives in a local SQLite (or PostgreSQL) database and is available over the API at <a href="/docs">/docs</a>. Optional starter packs are on the Backup tab. Do not store passwords or confidential site data here.</p>
     `;
   }
 
@@ -1227,7 +1229,7 @@
     return `
       <div class="print-only print-head">
         <h1>Record — ${esc(eq ? eqTag(eq) : "")} · ${esc(rec.templateName || "")}</h1>
-        <p class="tiny">Logbook v0.3 – early release · printed ${esc(todayISO())}</p>
+        <p class="tiny">${esc(PRODUCT_NAME)} ${esc(RELEASE_LABEL)} · printed ${esc(todayISO())}</p>
       </div>
       <div class="row spread no-print">
         <div>
@@ -1406,7 +1408,7 @@
       <div class="card" style="margin-top:1rem" id="trend-report">
         <div class="print-only print-head">
           <h1>Trend summary — ${esc(eq ? eqTag(eq) : "")} ${esc(param ? param.label : "")}</h1>
-          <p class="tiny">${esc(from)} to ${esc(to)} · Logbook v0.3 – early release</p>
+          <p class="tiny">${esc(from)} to ${esc(to)} · ${esc(PRODUCT_NAME)} ${esc(RELEASE_LABEL)}</p>
         </div>
         <h3 class="no-print">${esc(eq ? eqTag(eq) : "")} · ${esc(param ? param.label : "—")}${param && param.unit ? " (" + esc(param.unit) + ")" : ""}</h3>
         <div class="chart-wrap" id="chart"></div>

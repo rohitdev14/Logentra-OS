@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-from logbook_server import events, service
-from logbook_server.models import (
+from logentra_server import events, service
+from logentra_server.models import (
     AutoWorkOrderRule,
     Equipment,
     User,
@@ -17,8 +17,8 @@ from logbook_server.models import (
     WorkOrderComment,
     WorkOrderLabour,
 )
-from logbook_server.pagination import clamp_page, page_result
-from logbook_server.utils import dumps, uid, utcnow_iso
+from logentra_server.pagination import clamp_page, page_result
+from logentra_server.utils import dumps, uid, utcnow_iso
 
 STATUSES = ("open", "in_progress", "on_hold", "done", "closed")
 PRIORITIES = ("low", "medium", "high", "urgent")
@@ -60,7 +60,7 @@ def to_dict(wo: WorkOrder, db: Session | None = None, *, detail: bool = False) -
     tag = None
     if wo.equipment_id and wo.equipment_id:
         # equipment may be gone
-        from logbook_server.models import Equipment as Eq
+        from logentra_server.models import Equipment as Eq
         if db:
             eq = db.get(Eq, wo.equipment_id)
             tag = eq.tag if eq else None

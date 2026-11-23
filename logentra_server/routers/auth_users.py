@@ -6,8 +6,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, selectinload
 
-from logbook_server import seed, service
-from logbook_server.auth import (
+from logentra_server import seed, service
+from logentra_server.auth import (
     ALL_PERMISSIONS,
     PERMISSIONS,
     Principal,
@@ -19,9 +19,9 @@ from logbook_server.auth import (
     revoke_session,
     verify_password,
 )
-from logbook_server.models import ApiKey, Area, Role, Site, User
-from logbook_server.pagination import clamp_page, page_result
-from logbook_server.utils import dumps, loads, uid, utcnow_iso
+from logentra_server.models import ApiKey, Area, Role, Site, User
+from logentra_server.pagination import clamp_page, page_result
+from logentra_server.utils import dumps, loads, uid, utcnow_iso
 
 
 def _user_dict(u: User, *, include_role: bool = True) -> dict[str, Any]:

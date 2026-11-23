@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from logbook_server.auth import BUILTIN_ROLES, hash_password
-from logbook_server.models import ApprovalRoute, ApprovalRouteStep, Role, User
-from logbook_server.utils import dumps, uid, utcnow_iso
+from logentra_server.auth import BUILTIN_ROLES, hash_password
+from logentra_server.models import ApprovalRoute, ApprovalRouteStep, Role, User
+from logentra_server.utils import dumps, uid, utcnow_iso
 
 
 def ensure_builtin_roles(db: Session) -> dict[str, Role]:

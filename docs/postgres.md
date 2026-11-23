@@ -1,12 +1,12 @@
 # PostgreSQL recommended configuration
 
-SQLite is the default and is enough for a single workstation or a small plant. For several concurrent users, or when the equipment register grows toward **5,000+ assets** with a dense reading history, run Logbook on PostgreSQL.
+SQLite is the default and is enough for a single workstation or a small plant. For several concurrent users, or when the equipment register grows toward **5,000+ assets** with a dense reading history, run Logentra OS on PostgreSQL.
 
 ## Connect
 
 ```bash
 pip install "psycopg[binary]"
-export LOGBOOK_DATABASE_URL="postgresql+psycopg://logbook:logbook@127.0.0.1:5432/logbook"
+export LOGENTRA_DATABASE_URL="postgresql+psycopg://logentra:logentra@127.0.0.1:5432/logentra"
 python run.py
 ```
 
@@ -30,7 +30,7 @@ max_connections = 100
 
 Use a connection pooler (PgBouncer, transaction mode) if many UI tabs and agents share one database. The SQLAlchemy engine is created with `pool_pre_ping=True` on non-SQLite URLs.
 
-## Indexes Logbook already creates
+## Indexes Logentra OS already creates
 
 - `equipment(tag)` unique, `equipment(site_id)`, `equipment(area_id)`
 - `readings(equipment_id, parameter_key, ts)` — trend queries
@@ -44,7 +44,7 @@ After a large bulk load, run `ANALYZE`. VACUUM is only needed after mass deletes
 ```bash
 python scripts/load_test.py --equipment 5000 --readings-per 100 --work-orders 2000
 # optional:
-#   --postgres-url 'postgresql+psycopg://logbook:logbook@127.0.0.1:5432/logbook_load'
+#   --postgres-url 'postgresql+psycopg://logentra:logentra@127.0.0.1:5432/logentra_load'
 ```
 
 Results from the last run on this tree are in [load-test-results.json](load-test-results.json).

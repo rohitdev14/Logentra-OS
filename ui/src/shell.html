@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>__PRODUCT_NAME__ __RELEASE_LABEL__ — Equipment, records, work orders, and approvals</title>
+  <title>__PRODUCT_NAME__ __RELEASE_LABEL__ — __PRODUCT_TAGLINE__</title>
   <script>
     (function () {
       try {
-        var t = localStorage.getItem("logbook.theme");
+        var t = localStorage.getItem("logentra.theme") || localStorage.getItem("logbook.theme");
         if (t !== "light" && t !== "dark") {
           t = (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
         }
@@ -97,7 +97,8 @@ __CSS__
     </div>
   </div>
   <script>
-window.LOGBOOK_PRODUCT = { name: "__PRODUCT_NAME__", version: "__APP_VERSION__", label: "__RELEASE_LABEL__" };
+window.LOGENTRA_PRODUCT = { name: "__PRODUCT_NAME__", short: "__PRODUCT_SHORT__", initials: "__PRODUCT_INITIALS__", version: "__APP_VERSION__", label: "__RELEASE_LABEL__", tagline: "__PRODUCT_TAGLINE__" };
+window.LOGBOOK_PRODUCT = window.LOGENTRA_PRODUCT;
 __THEME__
 __XLSX__
 __PACKS__

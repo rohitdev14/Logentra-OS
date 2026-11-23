@@ -11,16 +11,16 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from logbook_server.auth import Principal, make_auth_dependency
-from logbook_server.branding import PRODUCT_NAME, RELEASE_LABEL
-from logbook_server.schemas import AnnotationIn, BulkReadingsIn, ReadingIn, SyncBody, WebhookIn
+from logentra_server.auth import Principal, make_auth_dependency
+from logentra_server.branding import PRODUCT_NAME, RELEASE_LABEL
+from logentra_server.schemas import AnnotationIn, BulkReadingsIn, ReadingIn, SyncBody, WebhookIn
 from sqlalchemy.orm import Session
 
-from logbook_server import __version__, demo, events, importers, migrate, mqtt_worker, seed, service
-from logbook_server.routers import auth_users, documents, work_orders
-from logbook_server.config import Settings, load_settings
-from logbook_server.database import init_db, make_engine, make_session_factory
-from logbook_server.models import (
+from logentra_server import __version__, demo, events, importers, migrate, mqtt_worker, seed, service
+from logentra_server.routers import auth_users, documents, work_orders
+from logentra_server.config import Settings, load_settings
+from logentra_server.database import init_db, make_engine, make_session_factory
+from logentra_server.models import (
     Annotation,
     AuditLog,
     Equipment,
@@ -31,12 +31,12 @@ from logbook_server.models import (
     Template,
     WebhookDelivery,
 )
-from logbook_server.utils import dumps, loads, uid, utcnow_iso
+from logentra_server.utils import dumps, loads, uid, utcnow_iso
 
-log = logging.getLogger("logbook")
+log = logging.getLogger("logentra")
 ROOT = Path(__file__).resolve().parent.parent
 UI_DIR = ROOT / "ui"
-UI_HTML = UI_DIR / "Logbook.html"
+UI_HTML = next((p for p in (UI_DIR / "Logentra.html", UI_DIR / "index.html", UI_DIR / "Logbook.html") if p.is_file()), UI_DIR / "Logentra.html")
 
 
 def _backend_name(url: str) -> str:
@@ -116,7 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         p = getattr(request.state, "principal", None)
         if p is not None:
             return p.actor
-        return request.headers.get("X-Logbook-Actor") or "api"
+        return request.headers.get("X-Logentra-Actor") or request.headers.get("X-Logbook-Actor") or "api"
 
     def actor_user_id(request: Request) -> str | None:
         p = getattr(request.state, "principal", None)
@@ -146,7 +146,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index():
         if UI_HTML.is_file():
             return FileResponse(UI_HTML, media_type="text/html")
-        return PlainTextResponse("Logbook UI is not built yet. Run ui/build.py or see docs/README.md.", status_code=503)
+        return PlainTextResponse("Logentra OS UI is not built yet. Run ui/build.py or see docs/README.md.", status_code=503)
 
     if (UI_DIR / "static").is_dir():
         app.mount("/static", StaticFiles(directory=UI_DIR / "static"), name="static")
@@ -714,7 +714,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if entity_type:
             q = q.filter(AuditLog.entity_type == entity_type)
         if page is not None:
-            from logbook_server.pagination import clamp_page, page_result
+            from logentra_server.pagination import clamp_page, page_result
             page, page_size = clamp_page(page, page_size)
             total = q.count()
             rows = q.offset((page - 1) * page_size).limit(page_size).all()
@@ -734,4 +734,4 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-# Use the factory: uvicorn logbook_server.app:create_app --factory
+# Use the factory: uvicorn logentra_server.app:create_app --factory

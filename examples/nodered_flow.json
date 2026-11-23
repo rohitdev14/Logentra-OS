@@ -2,9 +2,9 @@
   {
     "id": "logbook-ingest",
     "type": "tab",
-    "label": "Logbook ingest example",
+    "label": "Logentra OS ingest example",
     "disabled": false,
-    "info": "Example only — fictional tags. Point the HTTP node at your Logbook server."
+    "info": "Example only — fictional tags. Point the HTTP node at your Logentra OS server."
   },
   {
     "id": "inject-demo",

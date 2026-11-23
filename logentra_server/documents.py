@@ -10,9 +10,9 @@ from typing import Any
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-from logbook_server import events, service
-from logbook_server.auth import Principal
-from logbook_server.models import (
+from logentra_server import events, service
+from logentra_server.auth import Principal
+from logentra_server.models import (
     ApprovalRoute,
     ApprovalRouteStep,
     Document,
@@ -24,8 +24,8 @@ from logbook_server.models import (
     User,
     WorkOrder,
 )
-from logbook_server.pagination import clamp_page, page_meta
-from logbook_server.utils import uid, utcnow_iso
+from logentra_server.pagination import clamp_page, page_meta
+from logentra_server.utils import uid, utcnow_iso
 
 ROOT = Path(__file__).resolve().parent.parent
 ATTACH_DIR = ROOT / "data" / "attachments" / "documents"
@@ -871,7 +871,7 @@ def return_document(db: Session, doc: Document, principal: Principal, *, comment
 
 
 def dashboard_summary(db: Session, principal: Principal | None = None) -> dict[str, Any]:
-    from logbook_server.models import Annotation, Equipment, Reading, WorkOrder
+    from logentra_server.models import Annotation, Equipment, Reading, WorkOrder
 
     eq_count = db.query(Equipment).count()
     open_statuses = ("open", "in_progress", "on_hold")

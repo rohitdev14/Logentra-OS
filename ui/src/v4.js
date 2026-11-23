@@ -8,7 +8,8 @@
     }[c]));
   }
   function product() {
-    return (global.LOGBOOK_PRODUCT && global.LOGBOOK_PRODUCT.name) || "Logbook";
+    const p = global.LOGENTRA_PRODUCT || global.LOGBOOK_PRODUCT || {};
+    return p.name || "Logentra OS";
   }
   function can(perm) {
     const L = global.Logbook;
@@ -61,7 +62,7 @@
     } else {
       if (nameEl) nameEl.textContent = (me && me.username) || "Local user";
       if (roleEl) roleEl.textContent = (authMode === "open") ? "Open mode" : (me && me.role) || "";
-      if (av) av.textContent = "LB";
+      if (av) av.textContent = (global.LOGENTRA_PRODUCT && global.LOGENTRA_PRODUCT.initials) || "LO";
     }
     const site = document.getElementById("site-chip");
     if (site && state) site.textContent = plantLabel(state);

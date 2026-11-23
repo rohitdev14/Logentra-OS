@@ -19,8 +19,8 @@ pytestmark = pytest.mark.timeout(90) if False else pytest.mark.filterwarnings("i
 
 
 def _start_server(db_path: Path, port: int):
-    from logbook_server.app import create_app
-    from logbook_server.config import Settings
+    from logentra_server.app import create_app
+    from logentra_server.config import Settings
 
     settings = Settings(database_url=f"sqlite:///{db_path}", open_browser=False, host="127.0.0.1", port=port)
     app = create_app(settings)
@@ -40,7 +40,7 @@ def live_url(tmp_path_factory):
     if os.environ.get("PLAYWRIGHT_SKIP") == "1":
         pytest.skip("PLAYWRIGHT_SKIP=1")
     tmp = tmp_path_factory.mktemp("ui")
-    port = int(os.environ.get("LOGBOOK_TEST_PORT", "8799"))
+    port = int(os.environ.get("LOGENTRA_TEST_PORT") or os.environ.get("LOGBOOK_TEST_PORT", "8799"))
     server = _start_server(tmp / "ui.db", port)
     yield f"http://127.0.0.1:{port}"
     server.should_exit = True
@@ -66,7 +66,7 @@ def test_ui_smoke_and_swagger_screenshot(live_url):
 
         def set_theme(theme):
             page.evaluate(
-                """(t) => { localStorage.setItem('logbook.theme', t); document.documentElement.setAttribute('data-theme', t); if (window.LogbookTheme) LogbookTheme.apply(t); }""",
+                """(t) => { localStorage.setItem('logentra.theme', t); document.documentElement.setAttribute('data-theme', t); if (window.LogbookTheme) LogbookTheme.apply(t); }""",
                 theme,
             )
             page.wait_for_timeout(150)
@@ -99,7 +99,7 @@ def test_ui_smoke_and_swagger_screenshot(live_url):
         page.wait_for_timeout(200)
         toggled = page.evaluate("() => document.documentElement.getAttribute('data-theme')")
         assert toggled in ("light", "dark") and toggled != initial
-        stored = page.evaluate("() => localStorage.getItem('logbook.theme')")
+        stored = page.evaluate("() => localStorage.getItem('logentra.theme') || localStorage.getItem('logbook.theme')")
         assert stored == toggled
         page.reload(wait_until="domcontentloaded")
         page.wait_for_selector("#view")
@@ -209,11 +209,11 @@ def test_login_screenshot(tmp_path):
     if os.environ.get("PLAYWRIGHT_SKIP") == "1":
         pytest.skip("PLAYWRIGHT_SKIP=1")
     from playwright.sync_api import sync_playwright
-    from logbook_server.app import create_app
-    from logbook_server.config import Settings
+    from logentra_server.app import create_app
+    from logentra_server.config import Settings
     import uvicorn
 
-    port = int(os.environ.get("LOGBOOK_TEST_PORT_LOGIN", "8801"))
+    port = int(os.environ.get("LOGENTRA_TEST_PORT_LOGIN") or os.environ.get("LOGBOOK_TEST_PORT_LOGIN", "8801"))
     settings = Settings(
         database_url=f"sqlite:///{tmp_path}/login.db",
         open_browser=False, host="127.0.0.1", port=port,

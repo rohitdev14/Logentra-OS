@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from logbook_server.app import create_app
-from logbook_server.config import Settings
+from logentra_server.app import create_app
+from logentra_server.config import Settings
 
 
 @pytest.fixture

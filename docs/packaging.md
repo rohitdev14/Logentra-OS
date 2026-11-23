@@ -1,14 +1,15 @@
-# Packaging Logbook v0.3 as a desktop app
+# Packaging Logentra OS as a desktop app
 
 ## 1. PyInstaller (recommended first installer)
 
 From the repository root, after `pip install pyinstaller`:
 
 ```bash
-pyinstaller --noconfirm --clean --name Logbook \
+pyinstaller --noconfirm --clean --name LogentraOS \
   --onefile \
-  --add-data "ui/Logbook.html:ui" \
+  --add-data "ui/Logentra.html:ui" \
   --add-data "ui/index.html:ui" \
+  --add-data "ui/Logbook.html:ui" \
   --add-data "docs/schema.sql:docs" \
   --hidden-import uvicorn.logging \
   --hidden-import uvicorn.protocols.http.auto \
@@ -20,7 +21,7 @@ pyinstaller --noconfirm --clean --name Logbook \
 
 On Windows the `--add-data` separator is `;` instead of `:`.
 
-Then, in `run.py` / `config.py`, resolve `ROOT` with `sys._MEIPASS` when frozen and write `logbook.db` under a user-writable directory (for example `%APPDATA%/Logbook` or `~/Library/Application Support/Logbook`). A small NSIS, Inno Setup, or `cargo bundle`-style installer can drop the exe, a Start Menu shortcut, and the VC++ redistributable.
+Then, in `run.py` / `config.py`, resolve `ROOT` with `sys._MEIPASS` when frozen and write `logentra.db` under a user-writable directory (for example `%APPDATA%/Logentra OS` or `~/Library/Application Support/Logentra OS`). A small NSIS, Inno Setup, or `cargo bundle`-style installer can drop the exe, a Start Menu shortcut, and the VC++ redistributable.
 
 Typical size: tens of megabytes. First start creates the SQLite file.
 
@@ -35,4 +36,4 @@ pywebview is a lighter alternative if you want to stay in Python only.
 
 ## 3. Docker (always-on)
 
-A two-service compose file (app + Postgres) is enough for a small plant server. Disable `open_browser`, set `LOGBOOK_API_KEY`, and publish port 8787 on the plant LAN only.
+A two-service compose file (app + Postgres) is enough for a small plant server. Disable `open_browser`, set `LOGENTRA_API_KEY`, and publish port 8787 on the plant LAN only.

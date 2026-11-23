@@ -8,8 +8,8 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
-from logbook_server.models import OutboundWebhook, WebhookDelivery
-from logbook_server.utils import dumps, uid, utcnow_iso
+from logentra_server.models import OutboundWebhook, WebhookDelivery
+from logentra_server.utils import dumps, uid, utcnow_iso
 
 
 def iter_webhooks(db: Session, event: str):
@@ -32,9 +32,15 @@ def deliver(db: Session, event: str, payload: dict[str, Any], timeout: float = 5
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     results = []
     for wh in list(iter_webhooks(db, event)):
-        headers = {"Content-Type": "application/json", "X-Logbook-Event": event}
+        headers = {
+            "Content-Type": "application/json",
+            "X-Logentra-Event": event,
+            "X-Logbook-Event": event,  # deprecated alias
+        }
         if wh.secret:
-            headers["X-Logbook-Signature"] = "sha256=" + sign_payload(wh.secret, body)
+            sig = "sha256=" + sign_payload(wh.secret, body)
+            headers["X-Logentra-Signature"] = sig
+            headers["X-Logbook-Signature"] = sig  # deprecated alias
         rec = WebhookDelivery(
             id=uid("whd"),
             webhook_id=wh.id,

@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from logbook_server import service
-from logbook_server.utils import utcnow_iso
+from logentra_server import service
+from logentra_server.utils import utcnow_iso
 
 
 def _today() -> str:
@@ -224,7 +224,7 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
     }
     service.sync_catalog(db, state, actor=actor)
 
-    from logbook_server.models import Area, Equipment, Site
+    from logentra_server.models import Area, Equipment, Site
     site = db.get(Site, "site_northbrook")
     if site is None:
         site = Site(id="site_northbrook", name="Northbrook Works", code="NBK", created_at=now)
@@ -279,7 +279,7 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
     result = service.ingest_readings(db, items, source="demo", actor=actor, fire_webhooks=False)
 
     # Work orders across the Kanban columns
-    from logbook_server import workorders as wo
+    from logentra_server import workorders as wo
     from datetime import datetime as _dt
     today_d = _dt.strptime(today, "%Y-%m-%d")
     def due(delta: int, hhmm: str | None = None) -> str:
@@ -311,8 +311,8 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
         wo.create_work_order(db, job, actor=actor, fire_webhooks=False, source="demo")
 
     # A commissioning test sheet already in review (supervisor pending)
-    from logbook_server import documents as docs
-    from logbook_server import seed as _seed
+    from logentra_server import documents as docs
+    from logentra_server import seed as _seed
     routes = _seed.ensure_default_routes(db)
     comm = next((r for r in routes if r.document_type == "commissioning_test_sheet"), routes[0])
     pdf = _simple_pdf("Northbrook Works — P-101 commissioning test sheet (Rev B, fictional)", [

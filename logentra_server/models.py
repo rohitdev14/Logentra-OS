@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Float, ForeignKey, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from logbook_server.database import Base
+from logentra_server.database import Base
 
 
 class FieldDefinition(Base):

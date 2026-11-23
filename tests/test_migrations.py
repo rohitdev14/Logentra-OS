@@ -5,7 +5,7 @@ from pathlib import Path
 from alembic import command
 from sqlalchemy import inspect, text
 
-from logbook_server.database import alembic_config, make_engine, run_migrations
+from logentra_server.database import alembic_config, make_engine, run_migrations
 
 ROOT = Path(__file__).resolve().parents[1]
 V03_SQL = ROOT / "migrations" / "versions" / "0001_initial.sql"

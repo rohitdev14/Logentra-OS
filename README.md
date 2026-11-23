@@ -1,8 +1,8 @@
-# Logbook
+# Logentra OS
 
-**v0.5 – early release.** An open-source, on-prem equipment, records, work-order, and document-approval logbook with a local database and REST API.
+**v0.5 – early release.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
 
-Logbook is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
+**Logentra OS** is **Log**book + **Eng**ineering + **Tra**ceability. It is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
 
 It runs on your machine. There is no hosted account.
 
@@ -38,8 +38,8 @@ It runs on your machine. There is no hosted account.
 Python 3.11+ recommended.
 
 ```bash
-git clone https://github.com/YOUR-USER/logbook.git
-cd logbook
+git clone https://github.com/YOUR-USER/logentra-os.git
+cd logentra-os
 python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -48,27 +48,27 @@ python run.py                     # opens http://127.0.0.1:8787/  — API docs a
 
 One command after install: `python run.py`. Use `--no-browser` in scripts or CI.
 
-Default database: `data/logbook.db`. To use PostgreSQL:
+Default database: `data/logentra.db` (an existing `data/logbook.db` is still used if you have not set a URL). To use PostgreSQL:
 
 ```bash
 pip install "psycopg[binary]"
-export LOGBOOK_DATABASE_URL="postgresql+psycopg://logbook:logbook@127.0.0.1:5432/logbook"
+export LOGENTRA_DATABASE_URL="postgresql+psycopg://logentra:logentra@127.0.0.1:5432/logentra"
 python run.py
 ```
 
-Copy `config.example.yaml` to `config.yaml` to set host, port, auth mode, an optional API key, MQTT, or startup webhooks. `LOGBOOK_*` environment variables override the file. `config.yaml` is gitignored so secrets stay local.
+Copy `config.example.yaml` to `config.yaml` to set host, port, auth mode, an optional API key, MQTT, or startup webhooks. `LOGENTRA_*` environment variables override the file. The older `LOGBOOK_*` names are still accepted as a deprecated fallback. `config.yaml` is gitignored so secrets stay local.
 
 The default is single-user / open mode (no login). To require accounts:
 
 ```bash
-export LOGBOOK_AUTH_MODE=users
-export LOGBOOK_BOOTSTRAP_ADMIN_USER=admin
-export LOGBOOK_BOOTSTRAP_ADMIN_PASSWORD='choose-a-strong-password'
+export LOGENTRA_AUTH_MODE=users
+export LOGENTRA_BOOTSTRAP_ADMIN_USER=admin
+export LOGENTRA_BOOTSTRAP_ADMIN_PASSWORD='choose-a-strong-password'
 python run.py
 # or, after start: python run.py create-admin --username admin --password '...'
 ```
 
-The product name is a placeholder and lives in one place — [`logbook_server/branding.py`](logbook_server/branding.py) — so renaming later is a one-line change.
+The display name lives in [`logentra_server/branding.py`](logentra_server/branding.py). The Python package is `logentra_server` (a `logbook_server` import shim is kept for compatibility).
 
 The offline single-file app needs no install: open `standalone/Logbook.html` in a browser.
 
@@ -77,7 +77,7 @@ The offline single-file app needs no install: open `standalone/Logbook.html` in 
 ```
 ┌─────────────┐  HTTP   ┌──────────────────┐  SQL    ┌─────────────────────┐
 │ Browser UI  │────────▶│ FastAPI (Python) │────────▶│ SQLite (default) or │
-│ (Logbook)   │◀────────│  REST + OpenAPI  │◀────────│ PostgreSQL          │
+│ (Logentra OS)│◀────────│  REST + OpenAPI  │◀────────│ PostgreSQL          │
 └─────────────┘         └────────┬─────────┘         └─────────────────────┘
                                  │
             ┌────────────────────┼────────────────────┐
@@ -224,4 +224,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests are welcome.
 
 ## License
 
-[MIT](LICENSE). The copyright line currently reads **Logbook contributors** — replace that with your name (or organisation) if you are publishing this repository as the original author.
+[MIT](LICENSE). The copyright line currently reads **Logentra OS contributors** — the owner name will be added when it is confirmed.

@@ -1,6 +1,6 @@
-# Starter instructions for an AI agent using Logbook v0.3
+# Starter instructions for an AI agent using Logentra OS
 
-You have access to a local Logbook HTTP API at `http://127.0.0.1:8787/api`. OpenAPI is at `http://127.0.0.1:8787/openapi.json`.
+You have access to a local Logentra OS HTTP API at `http://127.0.0.1:8787/api`. OpenAPI is at `http://127.0.0.1:8787/openapi.json`.
 
 Rules:
 - This is an operations notebook, not a control system. Never change a setpoint or issue a command to plant equipment.

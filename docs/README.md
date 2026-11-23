@@ -1,15 +1,15 @@
-# Logbook — local database and API
+# Logentra OS — local database and API
 
 v0.4 – early release. See the [root README](../README.md) for a short overview, screenshots, and contributing notes.
 
-v0.4 keeps the industry-neutral UI (equipment register, record templates, logs, trends, annotations, CSV/Excel import) and puts the data in an open-source database with a REST API. Other tools can both **write** into it (IoT gateways, MQTT, scripts, agents) and **read** from it (Grafana, Node-RED, Python, another logbook or CMMS).
+v0.5 keeps the industry-neutral UI (equipment register, record templates, logs, trends, annotations, CSV/Excel import) and puts the data in an open-source database with a REST API. Other tools can both **write** into it (IoT gateways, MQTT, scripts, agents) and **read** from it (Grafana, Node-RED, Python, another logbook or CMMS).
 
 The v0.2 offline single-file app is shipped at [`standalone/Logbook.html`](../standalone/Logbook.html).
 
 ## Quick start
 
 ```bash
-cd logbook
+cd logentra-os
 python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -18,26 +18,26 @@ python run.py                     # opens http://127.0.0.1:8787/  (API docs at /
 
 One command after install: **`python run.py`**. Use `--no-browser` in scripts or CI.
 
-Default database: a SQLite file at `data/logbook.db` (zero setup). To use PostgreSQL, install a driver and set a connection string:
+Default database: a SQLite file at `data/logentra.db` (zero setup). To use PostgreSQL, install a driver and set a connection string:
 
 ```bash
 pip install "psycopg[binary]"
-export LOGBOOK_DATABASE_URL="postgresql+psycopg://logbook:logbook@127.0.0.1:5432/logbook"
+export LOGENTRA_DATABASE_URL="postgresql+psycopg://logentra:logentra@127.0.0.1:5432/logentra"
 python run.py
 ```
 
-Or copy `config.example.yaml` to `config.yaml` and edit `database_url`. Environment variables `LOGBOOK_*` override the file (`LOGBOOK_DATABASE_URL`, `LOGBOOK_API_KEY`, `LOGBOOK_HOST`, `LOGBOOK_PORT`, `LOGBOOK_MQTT_ENABLED`, …).
+Or copy `config.example.yaml` to `config.yaml` and edit `database_url`. Environment variables `LOGENTRA_*` override the file (`LOGENTRA_DATABASE_URL`, `LOGENTRA_API_KEY`, `LOGENTRA_HOST`, `LOGENTRA_PORT`, `LOGENTRA_MQTT_ENABLED`, …). The older `LOGBOOK_*` names are still accepted as a deprecated fallback.
 
-Optional API key (single-user mode): set `api_key` in config or `LOGBOOK_API_KEY`. Every `/api` route except `/api/health` then requires `X-API-Key: <key>` or `Authorization: Bearer <key>`.
+Optional API key (single-user mode): set `api_key` in config or `LOGENTRA_API_KEY`. Every `/api` route except `/api/health` then requires `X-API-Key: <key>` or `Authorization: Bearer <key>`.
 
-To require login, set `LOGBOOK_AUTH_MODE=users` and create an admin (`python run.py create-admin`, or `LOGBOOK_BOOTSTRAP_ADMIN_USER` / `LOGBOOK_BOOTSTRAP_ADMIN_PASSWORD` on first start). Schema changes are applied with Alembic (`migrations/`) on startup; see [postgres.md](postgres.md) for a 5,000-equipment deployment.
+To require login, set `LOGENTRA_AUTH_MODE=users` and create an admin (`python run.py create-admin`, or `LOGENTRA_BOOTSTRAP_ADMIN_USER` / `LOGENTRA_BOOTSTRAP_ADMIN_PASSWORD` on first start). Schema changes are applied with Alembic (`migrations/`) on startup; see [postgres.md](postgres.md) for a 5,000-equipment deployment.
 
 ## Architecture
 
 ```
 ┌─────────────┐  HTTP   ┌──────────────────┐  SQL    ┌─────────────────────┐
 │ Browser UI  │────────▶│ FastAPI (Python) │────────▶│ SQLite (default) or │
-│ (Logbook)   │◀────────│  REST + OpenAPI  │◀────────│ PostgreSQL          │
+│ (Logentra OS)│◀────────│  REST + OpenAPI  │◀────────│ PostgreSQL          │
 └─────────────┘         └────────┬─────────┘         └─────────────────────┘
                                  │
             ┌────────────────────┼────────────────────┐
@@ -205,19 +205,19 @@ Main route groups (all under `/api`):
 
 `source` on a reading is one of `manual`, `import`, `mqtt`, `webhook`, `api`, `demo`.
 
-## Inputs (into Logbook)
+## Inputs (into Logentra OS)
 
 - **UI** — same as v0.2: type in the grid, fill a record, enter a log line, map a CSV/Excel file.
 - **REST** — `POST /api/readings`, `/api/readings/bulk`, or `/api/ingest/readings`.
 - **File** — `POST /api/ingest/file?kind=logs|equipment` with a CSV or `.xlsx` upload.
-- **MQTT** (optional) — set `mqtt.enabled: true` in `config.yaml`. Default topics: `logbook/readings` (JSON body) and `logbook/{tag}/{parameter}` (JSON `{ "value": 12.3, "ts": "..." }` or a bare number). The subscriber writes through the same ingest path, so out-of-range webhooks still fire.
+- **MQTT** (optional) — set `mqtt.enabled: true` in `config.yaml`. Default topics: `logentra/readings` (JSON body) and `logentra/{tag}/{parameter}` (the older `logbook/…` topics are also subscribed by default) (JSON `{ "value": 12.3, "ts": "..." }` or a bare number). The subscriber writes through the same ingest path, so out-of-range webhooks still fire.
 - **v0.2 backup** — `POST /api/migrate/v2`.
 
-## Outputs (out of Logbook)
+## Outputs (out of Logentra OS)
 
 - **REST / CSV / JSON** — as above. Good for agents, scripts, and other applications.
-- **Outbound webhooks** — `POST /api/webhooks` with `{ "url": "https://…", "events": ["out_of_range"], "secret": "optional" }`. On an out-of-range ingest the server POSTs a JSON payload (`event`, `tag`, `parameter`, `value`, `min`, `max`, `ts`, `reading_id`, `acknowledged`) and stores the delivery. If `secret` is set, the request includes `X-Logbook-Signature: sha256=…`.
-- **Direct SQL** — point Grafana or any SQL tool at `data/logbook.db` or at PostgreSQL. See [integrations.md](integrations.md).
+- **Outbound webhooks** — `POST /api/webhooks` with `{ "url": "https://…", "events": ["out_of_range"], "secret": "optional" }`. On an out-of-range ingest the server POSTs a JSON payload (`event`, `tag`, `parameter`, `value`, `min`, `max`, `ts`, `reading_id`, `acknowledged`) and stores the delivery. If `secret` is set, the request includes `X-Logentra-Signature: sha256=…` (and the deprecated alias `X-Logbook-Signature`).
+- **Direct SQL** — point Grafana or any SQL tool at `data/logentra.db` or at PostgreSQL. See [integrations.md](integrations.md).
 - **UI trends / print** — unchanged from v0.2.
 
 ## Tests
@@ -233,11 +233,11 @@ python -m pytest tests/test_ui.py -q    # optional; starts a local server, needs
 This backend was written in **Python + FastAPI** so it can be frozen later without a Node runtime.
 
 1. **Now (developers / plant PC):** `pip install -r requirements.txt && python run.py`. Keep the folder, the `data/` file, and a shortcut to `run.py`.
-2. **Near-term Windows / macOS / Linux installer — PyInstaller (recommended first package):** freeze `run.py` plus `logbook_server/` and `ui/Logbook.html` into one executable that binds 127.0.0.1:8787, opens the browser, and stores `logbook.db` next to the executable (or in the user data directory). A starting spec is in [packaging.md](packaging.md). Ship the Microsoft VC++ runtime on Windows. Expect a 30–50 MB onefile build.
+2. **Near-term Windows / macOS / Linux installer — PyInstaller (recommended first package):** freeze `run.py` plus `logentra_server/` and `ui/Logentra.html` into one executable that binds 127.0.0.1:8787, opens the browser, and stores `logentra.db` next to the executable (or in the user data directory). A starting spec is in [packaging.md](packaging.md). Ship the Microsoft VC++ runtime on Windows. Expect a 30–50 MB onefile build.
 3. **Nicer desktop window — Tauri sidecar (second step):** a small Tauri (or pywebview) shell that starts the PyInstaller binary as a sidecar, shows `http://127.0.0.1:8787/` in a WebView, and can live in the system tray. The Python sidecar remains the source of truth for the database and API, so Grafana and MQTT keep working while the window is closed if you allow the sidecar to keep running.
 4. **Always-on plant server:** Docker (or a systemd unit) with PostgreSQL, no browser auto-open, API key enabled, MQTT pointed at the site broker.
 
-Logbook is not a certified historian or a multi-user CMMS.
+Logentra OS is not a certified historian or a multi-user CMMS.
 
 ## Known limits
 
@@ -248,4 +248,4 @@ Logbook is not a certified historian or a multi-user CMMS.
 - Out-of-range detection uses the limits snapshotted at ingest; changing a limit later does not rewrite history, and the events query uses those snapshots.
 - The UI upserts the catalog (`PUT /api/sync`) and writes readings through the readings API. A long-open UI tab will not automatically show readings ingested by MQTT until you reload (or revisit Logs / Trends after a refresh).
 - localStorage from v0.2 is not read automatically; export a JSON backup in v0.2 and import it here.
-- Do not store passwords or confidential site data in the logbook.
+- Do not store passwords or confidential site data in Logentra OS.

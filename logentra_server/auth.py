@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from logbook_server.utils import uid, utcnow_iso
+from logentra_server.utils import uid, utcnow_iso
 
 # ---------------------------------------------------------------------------
 # Permission catalogue — used by built-in and custom roles
@@ -159,7 +159,7 @@ def parse_bearer(authorization: str | None) -> str | None:
 
 
 def _role_perms(role) -> set[str]:
-    from logbook_server.utils import loads
+    from logentra_server.utils import loads
     raw = loads(role.permissions, []) or []
     return {p for p in raw if p in ALL_PERMISSIONS}
 
@@ -191,7 +191,7 @@ def authenticate(
     actor_hint: str | None = None,
 ) -> Principal:
     """Resolve the caller. `settings.auth_mode` is `open` (default) or `users`."""
-    from logbook_server.models import ApiKey, SessionToken, User
+    from logentra_server.models import ApiKey, SessionToken, User
 
     raw = (x_api_key or "").strip() or parse_bearer(authorization) or ""
     mode = (getattr(settings, "auth_mode", "open") or "open").lower()
@@ -208,7 +208,7 @@ def authenticate(
                 p = principal_from_user(user)
             else:
                 # key bound only to a role
-                from logbook_server.models import Role
+                from logentra_server.models import Role
                 role = db.get(Role, key_row.role_id) if key_row.role_id else None
                 perms = _role_perms(role) if role else set(ALL_PERMISSIONS)
                 p = Principal(
@@ -233,7 +233,7 @@ def authenticate(
             tok.last_used_at = utcnow_iso()
             return principal_from_user(user)
 
-    # Legacy global API key (config / LOGBOOK_API_KEY)
+    # Legacy global API key (config / LOGENTRA_API_KEY, or deprecated LOGBOOK_API_KEY)
     expected = getattr(settings, "api_key", "") or ""
     if expected:
         if raw and hmac.compare_digest(raw, expected):
@@ -256,7 +256,7 @@ def authenticate(
 
 
 def create_session(db: Session, user_id: str, *, days: int = 7) -> tuple[str, str]:
-    from logbook_server.models import SessionToken
+    from logentra_server.models import SessionToken
 
     raw = new_session_token()
     now = datetime.now(timezone.utc)
@@ -276,7 +276,7 @@ def create_session(db: Session, user_id: str, *, days: int = 7) -> tuple[str, st
 
 
 def revoke_session(db: Session, raw_token: str) -> int:
-    from logbook_server.models import SessionToken
+    from logentra_server.models import SessionToken
 
     n = db.query(SessionToken).filter(SessionToken.token_hash == hash_token(raw_token)).delete()
     return n
@@ -297,7 +297,7 @@ def make_auth_dependency(settings, SessionLocal):
                 settings,
                 x_api_key=x_api_key,
                 authorization=authorization,
-                actor_hint=request.headers.get("X-Logbook-Actor"),
+                actor_hint=request.headers.get("X-Logentra-Actor") or request.headers.get("X-Logbook-Actor"),
             )
             db.commit()
         except HTTPException:
