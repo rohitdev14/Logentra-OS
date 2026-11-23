@@ -1,0 +1,35 @@
+# Python
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Local app data and config (keep config.example.yaml)
+data/*.db
+data/*.db-*
+config.yaml
+
+# Test / local artifacts
+screenshots/
+*.log
+.DS_Store
+Thumbs.db

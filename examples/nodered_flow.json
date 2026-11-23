@@ -1,0 +1,62 @@
+[
+  {
+    "id": "logbook-ingest",
+    "type": "tab",
+    "label": "Logbook ingest example",
+    "disabled": false,
+    "info": "Example only — fictional tags. Point the HTTP node at your Logbook server."
+  },
+  {
+    "id": "inject-demo",
+    "type": "inject",
+    "z": "logbook-ingest",
+    "name": "Example reading",
+    "props": [{"p": "payload"}, {"p": "topic", "vt": "str"}],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "topic": "",
+    "payload": "{\"tag\":\"P-101\",\"parameter\":\"flow\",\"value\":52.1}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 120,
+    "wires": [["build-body"]]
+  },
+  {
+    "id": "build-body",
+    "type": "function",
+    "z": "logbook-ingest",
+    "name": "Build ingest body",
+    "func": "msg.headers = { \"Content-Type\": \"application/json\" };\nconst p = msg.payload || {};\nmsg.payload = {\n  tag: p.tag || \"P-101\",\n  parameter: p.parameter || \"flow\",\n  value: Number(p.value),\n  ts: p.ts || new Date().toISOString(),\n  source: \"webhook\"\n};\nreturn msg;",
+    "outputs": 1,
+    "x": 390,
+    "y": 120,
+    "wires": [["http-ingest"]]
+  },
+  {
+    "id": "http-ingest",
+    "type": "http request",
+    "z": "logbook-ingest",
+    "name": "POST /api/ingest/readings",
+    "method": "POST",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "http://127.0.0.1:8787/api/ingest/readings",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "authType": "",
+    "x": 660,
+    "y": 120,
+    "wires": [["debug"]]
+  },
+  {
+    "id": "debug",
+    "type": "debug",
+    "z": "logbook-ingest",
+    "name": "result",
+    "x": 870,
+    "y": 120,
+    "wires": []
+  }
+]

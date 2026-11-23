@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Logbook v0.3 — Equipment, records, and API</title>
+  <style>
+__CSS__
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8">
+            <path d="M5 5h14v14H5z"/>
+            <path d="M5 10h14M10 5v14"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Logbook</h1>
+          <div class="sub">Equipment, records, and trends — with a local database and API</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <a class="docs-link" href="/docs" target="_blank" rel="noopener">API docs</a>
+        <span id="api-badge" class="api-badge">Connecting…</span>
+        <span class="version-badge">v0.3 – early release</span>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="Main">
+      <button type="button" data-view="dashboard" class="active">Dashboard</button>
+      <button type="button" data-view="equipment">Equipment</button>
+      <button type="button" data-view="templates">Templates</button>
+      <button type="button" data-view="records">Records</button>
+      <button type="button" data-view="logbook">Logs</button>
+      <button type="button" data-view="trends">Trends</button>
+      <button type="button" data-view="import">Import</button>
+      <button type="button" data-view="backup">Backup</button>
+    </nav>
+  </header>
+  <main id="view"></main>
+  <footer class="app-footer">
+    Logbook v0.3 – early release. The UI talks to a local open-source database over a REST API — use it from this page, IoT tools, Grafana, or another agent.
+    Do not store passwords or confidential site data. Not a certified design tool.
+  </footer>
+  <script>
+__XLSX__
+__PACKS__
+__API__
+__JS__
+  </script>
+</body>
+</html>
