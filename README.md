@@ -1,5 +1,8 @@
 # Logentra OS
 
+[![Tests](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml/badge.svg)](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **v0.5 – early release.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
 
 **Logentra OS** is **Log**book + **Eng**ineering + **Tra**ceability. It is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
@@ -38,8 +41,8 @@ It runs on your machine. There is no hosted account.
 Python 3.11+ recommended.
 
 ```bash
-git clone https://github.com/YOUR-USER/logentra-os.git
-cd logentra-os
+git clone https://github.com/rohitdev14/Logentra-OS.git
+cd Logentra-OS
 python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -220,8 +223,8 @@ This is an on-prem operations notebook and lightweight CMMS, not a certified pro
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests are welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests are welcome at [github.com/rohitdev14/Logentra-OS/issues](https://github.com/rohitdev14/Logentra-OS/issues).
 
 ## License
 
-[MIT](LICENSE). The copyright line currently reads **Logentra OS contributors** — the owner name will be added when it is confirmed.
+[MIT](LICENSE). Copyright (c) 2026 Rohit Khurana.

@@ -9,7 +9,7 @@ description = "Open-source logbook, engineering records & traceability for indus
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
-authors = [{ name = "Logentra OS contributors" }]
+authors = [{ name = "Rohit Khurana" }]
 keywords = ["logbook", "engineering", "traceability", "CMMS", "industrial", "on-prem"]
 classifiers = [
   "License :: OSI Approved :: MIT License",
@@ -34,8 +34,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/YOUR-USER/logentra-os"
-Documentation = "https://github.com/YOUR-USER/logentra-os#readme"
+Homepage = "https://github.com/rohitdev14/Logentra-OS"
+Documentation = "https://github.com/rohitdev14/Logentra-OS#readme"
 
 
 [tool.setuptools]

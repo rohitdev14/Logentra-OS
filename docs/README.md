@@ -9,7 +9,7 @@ The v0.2 offline single-file app is shipped at [`standalone/Logbook.html`](../st
 ## Quick start
 
 ```bash
-cd logentra-os
+cd Logentra-OS
 python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
