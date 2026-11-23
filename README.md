@@ -1,12 +1,14 @@
 # Logbook
 
-**v0.4 – early release.** An open-source, on-prem equipment, records, and work-order logbook with a local database and REST API.
+**v0.5 – early release.** An open-source, on-prem equipment, records, work-order, and document-approval logbook with a local database and REST API.
 
-Logbook is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, and work orders are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app.
+Logbook is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
 
 It runs on your machine. There is no hosted account.
 
-![Dashboard](docs/images/dashboard.png)
+![Dashboard](docs/images/dashboard-light.png)
+
+![Dashboard (dark)](docs/images/dashboard-dark.png)
 
 ## Features
 
@@ -14,18 +16,22 @@ It runs on your machine. There is no hosted account.
 - **Record templates** you design yourself (commissioning, inspection, maintenance, or anything else): custom rows and result columns, instantiate per asset, punches, sign-off, print
 - **Log book and trends** with optional min/max limits, annotations (cause, action, initials, time), and unacknowledged out-of-range flags
 - **Local database** — SQLite by default (a single file, zero setup); PostgreSQL via a connection string
-- **Work orders** with a status workflow (open → in progress → on hold → done → closed), assignment, due dates, comments, labour notes, attachment metadata, and optional auto-create from out-of-range readings
+- **Work orders** with a Kanban board and a status workflow (open → in progress → on hold → done → closed), assignment, due dates, comments, labour notes, attachment metadata, and optional auto-create from out-of-range readings
+- **Document approvals** — upload a test sheet, report, or photos against equipment, a record, or a work order; route it through admin-defined sequential approvers (role or named user); approve / reject / return for changes with a comment; resubmit as a new version; lock the approved file; full audit trail
+- **Light and dark themes** (indigo light, industrial cyan/amber dark), toggled in the top bar and remembered in the browser; the default follows the OS color scheme
 - **Users, roles, and permissions** — built-in admin / supervisor / technician / viewer roles, custom roles from a permission list, optional site/area scope, session login, and API keys bound to a user. A dev / single-user mode (the default) still runs with no login.
 - **REST API** with OpenAPI / Swagger docs, optional API key or user tokens, bulk ingest, time-range queries, server-side pagination, and CSV/JSON export
 - **Inputs:** the UI, CSV/Excel import, a simple IoT webhook, and an optional MQTT subscriber
-- **Outputs:** REST and CSV, direct SQL (for Grafana), and outbound webhooks on out-of-range events and work-order changes
+- **Outputs:** REST and CSV, direct SQL (for Grafana), and outbound webhooks on out-of-range events, work-order changes, and document approval events
 - **Scales to 5,000+ equipment** with indexes, pagination, Alembic migrations, and a load-test script (see [docs/postgres.md](docs/postgres.md) and [docs/load-test-results.json](docs/load-test-results.json))
 - **Optional starter packs** (generic plant equipment, plus a generic semiconductor-utilities pack) — not loaded unless you choose them
 - **v0.2 offline app** included at [`standalone/Logbook.html`](standalone/Logbook.html) for a no-server, browser-only workflow; a v0.2 JSON backup can be imported into the database-backed app
 
-![Trends](docs/images/trends.png)
+![Trends](docs/images/trends-light.png)
 
-![Work orders](docs/images/work-orders.png)
+![Work orders](docs/images/work-orders-light.png)
+
+![Approvals](docs/images/approvals-light.png)
 
 ## Quick start
 
@@ -81,7 +87,8 @@ The offline single-file app needs no install: open `standalone/Logbook.html` in 
                                  │
                                  ▼
                       Outbound webhooks on
-                      out-of-range events
+                      out-of-range, work-order,
+                      and document events
 ```
 
 User-defined equipment columns are stored as field definitions plus values (not a hard-coded table shape). Time-series facts are one row per parameter in `readings`, indexed on `(equipment_id, parameter_key, ts)`. A shared `entry_id` groups several parameters taken at the same moment. The portable schema is in [`docs/schema.sql`](docs/schema.sql).
@@ -113,6 +120,14 @@ erDiagram
     WORK_ORDERS ||--o{ WORK_ORDER_ATTACHMENTS : has
     SITES ||--o{ AREAS : has
     SITES ||--o{ EQUIPMENT : locates
+    EQUIPMENT ||--o{ DOCUMENTS : subject_of
+    WORK_ORDERS ||--o{ DOCUMENTS : linked
+    RECORDS ||--o{ DOCUMENTS : linked
+    APPROVAL_ROUTES ||--o{ APPROVAL_ROUTE_STEPS : has
+    APPROVAL_ROUTES ||--o{ DOCUMENTS : used_by
+    DOCUMENTS ||--o{ DOCUMENT_VERSIONS : has
+    DOCUMENTS ||--o{ DOCUMENT_APPROVAL_STEPS : has
+    DOCUMENTS ||--o{ DOCUMENT_COMMENTS : has
     OUTBOUND_WEBHOOKS ||--o{ WEBHOOK_DELIVERIES : logs
     PARAM_PRESETS }o--o{ EQUIPMENT : "defaults by category"
 
@@ -157,6 +172,16 @@ curl -s -X POST http://127.0.0.1:8787/api/work-orders \
   -H 'Content-Type: application/json' \
   -d '{"title":"Replace seal","equipment_id":"eq_p101","priority":"high"}'
 curl -s "http://127.0.0.1:8787/api/work-orders?status=open&page=1&page_size=50"
+
+# Document approvals (also in docs/integrations.md)
+curl -s -X POST http://127.0.0.1:8787/api/documents \\
+  -F 'file=@test-sheet.pdf;type=application/pdf' \\
+  -F 'title=P-101 commissioning test sheet' \\
+  -F 'document_type=commissioning_test_sheet' \\
+  -F 'equipment_id=eq_p101' \\
+  -F 'submit=true'
+curl -s http://127.0.0.1:8787/api/documents/queue
+curl -s -X POST http://127.0.0.1:8787/api/documents/DOC_ID/approve -H 'Content-Type: application/json' -d '{"comment":"Limits checked"}'
 ```
 
 ![Login](docs/images/login.png)

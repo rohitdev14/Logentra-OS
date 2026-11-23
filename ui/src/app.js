@@ -4,7 +4,7 @@
 
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
-  const APP_VERSION = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.version) || "0.4.0";
+  const APP_VERSION = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.version) || "0.5.0";
   const PRODUCT_NAME = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.name) || "Logbook";
 
   const FIELD_TYPES = [
@@ -848,10 +848,20 @@
     else t += " — click to annotate";
     return t;
   }
+  function cssVar(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
   function drawTrend(el, points, param) {
     el.innerHTML = "";
     const data = points.filter((p) => p.value !== null);
     if (!data.length) { el.innerHTML = '<p class="empty">No numeric readings in this range.</p>'; return; }
+    const gridC = cssVar("--chart-grid", "#eceef3");
+    const muted = cssVar("--muted", "#6b7380");
+    const ink = cssVar("--ink", "#14171f");
+    const card = cssVar("--surface", "#ffffff");
+    const line = cssVar("--chart-line", cssVar("--accent", "#4f46e5"));
+    const danger = cssVar("--chart-limit", cssVar("--rose", "#be123c"));
     const W = 860, H = 336, L = 54, R = 18, T = 32, B = 44;
     const innerW = W - L - R, innerH = H - T - B;
     const values = data.map((p) => p.value);
@@ -869,48 +879,49 @@
     for (let t = 0; t <= 5; t++) {
       const v = vmin + (t / 5) * (vmax - vmin);
       const yy = y(v).toFixed(1);
-      grid += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="#e4e9ef" />';
-      grid += '<text x="' + (L - 8) + '" y="' + (Number(yy) + 3) + '" text-anchor="end" font-size="10" fill="#5c6778">' +
+      grid += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="' + gridC + '" />';
+      grid += '<text x="' + (L - 8) + '" y="' + (Number(yy) + 3) + '" text-anchor="end" font-size="10" fill="' + muted + '">' +
         (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2)) + "</text>";
     }
     let limitLines = "";
     if (hasMax) {
       const yy = y(Number(param.max)).toFixed(1);
-      limitLines += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="#b42318" stroke-dasharray="5 4" />';
-      limitLines += '<text x="' + (W - R) + '" y="' + (Number(yy) - 4) + '" text-anchor="end" font-size="10" fill="#b42318">max ' + param.max + "</text>";
+      limitLines += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="' + danger + '" stroke-dasharray="5 4" />';
+      limitLines += '<text x="' + (W - R) + '" y="' + (Number(yy) - 4) + '" text-anchor="end" font-size="10" fill="' + danger + '">max ' + param.max + "</text>";
     }
     if (hasMin) {
       const yy = y(Number(param.min)).toFixed(1);
-      limitLines += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="#b42318" stroke-dasharray="5 4" />';
-      limitLines += '<text x="' + (W - R) + '" y="' + (Number(yy) + 12) + '" text-anchor="end" font-size="10" fill="#b42318">min ' + param.min + "</text>";
+      limitLines += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="' + danger + '" stroke-dasharray="5 4" />';
+      limitLines += '<text x="' + (W - R) + '" y="' + (Number(yy) + 12) + '" text-anchor="end" font-size="10" fill="' + danger + '">min ' + param.min + "</text>";
     }
     const path = data.map((p, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.value).toFixed(1)).join(" ");
     const dots = data.map((p, i) => {
       const cx = x(i).toFixed(1), cy = y(p.value).toFixed(1), bad = !!p.oor;
       let mark = "";
       if (p.flag) {
-        mark = '<line x1="' + cx + '" y1="' + (y(p.value) - 5).toFixed(1) + '" x2="' + cx + '" y2="' + (y(p.value) - 20).toFixed(1) + '" stroke="#1b365d" stroke-width="1.4"/>' +
-          '<rect x="' + (x(i) + 0.5).toFixed(1) + '" y="' + (y(p.value) - 29).toFixed(1) + '" width="15" height="13" rx="2" fill="#1b365d"/>' +
-          '<text x="' + (x(i) + 8).toFixed(1) + '" y="' + (y(p.value) - 19.5).toFixed(1) + '" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">' + p.flag + "</text>";
+        mark = '<line x1="' + cx + '" y1="' + (y(p.value) - 5).toFixed(1) + '" x2="' + cx + '" y2="' + (y(p.value) - 20).toFixed(1) + '" stroke="' + ink + '" stroke-width="1.4"/>' +
+          '<rect x="' + (x(i) + 0.5).toFixed(1) + '" y="' + (y(p.value) - 29).toFixed(1) + '" width="15" height="13" rx="2" fill="' + ink + '"/>' +
+          '<text x="' + (x(i) + 8).toFixed(1) + '" y="' + (y(p.value) - 19.5).toFixed(1) + '" text-anchor="middle" font-size="9" font-weight="700" fill="' + card + '">' + p.flag + "</text>";
       } else if (p.unack) {
-        mark = '<circle cx="' + cx + '" cy="' + (y(p.value) - 13).toFixed(1) + '" r="7" fill="#9a6700" stroke="#fff" stroke-width="1"/>' +
-          '<text x="' + cx + '" y="' + (y(p.value) - 9.2).toFixed(1) + '" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">!</text>';
+        mark = '<circle cx="' + cx + '" cy="' + (y(p.value) - 13).toFixed(1) + '" r="7" fill="#9a6700" stroke="' + card + '" stroke-width="1"/>' +
+          '<text x="' + cx + '" y="' + (y(p.value) - 9.2).toFixed(1) + '" text-anchor="middle" font-size="10" font-weight="700" fill="' + card + '">!</text>';
       }
       return '<g class="pt" tabindex="0" role="button" data-log-id="' + esc(p.logId) + '" data-param="' + esc(param.key) + '">' +
         '<circle class="hit" cx="' + cx + '" cy="' + cy + '" r="14" fill="transparent"/>' +
-        '<circle class="dot" cx="' + cx + '" cy="' + cy + '" r="' + (bad ? 5.2 : 3.2) + '" fill="' + (bad ? "#b42318" : "#0f6c8c") + '"/>' +
+        '<circle class="dot" cx="' + cx + '" cy="' + cy + '" r="' + (bad ? 5.2 : 3.2) + '" fill="' + (bad ? danger : line) + '"/>' +
         mark + "<title>" + esc(annotTooltip(p)) + "</title></g>";
     }).join("");
     const labels = data.map((p, i) => {
       const show = data.length <= 12 || i === 0 || i === data.length - 1 || i % Math.ceil(data.length / 8) === 0;
       if (!show) return "";
-      return '<text x="' + x(i).toFixed(1) + '" y="' + (H - 14) + '" text-anchor="middle" font-size="10" fill="#5c6778">' + esc((p.date || "").slice(5)) + "</text>";
+      return '<text x="' + x(i).toFixed(1) + '" y="' + (H - 14) + '" text-anchor="middle" font-size="10" fill="' + muted + '">' + esc((p.date || "").slice(5)) + "</text>";
     }).join("");
     el.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Trend chart. Click a point to annotate.">' +
-      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#fff"/>' + grid + limitLines +
-      '<path d="' + path + '" fill="none" stroke="#0f6c8c" stroke-width="2"/>' + dots + labels +
-      '<text x="' + (W / 2) + '" y="' + (H - 2) + '" text-anchor="middle" font-size="10" fill="#5c6778">Date</text></svg>';
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="' + card + '"/>' + grid + limitLines +
+      '<path d="' + path + '" fill="none" stroke="' + line + '" stroke-width="2"/>' + dots + labels +
+      '<text x="' + (W / 2) + '" y="' + (H - 2) + '" text-anchor="middle" font-size="10" fill="' + muted + '">Date</text></svg>';
   }
+
   function stats(values) {
     const v = values.filter((x) => x !== null);
     if (!v.length) return null;
@@ -961,9 +972,9 @@
       trends: viewTrends, import: viewImport, backup: viewBackup
     };
     if (v4 && v4.views) Object.assign(views, v4.views);
-    const groupMap = { recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders" };
+    const groupMap = { recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
     root.innerHTML = (views[ui.view] || viewDashboard)();
-    document.querySelectorAll("nav.tabs button").forEach((b) => {
+    document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
       const group = groupMap[ui.view] || ui.view;
       b.classList.toggle("active", b.dataset.view === group);
     });
@@ -1994,10 +2005,8 @@
       const maybe = window.LogbookV4.handleAction(act, btn, e);
       if (maybe && typeof maybe.then === "function") {
         maybe.then((handled) => { if (handled) e.preventDefault(); });
-        if (["wo-new","wo-open","wo-page","wo-create","wo-save","wo-comment","wo-labour","wo-attach","wo-rules","wor-create","wor-toggle","wor-del","usr-create","usr-del","usr-key","role-create"].indexOf(act) >= 0) {
-          e.preventDefault();
-          return;
-        }
+        e.preventDefault();
+        return;
       } else if (maybe) {
         e.preventDefault();
         return;
@@ -2282,7 +2291,7 @@
     if (ui.view === "recordEdit") { collectRecordEdits(); persist(); }
   });
 
-  document.querySelectorAll("nav.tabs button").forEach((b) => {
+  document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
     b.addEventListener("click", () => {
       if (ui.view === "templates") collectTplMeta(), persist();
       if (ui.view === "recordEdit") collectRecordEdits(), persist();
@@ -2294,6 +2303,23 @@
         render();
       }
     });
+  });
+  const gsearch = document.getElementById("global-search");
+  if (gsearch && !gsearch._bound) {
+    gsearch._bound = true;
+    gsearch.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        const q = gsearch.value.trim();
+        window.Logbook.goto("equipment", { q: q });
+      }
+    });
+  }
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "/" && ev.target && ev.target.tagName !== "INPUT" && ev.target.tagName !== "TEXTAREA" && ev.target.tagName !== "SELECT") {
+      const box = document.getElementById("global-search");
+      if (box) { ev.preventDefault(); box.focus(); }
+    }
   });
 
   async function init() {
@@ -2307,6 +2333,9 @@
     } catch (err) {
       if (v4) v4.showLogin(err.message || "Please sign in.");
       return;
+    }
+    if (v4 && v4.beforeView) {
+      try { await v4.beforeView(ui.view || "dashboard", ui); } catch (e) { /* first paint still useful */ }
     }
     render();
   }
@@ -2328,6 +2357,7 @@
       } else render();
     },
     applyPack, handleImportFile, tableFromFile,
+    drawTrend, trendPoints, eqById, paramsFor, eqTag, eqVal, outOfRange, annotOf, cssVar,
     // test hook: set import wizard and run
     importTable: (kind, rows, mapping, extra) => {
       ui.import = Object.assign({ step: 2, kind, logMode: "long", rows, mapping, createMissing: true }, extra || {});

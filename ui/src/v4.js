@@ -47,6 +47,36 @@
       }
     }
     if (out) out.hidden = !(authMode === "users" && me && me.mode === "user");
+    const nameEl = document.getElementById("who-name");
+    const roleEl = document.getElementById("who-role");
+    const av = document.getElementById("who-avatar");
+    if (me && me.mode === "user") {
+      const label = me.display_name || me.username || "user";
+      if (nameEl) nameEl.textContent = label;
+      if (roleEl) roleEl.textContent = (me.role || "user");
+      if (av) {
+        const parts = String(label).trim().split(/\s+/);
+        av.textContent = ((parts[0] || "?")[0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+      }
+    } else {
+      if (nameEl) nameEl.textContent = (me && me.username) || "Local user";
+      if (roleEl) roleEl.textContent = (authMode === "open") ? "Open mode" : (me && me.role) || "";
+      if (av) av.textContent = "LB";
+    }
+    const site = document.getElementById("site-chip");
+    if (site && state) site.textContent = plantLabel(state);
+  }
+
+  function plantLabel(state) {
+    const locs = (state.equipment || []).map((e) => {
+      const v = e.values || {};
+      return v.fld_location || v.location || "";
+    }).filter(Boolean);
+    for (const loc of locs) {
+      const parts = String(loc).split(/\s+[—–-]\s+/);
+      if (parts.length > 1) return parts[parts.length - 1].trim();
+    }
+    return locs[0] || "All sites";
   }
 
   /* ---------- login ---------- */
@@ -151,7 +181,7 @@
     const api = global.LogbookAPI;
     const params = {
       page: ui.woPage || 1,
-      page_size: 25,
+      page_size: ui.woPageSize || 200,
       q: ui.woQ || "",
       status: ui.woStatus || "",
       priority: ui.woPrio || "",
@@ -160,6 +190,46 @@
     return cache.list;
   }
 
+  function initials(name) {
+    const parts = String(name || "").trim().split(/\s+/);
+    return ((parts[0] || "?")[0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+  }
+  function formatDue(due) {
+    if (!due) return { text: "No due date", cls: "" };
+    const raw = String(due);
+    const day = raw.slice(0, 10);
+    const today = new Date();
+    const z = (n) => String(n).padStart(2, "0");
+    const tiso = today.getFullYear() + "-" + z(today.getMonth() + 1) + "-" + z(today.getDate());
+    const yest = new Date(today); yest.setDate(yest.getDate() - 1);
+    const yiso = yest.getFullYear() + "-" + z(yest.getMonth() + 1) + "-" + z(yest.getDate());
+    let text = day;
+    if (day === tiso) {
+      text = raw.length > 10 ? "Today " + raw.slice(11, 16) : "Today";
+    } else if (day === yiso) text = "Yesterday";
+    else {
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const [Y,M,D] = day.split("-");
+      text = (D ? parseInt(D, 10) : "") + " " + (months[parseInt(M, 10) - 1] || "");
+    }
+    const overdue = day && day < tiso;
+    return { text: text, cls: overdue ? "late" : (day === tiso ? "soon" : "") };
+  }
+  function woCard(w) {
+    const prio = w.priority || "medium";
+    const due = formatDue(w.due_at);
+    const who = w.assignee || "Unassigned";
+    const tag = w.tag || "—";
+    const closed = w.status === "closed" || w.status === "done";
+    const dueLabel = closed ? ("Closed " + (w.closed_at || w.completed_at || w.due_at || "").slice(5, 10)) : due.text;
+    const dueCls = closed ? "" : due.cls;
+    return '<article class="wocard" data-act="wo-open" data-id="' + esc(w.id) + '">' +
+      '<div class="row spread" style="margin-bottom:6px"><span class="pill ' + esc(prio) + '">' + esc(prio[0].toUpperCase() + prio.slice(1)) + '</span>' +
+      '<span class="tag">' + esc(tag) + '</span></div>' +
+      '<div class="ttl">' + esc(w.title) + '</div>' +
+      '<div class="meta"><span class="avatar sm">' + esc(initials(who)) + '</span> ' + esc(who) +
+      '<span class="due ' + dueCls + '">' + esc(dueLabel) + '</span></div></article>';
+  }
   function viewWorkOrders() {
     const L = global.Logbook;
     const state = L.getState();
@@ -167,50 +237,56 @@
     const data = cache.list || { items: [], total: 0, page: 1, pages: 1 };
     const items = data.items || [];
     const canCreate = can("workorders.create");
+    const cols = [
+      { key: "open", label: "Open", items: [] },
+      { key: "in_progress", label: "In progress", items: [] },
+      { key: "on_hold", label: "On hold", items: [] },
+      { key: "done", label: "Done", items: [] }
+    ];
+    const bucket = { open: 0, in_progress: 1, on_hold: 2, done: 3, closed: 3 };
+    items.forEach((w) => {
+      const i = bucket[w.status];
+      if (i == null) return;
+      if (ui.woStatus && w.status !== ui.woStatus && !(ui.woStatus === "done" && w.status === "closed")) return;
+      cols[i].items.push(w);
+    });
+    const openN = items.filter((w) => w.status === "open" || w.status === "in_progress" || w.status === "on_hold").length;
+    const overdueN = items.filter((w) => {
+      if (!(w.status === "open" || w.status === "in_progress" || w.status === "on_hold")) return false;
+      const d = (w.due_at || "").slice(0, 10);
+      if (!d) return false;
+      const t = new Date();
+      const z = (n) => String(n).padStart(2, "0");
+      return d < (t.getFullYear() + "-" + z(t.getMonth() + 1) + "-" + z(t.getDate()));
+    }).length;
     return `
-      <div class="row spread">
+      <div class="page-head">
         <div>
           <h2>Work orders</h2>
-          <p class="page-lead">Create, assign, and close maintenance or commissioning work. Status flows from open → in progress → on hold → done → closed.</p>
+          <p class="page-lead">${openN} open across the plant${overdueN ? " · " + overdueN + " overdue" : ""} · board shows the live load</p>
         </div>
         <div class="row">
-          ${canCreate ? '<button class="btn btn-primary" data-act="wo-new">New work order</button>' : ""}
-          ${can("workorders.assign") ? '<button class="btn" data-act="wo-rules">Auto-create rules</button>' : ""}
-        </div>
-      </div>
-      <div class="card">
-        <div class="grid-toolbar">
-          <label class="fld" style="min-width:10rem"><span>Search</span>
-            <input type="search" id="wo-q" value="${esc(ui.woQ || "")}" placeholder="Title or id…">
-          </label>
-          <label class="fld"><span>Status</span>
-            <select id="wo-status"><option value="">All</option>${statusOptions(ui.woStatus || "")}</select>
+          <label class="fld"><span>Search</span>
+            <input type="search" id="wo-q" value="${esc(ui.woQ || "")}" placeholder="Tags or titles…">
           </label>
           <label class="fld"><span>Priority</span>
-            <select id="wo-prio"><option value="">All</option>${prioOptions(ui.woPrio || "")}</select>
+            <select id="wo-prio"><option value="">All priorities</option>${prioOptions(ui.woPrio || "")}</select>
           </label>
-          <span class="tiny" style="margin-left:auto">${data.total || 0} orders</span>
+          ${can("workorders.assign") ? '<button class="btn" data-act="wo-rules">Auto-create rules</button>' : ""}
+          ${canCreate ? '<button class="btn btn-primary" data-act="wo-new">+ New work order</button>' : ""}
         </div>
-        <div class="table-wrap">
-          <table class="sheet">
-            <thead><tr><th>Title</th><th>Status</th><th>Priority</th><th>Equipment</th><th>Assignee</th><th>Due</th><th></th></tr></thead>
-            <tbody>
-              ${items.length ? items.map((w) =>
-                "<tr>" +
-                "<td><button class='linkish' data-act='wo-open' data-id='" + esc(w.id) + "'>" + esc(w.title) + "</button></td>" +
-                "<td><span class='kind-pill st-" + esc(w.status) + "'>" + esc(w.status.replace("_", " ")) + "</span></td>" +
-                "<td>" + esc(w.priority) + "</td>" +
-                "<td>" + esc(w.tag || w.equipment_id || "—") + "</td>" +
-                "<td>" + esc(w.assignee || "—") + "</td>" +
-                "<td>" + esc((w.due_at || "").slice(0, 10) || "—") + "</td>" +
-                "<td class='no-print'><button class='btn btn-sm' data-act='wo-open' data-id='" + esc(w.id) + "'>Open</button></td>" +
-                "</tr>"
-              ).join("") : '<tr><td colspan="7"><p class="empty">No work orders yet. Create one, or enable an auto-create rule on out-of-range readings.</p></td></tr>'}
-            </tbody>
-          </table>
-        </div>
-        <div class="pager">${pager("wo-page", data)}</div>
       </div>
+      <div class="kanban">
+        ${cols.map((c) => `
+          <section class="col">
+            <div class="col-h"><span class="pill ${c.key === "in_progress" ? "progress" : (c.key === "on_hold" ? "hold" : c.key)}">${esc(c.label)}</span>
+              <span class="n">${c.items.length}</span></div>
+            <div class="col-body">
+              ${c.items.length ? c.items.map(woCard).join("") : '<p class="empty">Nothing here</p>'}
+            </div>
+          </section>`).join("")}
+      </div>
+      ${data.pages > 1 ? '<div class="pager">' + pager("wo-page", data) + "</div>" : ""}
     `;
   }
 
@@ -424,7 +500,17 @@
     console.log(msg);
   }
 
-  async function handleAction(act, el, ev) {
+  const V4_ACTS = new Set([
+    "wo-new","wo-open","wo-page","wo-create","wo-save","wo-comment","wo-labour","wo-attach","wo-rules",
+    "wor-create","wor-toggle","wor-del","usr-create","usr-del","usr-key","role-create",
+  ]);
+
+  function handleAction(act, el, ev) {
+    if (!V4_ACTS.has(act)) return false;
+    return handleActionAsync(act, el, ev);
+  }
+
+  async function handleActionAsync(act, el, ev) {
     const api = global.LogbookAPI;
     const L = global.Logbook;
     const ui = L._ui || (L._ui = {});
@@ -606,7 +692,7 @@
   }
 
   global.LogbookV4 = {
-    can, applyChrome, showLogin, hideLogin, maybeRequireLogin, bindLogin,
+    can, applyChrome, plantLabel, showLogin, hideLogin, maybeRequireLogin, bindLogin,
     views, handleAction, beforeView, bindFilters, refreshUsers, cache,
     product,
   };

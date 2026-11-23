@@ -32,6 +32,10 @@ PERMISSIONS: list[str] = [
     "workorders.create",
     "workorders.assign",
     "workorders.close",
+    "documents.read",
+    "documents.upload",
+    "documents.approve",
+    "routes.manage",
     "users.manage",
     "audit.read",
     "webhooks.manage",
@@ -41,14 +45,14 @@ PERMISSIONS: list[str] = [
 ALL_PERMISSIONS: frozenset[str] = frozenset(PERMISSIONS)
 
 _READ = (
-    "equipment.read", "records.read", "templates.read", "readings.read", "workorders.read"
+    "equipment.read", "records.read", "templates.read", "readings.read", "workorders.read", "documents.read"
 )
 _TECH = _READ + (
-    "records.write", "readings.write", "annotations.write", "signoff", "workorders.create",
+    "records.write", "readings.write", "annotations.write", "signoff", "workorders.create", "documents.upload",
 )
 _SUPER = _TECH + (
     "equipment.write", "templates.write", "workorders.assign", "workorders.close",
-    "audit.read", "webhooks.manage",
+    "documents.approve", "audit.read", "webhooks.manage",
 )
 
 BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {

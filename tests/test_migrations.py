@@ -32,7 +32,7 @@ def test_alembic_upgrade_from_empty(tmp_path):
     engine = make_engine(url)
     run_migrations(engine)
     tables = set(inspect(engine).get_table_names())
-    for needed in ("equipment", "readings", "users", "roles", "work_orders", "session_tokens", "api_keys", "sites"):
+    for needed in ("equipment", "readings", "users", "roles", "work_orders", "session_tokens", "api_keys", "sites", "documents", "approval_routes"):
         assert needed in tables, needed
     cols = {c["name"] for c in inspect(engine).get_columns("readings")}
     assert "out_of_range" in cols
@@ -57,7 +57,7 @@ def test_alembic_upgrade_from_v03(tmp_path):
         cfg.attributes["connection"] = conn
         command.upgrade(cfg, "head")
     tables = set(inspect(engine).get_table_names())
-    assert "users" in tables and "work_orders" in tables
+    assert "users" in tables and "work_orders" in tables and "documents" in tables
     cols = {c["name"] for c in inspect(engine).get_columns("readings")}
     assert "out_of_range" in cols
 
@@ -76,9 +76,9 @@ def test_alembic_stamp_legacy_v03_file(tmp_path):
     assert "alembic_version" not in inspect(engine).get_table_names()
     run_migrations(engine)
     tables = set(inspect(engine).get_table_names())
-    assert "users" in tables and "work_orders" in tables
+    assert "users" in tables and "work_orders" in tables and "documents" in tables
     with engine.begin() as conn:
         tag = conn.execute(text("SELECT tag FROM equipment WHERE id='eq_1'")).scalar()
         assert tag == "LEG-1"
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0002_v04"
+        assert version == "0003_v05"

@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from logbook_server.auth import BUILTIN_ROLES, hash_password
-from logbook_server.models import Role, User
+from logbook_server.models import ApprovalRoute, ApprovalRouteStep, Role, User
 from logbook_server.utils import dumps, uid, utcnow_iso
 
 
@@ -77,3 +77,55 @@ def maybe_bootstrap_admin(db: Session, settings) -> User | None:
     if db.query(User).count() > 0:
         return None
     return create_admin_user(db, username=username, password=password)
+
+
+
+def ensure_default_routes(db: Session) -> list[ApprovalRoute]:
+    """Seed a standard Supervisor → Admin route when none exist."""
+    existing = db.query(ApprovalRoute).count()
+    if existing:
+        return db.query(ApprovalRoute).all()
+    now = utcnow_iso()
+    route = ApprovalRoute(
+        id=uid("rt"),
+        name="Standard review",
+        description="Supervisor review, then admin sign-off. Matches any document type.",
+        document_type=None,
+        site_id=None,
+        enabled=1,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(route)
+    db.flush()
+    db.add(ApprovalRouteStep(
+        id=uid("rst"), route_id=route.id, sort_order=0,
+        assignee_type="role", role_name="supervisor", label="Supervisor",
+    ))
+    db.add(ApprovalRouteStep(
+        id=uid("rst"), route_id=route.id, sort_order=1,
+        assignee_type="role", role_name="admin", label="Admin",
+    ))
+    # A slightly more specific commissioning route with the same steps
+    comm = ApprovalRoute(
+        id=uid("rt"),
+        name="Commissioning test sheet",
+        description="Used for commissioning and start-up test sheets.",
+        document_type="commissioning_test_sheet",
+        site_id=None,
+        enabled=1,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(comm)
+    db.flush()
+    db.add(ApprovalRouteStep(
+        id=uid("rst"), route_id=comm.id, sort_order=0,
+        assignee_type="role", role_name="supervisor", label="Supervisor",
+    ))
+    db.add(ApprovalRouteStep(
+        id=uid("rst"), route_id=comm.id, sort_order=1,
+        assignee_type="role", role_name="admin", label="Admin",
+    ))
+    db.flush()
+    return [route, comm]

@@ -427,3 +427,98 @@ CREATE TABLE auto_work_order_rules (
     updated_at            TEXT NOT NULL
 );
 CREATE INDEX ix_auto_wo_rules_eq ON auto_work_order_rules(equipment_id);
+
+
+-- v0.5 document approvals
+CREATE TABLE approval_routes (
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    description    TEXT,
+    document_type  TEXT,                          -- optional filter
+    site_id        TEXT REFERENCES sites(id) ON DELETE SET NULL,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+);
+CREATE INDEX ix_approval_routes_document_type ON approval_routes(document_type);
+CREATE INDEX ix_approval_routes_site_id ON approval_routes(site_id);
+
+CREATE TABLE approval_route_steps (
+    id             TEXT PRIMARY KEY,
+    route_id       TEXT NOT NULL REFERENCES approval_routes(id) ON DELETE CASCADE,
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    assignee_type  TEXT NOT NULL DEFAULT 'role', -- role | user
+    role_name      TEXT,
+    user_id        TEXT REFERENCES users(id) ON DELETE SET NULL,
+    label          TEXT
+);
+CREATE INDEX ix_approval_route_steps_route_id ON approval_route_steps(route_id);
+
+CREATE TABLE documents (
+    id                  TEXT PRIMARY KEY,
+    title               TEXT NOT NULL,
+    document_type       TEXT,
+    status              TEXT NOT NULL DEFAULT 'draft', -- draft | in_review | approved | rejected | returned
+    equipment_id        TEXT REFERENCES equipment(id) ON DELETE SET NULL,
+    record_id           TEXT REFERENCES records(id) ON DELETE SET NULL,
+    work_order_id       TEXT REFERENCES work_orders(id) ON DELETE SET NULL,
+    site_id             TEXT REFERENCES sites(id) ON DELETE SET NULL,
+    route_id            TEXT REFERENCES approval_routes(id) ON DELETE SET NULL,
+    current_version_id  TEXT,
+    current_step_index  INTEGER NOT NULL DEFAULT 0,
+    locked              INTEGER NOT NULL DEFAULT 0,    -- 1 once approved
+    submitted_by        TEXT,
+    submitted_by_id     TEXT REFERENCES users(id) ON DELETE SET NULL,
+    submitted_at        TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+CREATE INDEX ix_documents_status ON documents(status);
+CREATE INDEX ix_documents_equipment ON documents(equipment_id);
+CREATE INDEX ix_documents_updated ON documents(updated_at);
+CREATE INDEX ix_documents_document_type ON documents(document_type);
+
+CREATE TABLE document_versions (
+    id              TEXT PRIMARY KEY,
+    document_id     TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    version_no      INTEGER NOT NULL DEFAULT 1,
+    filename        TEXT NOT NULL,
+    mime            TEXT,
+    size            INTEGER NOT NULL DEFAULT 0,
+    sha256          TEXT NOT NULL,
+    storage_path    TEXT NOT NULL,                  -- relative to the package root, under data/attachments/documents
+    uploaded_by     TEXT,
+    uploaded_by_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX ix_document_versions_document_id ON document_versions(document_id);
+
+CREATE TABLE document_approval_steps (
+    id             TEXT PRIMARY KEY,
+    document_id    TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    version_id     TEXT REFERENCES document_versions(id) ON DELETE SET NULL,
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    assignee_type  TEXT NOT NULL DEFAULT 'role',
+    role_name      TEXT,
+    user_id        TEXT REFERENCES users(id) ON DELETE SET NULL,
+    label          TEXT,
+    status         TEXT NOT NULL DEFAULT 'waiting', -- waiting | pending | approved | rejected | returned
+    actor_id       TEXT REFERENCES users(id) ON DELETE SET NULL,
+    actor_name     TEXT,
+    comment        TEXT,
+    acted_at       TEXT
+);
+CREATE INDEX ix_document_approval_steps_document_id ON document_approval_steps(document_id);
+
+CREATE TABLE document_comments (
+    id           TEXT PRIMARY KEY,
+    document_id  TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    version_id   TEXT REFERENCES document_versions(id) ON DELETE SET NULL,
+    kind         TEXT NOT NULL DEFAULT 'comment', -- comment | system
+    event        TEXT,                            -- submitted | step_approved | approved | rejected | returned | uploaded
+    author_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+    author       TEXT,
+    body         TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX ix_document_comments_document_id ON document_comments(document_id);

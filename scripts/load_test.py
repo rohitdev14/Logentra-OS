@@ -215,7 +215,7 @@ def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Logbook v0.4 load test")
+    parser = argparse.ArgumentParser(description="Logbook v0.5 load test")
     parser.add_argument("--equipment", type=int, default=5000)
     parser.add_argument("--readings-per", type=int, default=100)
     parser.add_argument("--work-orders", type=int, default=2000)

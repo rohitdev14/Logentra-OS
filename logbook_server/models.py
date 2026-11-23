@@ -483,3 +483,127 @@ class AutoWorkOrderRule(Base):
     cooldown_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=1440)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# v0.5 — document approvals
+# ---------------------------------------------------------------------------
+
+
+class ApprovalRoute(Base):
+    __tablename__ = "approval_routes"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    document_type: Mapped[str | None] = mapped_column(Text, index=True)
+    site_id: Mapped[str | None] = mapped_column(Text, ForeignKey("sites.id", ondelete="SET NULL"), index=True)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    steps: Mapped[list[ApprovalRouteStep]] = relationship(
+        back_populates="route", cascade="all, delete-orphan", order_by="ApprovalRouteStep.sort_order"
+    )
+
+
+class ApprovalRouteStep(Base):
+    __tablename__ = "approval_route_steps"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    route_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("approval_routes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    assignee_type: Mapped[str] = mapped_column(Text, nullable=False, default="role")  # role | user
+    role_name: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    label: Mapped[str | None] = mapped_column(Text)
+    route: Mapped[ApprovalRoute] = relationship(back_populates="steps")
+
+
+class Document(Base):
+    __tablename__ = "documents"
+    __table_args__ = (
+        Index("ix_documents_status", "status"),
+        Index("ix_documents_equipment", "equipment_id"),
+        Index("ix_documents_updated", "updated_at"),
+    )
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    document_type: Mapped[str | None] = mapped_column(Text, index=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="draft")
+    equipment_id: Mapped[str | None] = mapped_column(Text, ForeignKey("equipment.id", ondelete="SET NULL"))
+    record_id: Mapped[str | None] = mapped_column(Text, ForeignKey("records.id", ondelete="SET NULL"))
+    work_order_id: Mapped[str | None] = mapped_column(Text, ForeignKey("work_orders.id", ondelete="SET NULL"))
+    site_id: Mapped[str | None] = mapped_column(Text, ForeignKey("sites.id", ondelete="SET NULL"))
+    route_id: Mapped[str | None] = mapped_column(Text, ForeignKey("approval_routes.id", ondelete="SET NULL"))
+    current_version_id: Mapped[str | None] = mapped_column(Text)
+    current_step_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    locked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    submitted_by: Mapped[str | None] = mapped_column(Text)
+    submitted_by_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    submitted_at: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    versions: Mapped[list[DocumentVersion]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", order_by="DocumentVersion.version_no"
+    )
+    approval_steps: Mapped[list[DocumentApprovalStep]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", order_by="DocumentApprovalStep.sort_order"
+    )
+    comments: Mapped[list[DocumentComment]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", order_by="DocumentComment.created_at"
+    )
+
+
+class DocumentVersion(Base):
+    __tablename__ = "document_versions"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    document_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    mime: Mapped[str | None] = mapped_column(Text)
+    size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    uploaded_by: Mapped[str | None] = mapped_column(Text)
+    uploaded_by_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    document: Mapped[Document] = relationship(back_populates="versions")
+
+
+class DocumentApprovalStep(Base):
+    __tablename__ = "document_approval_steps"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    document_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_id: Mapped[str | None] = mapped_column(Text, ForeignKey("document_versions.id", ondelete="SET NULL"))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    assignee_type: Mapped[str] = mapped_column(Text, nullable=False, default="role")
+    role_name: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    label: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="waiting")
+    actor_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    actor_name: Mapped[str | None] = mapped_column(Text)
+    comment: Mapped[str | None] = mapped_column(Text)
+    acted_at: Mapped[str | None] = mapped_column(Text)
+    document: Mapped[Document] = relationship(back_populates="approval_steps")
+
+
+class DocumentComment(Base):
+    __tablename__ = "document_comments"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    document_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_id: Mapped[str | None] = mapped_column(Text, ForeignKey("document_versions.id", ondelete="SET NULL"))
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default="comment")  # comment | system
+    event: Mapped[str | None] = mapped_column(Text)
+    author_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    author: Mapped[str | None] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    document: Mapped[Document] = relationship(back_populates="comments")
+

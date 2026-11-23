@@ -24,6 +24,49 @@ def _seeded(n: int) -> float:
     return x - math.floor(x)
 
 
+
+def _simple_pdf(title: str, lines: list[str]) -> bytes:
+    """Build a tiny single-page PDF without extra dependencies."""
+    def esc(s: str) -> str:
+        return (s or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    y = 800
+    cmds = [
+        "BT /F1 16 Tf 48 " + str(y) + " Td (" + esc(title) + ") Tj ET",
+    ]
+    y -= 28
+    for line in lines:
+        cmds.append("BT /F1 10 Tf 48 " + str(y) + " Td (" + esc(line) + ") Tj ET")
+        y -= 14
+        if y < 60:
+            break
+    stream = "\n".join(cmds).encode("latin-1", "replace")
+    objects = []
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    objects.append(b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    objects.append(
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+    )
+    objects.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out.extend(f"{i} 0 obj\n".encode("ascii"))
+        out.extend(obj)
+        out.extend(b"\nendobj\n")
+    xref = len(out)
+    out.extend(f"xref\n0 {len(objects)+1}\n".encode("ascii"))
+    out.extend(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        out.extend(f"{off:010d} 00000 n \n".encode("ascii"))
+    out.extend(
+        f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(out)
+
+
 def load_demo(db: Session, *, actor: str = "ui") -> dict:
     service.clear_all(db, actor=actor)
     today = _today()
@@ -181,6 +224,23 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
     }
     service.sync_catalog(db, state, actor=actor)
 
+    from logbook_server.models import Area, Equipment, Site
+    site = db.get(Site, "site_northbrook")
+    if site is None:
+        site = Site(id="site_northbrook", name="Northbrook Works", code="NBK", created_at=now)
+        db.add(site)
+        db.flush()
+    else:
+        site.name = "Northbrook Works"
+        site.code = site.code or "NBK"
+    existing_areas = {a.name for a in (site.areas or [])} if site.areas is not None else set()
+    for i, aname in enumerate(("Pump house", "Compressor hall", "Roof plant", "Yard"), start=1):
+        if aname not in existing_areas:
+            db.add(Area(id=f"area_nbk_{i}", site_id=site.id, name=aname, code=None, created_at=now))
+    for eq in db.query(Equipment).all():
+        eq.site_id = site.id
+    db.flush()
+
     series = {
         "eq_p101": {"flow": 52, "discharge_p": 3.2, "vibration": 2.1, "bearing_t": 62},
         "eq_m204": {"current": 14.2, "winding_t": 68, "vibration": 1.8},
@@ -217,6 +277,87 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
                 items.append(rec)
     # do not fire outbound webhooks for historical demo spikes
     result = service.ingest_readings(db, items, source="demo", actor=actor, fire_webhooks=False)
+
+    # Work orders across the Kanban columns
+    from logbook_server import workorders as wo
+    from datetime import datetime as _dt
+    today_d = _dt.strptime(today, "%Y-%m-%d")
+    def due(delta: int, hhmm: str | None = None) -> str:
+        d = (today_d + timedelta(days=delta)).strftime("%Y-%m-%d")
+        return f"{d}T{hhmm}:00" if hhmm else d
+    jobs = [
+        {"title": "Investigate P-101 vibration 6.2 mm/s", "priority": "high", "status": "open",
+         "equipment_id": "eq_p101", "due_at": due(1), "description": "Unacknowledged high vibration on the second spike."},
+        {"title": "Top up TK-03 and record level after transfer", "priority": "medium", "status": "open",
+         "equipment_id": "eq_tk03", "due_at": due(4)},
+        {"title": "Seasonal start-up checks — commissioning package", "priority": "high", "status": "in_progress",
+         "equipment_id": "eq_p101", "due_at": today},
+        {"title": "AHU-12 filter inspection and DP reset", "priority": "urgent", "status": "in_progress",
+         "equipment_id": "eq_ahu12", "due_at": due(-1)},
+        {"title": "M-204 coupling alignment after weekend restart", "priority": "medium", "status": "in_progress",
+         "equipment_id": "eq_m204", "due_at": due(3)},
+        {"title": "P-101 motor rewind quote — hold pending budget", "priority": "high", "status": "on_hold",
+         "equipment_id": "eq_p101", "due_at": None},
+        {"title": "AHU-12 damper actuator — parts on order", "priority": "low", "status": "on_hold",
+         "equipment_id": "eq_ahu12", "due_at": due(12)},
+        {"title": "AHU-12 belt replacement close-out, photos filed", "priority": "medium", "status": "done",
+         "equipment_id": "eq_ahu12", "due_at": due(-1)},
+        {"title": "TK-03 level transmitter calibration accepted", "priority": "low", "status": "done",
+         "equipment_id": "eq_tk03", "due_at": due(-2)},
+        {"title": "P-101 oil filter change, 4,000 h service", "priority": "medium", "status": "closed",
+         "equipment_id": "eq_p101", "due_at": due(-3)},
+    ]
+    for job in jobs:
+        wo.create_work_order(db, job, actor=actor, fire_webhooks=False, source="demo")
+
+    # A commissioning test sheet already in review (supervisor pending)
+    from logbook_server import documents as docs
+    from logbook_server import seed as _seed
+    routes = _seed.ensure_default_routes(db)
+    comm = next((r for r in routes if r.document_type == "commissioning_test_sheet"), routes[0])
+    pdf = _simple_pdf("Northbrook Works — P-101 commissioning test sheet (Rev B, fictional)", [
+        "Equipment: P-101   Location: Pump house   Date: " + today,
+        "Technician: A. Rahman (demo)    Witness: Supervisor",
+        "",
+        "Checkpoint                         Unit    Expected      Recorded    Result",
+        "Flow                               m3/h    40 – 60       52.3        Pass",
+        "Discharge pressure                 bar     2.5 – 4.0     3.2         Pass",
+        "Bearing temperature                C       <= 80         62          Pass",
+        "Vibration, running                 mm/s    <= 4.5        6.2         Fail *",
+        "Coupling / guard in place                    yes         yes         Pass",
+        "",
+        "* Vibration 6.2 mm/s on the first spike (fictional demo). Annotation recorded;",
+        "  coupling tightened and a retest is booked on a work order.",
+    ])
+    doc = docs.create_document(
+        db,
+        title="P-101 Commissioning Test Sheet — Rev B",
+        filename="test-sheet-P-101-revB.pdf",
+        data=pdf,
+        mime="application/pdf",
+        document_type="commissioning_test_sheet",
+        equipment_id="eq_p101",
+        record_id="rec_demo_1",
+        actor="A. Rahman (demo)",
+    )
+    docs.submit_document(db, doc, route_id=comm.id, actor="A. Rahman (demo)")
+
+    # A second document still in draft so the submit panel can be demonstrated
+    photo_pdf = _simple_pdf("AHU-12 filter inspection photos (index, fictional)", [
+        "Eight photographs of the AHU-12 final filters, taken during the inspection record.",
+        "Linked to the open work order for filter replacement.",
+    ])
+    docs.create_document(
+        db,
+        title="AHU-12 filter inspection photos",
+        filename="ahu-12-filter-photos.pdf",
+        data=photo_pdf,
+        mime="application/pdf",
+        document_type="inspection_photos",
+        equipment_id="eq_ahu12",
+        actor="A. Rahman (demo)",
+    )
+
     service.set_setting(db, "demo", "1")
     db.commit()
     return {"ok": True, "readings": result["added"], "at": now}

@@ -23,7 +23,9 @@
       headers["X-API-Key"] = global.LOGBOOK_API_KEY;
     }
     const init = { method, headers };
-    if (body !== undefined) {
+    if (body instanceof FormData) {
+      init.body = body;
+    } else if (body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(body);
     }
@@ -142,7 +144,25 @@
     revokeApiKey: (uid, kid) => req("DELETE", "/users/" + encodeURIComponent(uid) + "/api-keys/" + encodeURIComponent(kid)),
     listSites: () => req("GET", "/sites"),
     createSite: (body) => req("POST", "/sites", body),
-    listLogs: (params) => req("GET", "/logs" + qs(params))
+    listLogs: (params) => req("GET", "/logs" + qs(params)),
+    dashboard: () => req("GET", "/dashboard"),
+    listDocuments: (params) => req("GET", "/documents" + qs(params)),
+    getDocument: (id) => req("GET", "/documents/" + encodeURIComponent(id)),
+    documentFileUrl: (id, versionId) => API + "/documents/" + encodeURIComponent(id) + "/file" + (versionId ? "?version_id=" + encodeURIComponent(versionId) : ""),
+    uploadDocument: (form) => req("POST", "/documents", form),
+    addDocumentVersion: (id, form) => req("POST", "/documents/" + encodeURIComponent(id) + "/versions", form),
+    patchDocument: (id, body) => req("PATCH", "/documents/" + encodeURIComponent(id), body),
+    submitDocument: (id, body) => req("POST", "/documents/" + encodeURIComponent(id) + "/submit", body || {}),
+    approveDocument: (id, comment) => req("POST", "/documents/" + encodeURIComponent(id) + "/approve", { comment: comment || "" }),
+    rejectDocument: (id, comment) => req("POST", "/documents/" + encodeURIComponent(id) + "/reject", { comment: comment }),
+    returnDocument: (id, comment) => req("POST", "/documents/" + encodeURIComponent(id) + "/return", { comment: comment }),
+    commentDocument: (id, body) => req("POST", "/documents/" + encodeURIComponent(id) + "/comments", { body: body }),
+    documentsQueue: (params) => req("GET", "/documents/queue" + qs(params)),
+    listRoutes: (params) => req("GET", "/approval-routes" + qs(params)),
+    getRoute: (id) => req("GET", "/approval-routes/" + encodeURIComponent(id)),
+    createRoute: (body) => req("POST", "/approval-routes", body),
+    patchRoute: (id, body) => req("PATCH", "/approval-routes/" + encodeURIComponent(id), body),
+    deleteRoute: (id) => req("DELETE", "/approval-routes/" + encodeURIComponent(id))
   };
 
   function qs(params) {

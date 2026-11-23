@@ -3,450 +3,1078 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>Logbook v0.4 – early release — Equipment, records, and work orders</title>
+  <meta name="color-scheme" content="light dark">
+  <title>Logbook v0.5 – early release — Equipment, records, work orders, and approvals</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("logbook.theme");
+        if (t !== "light" && t !== "dark") {
+          t = (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+        }
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
   <style>
-:root {
-  --navy: #1b365d;
-  --navy-2: #132845;
-  --teal: #0f6c8c;
-  --teal-2: #0c5670;
-  --ink: #1c2330;
-  --muted: #5c6778;
-  --line: #d5dce5;
-  --bg: #eef1f5;
-  --card: #ffffff;
-  --pass: #18794e;
-  --fail: #b42318;
-  --na: #667085;
-  --warn: #9a6700;
-  --radius: 10px;
-  --shadow: 0 1px 2px rgba(27, 54, 93, 0.06), 0 8px 24px rgba(27, 54, 93, 0.06);
-  --font: "Segoe UI", ui-sans-serif, system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: "Cascadia Mono", "Segoe UI Mono", ui-monospace, Menlo, Consolas, monospace;
+
+/* ---------- tokens ---------- */
+:root, [data-theme="light"] {
+  --bg: #f3f4f7;
+  --bg-accent: #eef0f5;
+  --surface: #ffffff;
+  --surface-2: #f7f8fb;
+  --surface-hover: #f0f2f7;
+  --ink: #14171f;
+  --ink-2: #3c4350;
+  --muted: #6b7380;
+  --faint: #8b93a1;
+  --line: #e4e7ee;
+  --line-2: #eceef3;
+  --shadow: 0 1px 2px rgba(20, 23, 31, 0.05), 0 8px 24px rgba(20, 23, 31, 0.05);
+  --shadow-sm: 0 1px 2px rgba(20, 23, 31, 0.05);
+  --accent: #4f46e5;
+  --accent-2: #4338ca;
+  --accent-soft: #eef0ff;
+  --accent-ink: #3730a3;
+  --teal: #0f766e;
+  --teal-soft: #e6f5f3;
+  --cyan: #0e7490;
+  --amber: #b45309;
+  --amber-bg: #fff7ed;
+  --rose: #be123c;
+  --rose-bg: #fff1f2;
+  --green: #047857;
+  --green-bg: #ecfdf5;
+  --blue: #1d4ed8;
+  --blue-bg: #eff6ff;
+  --sidebar: #fafbfc;
+  --sidebar-ink: #14171f;
+  --sidebar-muted: #6b7380;
+  --sidebar-hover: #eef0f5;
+  --sidebar-active: #eef0ff;
+  --sidebar-active-ink: #3730a3;
+  --sidebar-border: #e4e7ee;
+  --topbar: #ffffff;
+  --chart-line: #4f46e5;
+  --chart-fill: rgba(79, 70, 229, 0.12);
+  --chart-grid: #eceef3;
+  --chart-limit: #e11d48;
+  --pill-open-bg: #eff6ff;
+  --pill-open-ink: #1d4ed8;
+  --pill-prog-bg: #ecfdf5;
+  --pill-prog-ink: #047857;
+  --pill-hold-bg: #fff7ed;
+  --pill-hold-ink: #b45309;
+  --pill-done-bg: #f1f5f9;
+  --pill-done-ink: #475569;
+  --prio-urgent: #be123c;
+  --prio-high: #c2410c;
+  --prio-med: #a16207;
+  --prio-low: #3f6212;
+  --overlay: rgba(20, 23, 31, 0.32);
+  --preview-paper: #fff;
+  --preview-rule: #e7eaf0;
+  --good: #047857;
+  --warn: #b45309;
+  --bad: #be123c;
+  color-scheme: light;
 }
+
+[data-theme="dark"] {
+  --bg: #0b0e13;
+  --bg-accent: #10151c;
+  --surface: #141a22;
+  --surface-2: #1a222c;
+  --surface-hover: #1e2732;
+  --ink: #e8edf3;
+  --ink-2: #c3ccd6;
+  --muted: #8b97a6;
+  --faint: #6d7a8a;
+  --line: #2a3441;
+  --line-2: #222b36;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px rgba(0, 0, 0, 0.28);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --accent: #22d3ee;
+  --accent-2: #67e8f9;
+  --accent-soft: rgba(34, 211, 238, 0.12);
+  --accent-ink: #a5f3fc;
+  --teal: #2dd4bf;
+  --teal-soft: rgba(45, 212, 191, 0.12);
+  --cyan: #22d3ee;
+  --amber: #fbbf24;
+  --amber-bg: rgba(251, 191, 36, 0.12);
+  --rose: #fb7185;
+  --rose-bg: rgba(251, 113, 133, 0.12);
+  --green: #34d399;
+  --green-bg: rgba(52, 211, 153, 0.12);
+  --blue: #7dd3fc;
+  --blue-bg: rgba(125, 211, 252, 0.12);
+  --sidebar: #0e1218;
+  --sidebar-ink: #e8edf3;
+  --sidebar-muted: #8b97a6;
+  --sidebar-hover: #1a222c;
+  --sidebar-active: rgba(34, 211, 238, 0.1);
+  --sidebar-active-ink: #a5f3fc;
+  --sidebar-border: #1e2732;
+  --topbar: #121820;
+  --chart-line: #22d3ee;
+  --chart-fill: rgba(34, 211, 238, 0.14);
+  --chart-grid: #232c38;
+  --chart-limit: #fb7185;
+  --pill-open-bg: rgba(125, 211, 252, 0.14);
+  --pill-open-ink: #7dd3fc;
+  --pill-prog-bg: rgba(52, 211, 153, 0.14);
+  --pill-prog-ink: #34d399;
+  --pill-hold-bg: rgba(251, 191, 36, 0.14);
+  --pill-hold-ink: #fbbf24;
+  --pill-done-bg: rgba(148, 163, 184, 0.14);
+  --pill-done-ink: #94a3b8;
+  --prio-urgent: #fb7185;
+  --prio-high: #fb923c;
+  --prio-med: #fbbf24;
+  --prio-low: #a3e635;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --preview-paper: #1a222c;
+  --preview-rule: #2a3441;
+  --good: #34d399;
+  --warn: #fbbf24;
+  --bad: #fb7185;
+  color-scheme: dark;
+}
+
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body {
-  font-family: var(--font);
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
   color: var(--ink);
   background: var(--bg);
-  line-height: 1.45;
-  min-height: 100vh;
+  font-feature-settings: "cv11", "ss01", "calt";
+  -webkit-font-smoothing: antialiased;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+textarea { resize: vertical; }
 h1, h2, h3, p { margin: 0; }
-h1 { font-size: 1.25rem; letter-spacing: -0.02em; }
-h2 { font-size: 1.15rem; letter-spacing: -0.02em; }
-h3 { font-size: 0.95rem; }
+a { color: inherit; text-decoration: none; }
 
-/* Header */
-.app-header {
-  background: var(--navy);
-  color: #fff;
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  box-shadow: 0 1px 0 rgba(0,0,0,0.15);
-}
-.app-header-inner {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0.7rem 1.25rem 0;
+.app {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 0.75rem 1.25rem;
+  min-height: 100vh;
+  background: var(--bg);
 }
-.brand { display: flex; gap: 0.75rem; align-items: center; min-width: 16rem; flex: 1; }
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  width: 220px;
+  flex: 0 0 220px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--sidebar-border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px 14px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 16px;
+}
 .brand-mark {
-  width: 36px; height: 36px; border-radius: 8px;
-  background: var(--teal);
-  display: grid; place-items: center;
-  flex-shrink: 0;
-}
-.brand-mark svg { width: 22px; height: 22px; }
-.brand h1 { font-weight: 650; }
-.brand .sub { color: #c9d4e3; font-size: 0.78rem; margin-top: 0.1rem; }
-.version-badge {
-  background: #3d1d1d;
-  color: #f3c6c2;
-  border: 1px solid #8a3a34;
-  font-size: 0.72rem;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  padding: 0.28rem 0.55rem;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-.header-actions { display: flex; gap: 0.4rem; align-items: center; }
-nav.tabs {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0.45rem 1.25rem 0;
-  display: flex;
-  gap: 0.15rem;
-  overflow-x: auto;
-}
-nav.tabs button {
-  background: transparent;
-  border: 0;
-  color: #c5d0de;
-  padding: 0.55rem 0.8rem;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.88rem;
-  white-space: nowrap;
-}
-nav.tabs button:hover { color: #fff; }
-nav.tabs button.active {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(145deg, var(--accent) 0%, var(--accent-2) 100%);
   color: #fff;
-  border-bottom-color: #7ec8dd;
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  box-shadow: 0 4px 10px rgba(79, 70, 229, 0.28);
 }
-main#view {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 1.25rem 1.25rem 3rem;
+[data-theme="dark"] .brand-mark {
+  background: linear-gradient(145deg, #22d3ee 0%, #0891b2 100%);
+  color: #042f2e;
+  box-shadow: 0 4px 12px rgba(34, 211, 238, 0.22);
 }
-.app-footer {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0 1.25rem 2rem;
-  color: var(--muted);
-  font-size: 0.8rem;
+.brand-mark svg { width: 18px; height: 18px; }
+.brand h1 {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
 }
+.brand .sub {
+  font-size: 11px;
+  color: var(--sidebar-muted);
+  letter-spacing: 0.01em;
+}
+.nav-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 8px 10px 6px;
+}
+.nav a, .nav button {
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--sidebar-muted);
+  font-weight: 500;
+  margin-bottom: 1px;
+}
+.nav a svg, .nav button svg { flex: 0 0 18px; opacity: 0.9; }
+.nav a:hover, .nav button:hover { background: var(--sidebar-hover); color: var(--sidebar-ink); }
+.nav a.active, .nav button.active {
+  background: var(--sidebar-active);
+  color: var(--sidebar-active-ink);
+  font-weight: 600;
+}
+.nav a .count, .nav button .count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 650;
+  background: var(--rose-bg);
+  color: var(--rose);
+  padding: 1px 6px;
+  border-radius: 999px;
+  min-width: 18px;
+  text-align: center;
+}
+.nav a.active, .nav button.active .count { background: var(--accent-soft); color: var(--accent-ink); }
+.sidebar-foot {
+  margin-top: auto;
+  padding: 10px 6px 0;
+  border-top: 1px solid var(--sidebar-border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: #fff;
+  flex: 0 0 30px;
+}
+.avatar.sm { width: 24px; height: 24px; font-size: 9.5px; }
+.avatar.md { width: 28px; height: 28px; font-size: 10.5px; }
+.who .name { font-weight: 600; font-size: 12.5px; color: var(--sidebar-ink); }
+.who .role { font-size: 11px; color: var(--sidebar-muted); }
 
-/* Buttons */
-.btn {
-  display: inline-flex; align-items: center; gap: 0.4rem;
+/* ---------- main / topbar ---------- */
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.topbar {
+  height: 54px;
+  flex: 0 0 54px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 22px;
+  background: var(--topbar);
+  border-bottom: 1px solid var(--line);
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 10px;
+  width: 360px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.search span { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; }
+.kbd {
+  margin-left: auto;
+  font-size: 10.5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--faint);
+  background: var(--surface);
+}
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chip, .site-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 9px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink-2);
+  box-shadow: var(--shadow-sm);
+}
+.icon-btn {
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: #fff;
-  padding: 0.42rem 0.75rem;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.88rem;
-  line-height: 1.2;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  position: relative;
+  box-shadow: var(--shadow-sm);
 }
-.btn:hover { border-color: #b7c2d0; background: #f7f9fb; }
-.btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
-.btn-primary { background: var(--teal); border-color: var(--teal); color: #fff; }
-.btn-primary:hover { background: var(--teal-2); border-color: var(--teal-2); }
-.btn-navy { background: var(--navy); border-color: var(--navy); color: #fff; }
-.btn-navy:hover { background: var(--navy-2); }
-.btn-danger { color: var(--fail); border-color: #f0c4c0; background: #fff; }
-.btn-danger:hover { background: #fdeeee; }
-.btn-ghost { background: transparent; border-color: transparent; color: #d7e2ef; }
-.btn-ghost:hover { background: rgba(255,255,255,0.08); color: #fff; }
-.btn-sm { padding: 0.28rem 0.55rem; font-size: 0.8rem; }
-.btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.icon-btn .dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  background: var(--rose);
+  border-radius: 99px;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.content {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 22px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
-/* Layout helpers */
-.row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+/* ---------- typography helpers ---------- */
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+}
+.page-head h2 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+}
+.page-head p { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.crumb { color: var(--faint); font-size: 12px; margin-bottom: 2px; }
+.crumb b { color: var(--ink-2); font-weight: 550; }
+
+.row { display: flex; align-items: center; gap: 8px; }
+.grow { flex: 1; min-width: 0; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 6px 11px;
+  font-size: 12.5px;
+  font-weight: 550;
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(79, 70, 229, 0.35), 0 6px 14px rgba(79, 70, 229, 0.18);
+}
+[data-theme="dark"] .btn.primary {
+  background: #22d3ee;
+  color: #083344;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 14px rgba(34, 211, 238, 0.15);
+}
+.btn.ghost { background: transparent; box-shadow: none; }
+.btn.success { background: var(--green); border-color: transparent; color: #fff; }
+[data-theme="dark"] .btn.success { background: #34d399; color: #042f2e; }
+.btn.danger { background: var(--surface); color: var(--rose); border-color: color-mix(in srgb, var(--rose) 35%, var(--line)); }
+.btn.warn { background: var(--surface); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 35%, var(--line)); }
+.btn.lg { padding: 8px 14px; font-weight: 600; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.pill.dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: currentColor;
+}
+.pill.open { background: var(--pill-open-bg); color: var(--pill-open-ink); }
+.pill.progress { background: var(--pill-prog-bg); color: var(--pill-prog-ink); }
+.pill.hold { background: var(--pill-hold-bg); color: var(--pill-hold-ink); }
+.pill.done { background: var(--pill-done-bg); color: var(--pill-done-ink); }
+.pill.review { background: var(--accent-soft); color: var(--accent-ink); }
+.pill.urgent { background: var(--rose-bg); color: var(--rose); }
+.pill.high { background: #fff1e7; color: var(--prio-high); }
+[data-theme="dark"] .pill.high { background: rgba(251, 146, 60, 0.14); color: #fb923c; }
+.pill.ok { background: var(--green-bg); color: var(--green); }
+.pill.alert { background: var(--rose-bg); color: var(--rose); }
+
+/* ---------- cards / kpis ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.card-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.card-h .link { color: var(--accent); font-weight: 550; font-size: 12px; }
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  flex: 0 0 auto;
+}
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px 10px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  min-height: 96px;
+}
+.kpi .k { font-size: 11.5px; font-weight: 550; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.kpi .k svg { opacity: 0.8; }
+.kpi .v {
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  margin: 4px 0 2px;
+  line-height: 1.05;
+}
+.kpi .meta { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.delta.up { color: var(--rose); font-weight: 600; }
+.delta.down { color: var(--green); font-weight: 600; }
+.delta.neutral { color: var(--muted); font-weight: 600; }
+[data-theme="dark"] .delta.up { color: #fb923c; }
+.spark { display: block; }
+
+.dash-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1.35fr 0.9fr;
+  grid-template-rows: 1.15fr 0.95fr;
+  gap: 12px;
+}
+.dash-grid .chart-card { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; }
+.dash-grid .alerts-card { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; min-height: 0; }
+.dash-grid .queue-card { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; min-height: 0; }
+
+/* ---------- chart ---------- */
+.chart-body { flex: 1; min-height: 0; padding: 0 8px 8px 6px; position: relative; }
+.chart-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 0 14px 2px;
+}
+.chart-legend i {
+  display: inline-block;
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.chart-legend .lim { background: var(--chart-limit); }
+.chart-legend .ser { background: var(--chart-line); }
+.anno {
+  position: absolute;
+  z-index: 2;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  box-shadow: var(--shadow);
+  width: 228px;
+  pointer-events: none;
+  line-height: 1.35;
+}
+.anno b { display: block; font-size: 12px; font-weight: 650; }
+.anno span { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.anno .tag { color: var(--rose); font-weight: 600; }
+
+/* ---------- lists ---------- */
+.list { flex: 1; min-height: 0; overflow: hidden; padding: 0 6px 8px; }
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 8px;
+  border-radius: 10px;
+}
+.item + .item { border-top: 1px solid var(--line-2); }
+.item:hover { background: var(--surface-hover); }
+.item .ico {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  margin-top: 1px;
+}
+.item .ico.alert { background: var(--rose-bg); color: var(--rose); }
+.item .ico.warn { background: var(--amber-bg); color: var(--amber); }
+.item .t { font-weight: 600; font-size: 12.5px; letter-spacing: -0.01em; }
+.item .s { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.item .when { margin-left: auto; font-size: 11px; color: var(--faint); white-space: nowrap; padding-top: 2px; }
+
+.queue-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line-2);
+  align-items: flex-start;
+}
+.queue-item:hover { background: var(--surface-hover); }
+.queue-item .doc { font-weight: 600; font-size: 13px; letter-spacing: -0.015em; }
+.queue-item .s { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.queue-item .wait { font-size: 11px; color: var(--amber); font-weight: 600; margin-top: 4px; }
+
+/* ---------- approval ---------- */
+.stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 8px 16px 10px;
+}
+.step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  position: relative;
+  padding-right: 12px;
+  min-width: 0;
+}
+.step-top { display: flex; align-items: center; width: 100%; gap: 0; margin-bottom: 8px; }
+.step-num {
+  width: 26px;
+  height: 26px;
+  border-radius: 99px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex: 0 0 26px;
+  border: 2px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  z-index: 1;
+}
+.step.done .step-num { background: var(--green); border-color: var(--green); color: #fff; }
+[data-theme="dark"] .step.done .step-num { color: #042f2e; }
+.step.current .step-num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+[data-theme="dark"] .step.current .step-num { color: #083344; }
+.step-line {
+  flex: 1;
+  height: 2px;
+  background: var(--line);
+  margin-left: 8px;
+}
+.step:last-child .step-line { display: none; }
+.step.done .step-line { background: var(--green); }
+.step .stitle { font-size: 12.5px; font-weight: 650; letter-spacing: -0.01em; }
+.step .smeta { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.step.pending .stitle, .step.pending .smeta { color: var(--faint); }
+
+.approve-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1.15fr 0.95fr;
+  gap: 12px;
+}
+.preview-col, .thread-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.paper-wrap {
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.paper {
+  flex: 1;
+  background: var(--preview-paper);
+  margin: 6px 10px 10px;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(20,23,31,.06), 0 10px 24px rgba(20,23,31,.06);
+  padding: 10px 12px 8px;
+  font-size: 10.5px;
+  color: var(--ink);
+  overflow: hidden;
+}
+[data-theme="dark"] .paper { box-shadow: 0 0 0 1px var(--line), 0 10px 24px rgba(0,0,0,.25); }
+.paper .ph { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--ink); padding-bottom: 8px; margin-bottom: 8px; }
+.paper .co { font-weight: 750; letter-spacing: -0.03em; font-size: 13px; }
+.paper .doc-name { font-weight: 650; font-size: 12px; }
+.paper table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+.paper th, .paper td { border: 1px solid var(--preview-rule); padding: 3px 6px; text-align: left; }
+.paper th { background: var(--surface-2); font-weight: 620; }
+.paper td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.paper td.fail { color: var(--rose); font-weight: 650; background: var(--rose-bg); }
+.paper .meta-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2px 10px; margin-bottom: 6px; }
+.paper .meta-grid b { color: var(--muted); font-weight: 550; display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.submit-card { padding: 8px 12px 8px; margin: 0; flex: 0 0 auto; }
+.submit-card h3 { font-size: 12.5px; font-weight: 650; margin-bottom: 6px; }
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.fld { display: flex; flex-direction: column; gap: 3px; }
+.fld.span2 { grid-column: 1 / -1; }
+.fld label { font-size: 11px; font-weight: 550; color: var(--muted); }
+.fld .ctrl, .fld select, .fld input {
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border-radius: 7px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.route-pills { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.route-pills .node {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.route-pills .arrow { color: var(--faint); font-size: 11px; }
+.drop {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+}
+
+.thread { flex: 1; min-height: 0; overflow: hidden; padding: 2px 4px 0; display: flex; flex-direction: column; }
+.comment {
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+}
+.comment .bubble { min-width: 0; }
+.comment .nm { font-weight: 650; font-size: 12.5px; }
+.comment .tm { color: var(--faint); font-size: 11px; font-weight: 500; margin-left: 8px; }
+.comment .tx { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; line-height: 1.45; }
+.comment.system .tx { color: var(--muted); font-style: italic; }
+.actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--line-2);
+  flex-wrap: wrap;
+}
+
+/* ---------- kanban ---------- */
+.filters { display: flex; align-items: center; gap: 8px; }
+.filters input, .filters select {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 12.5px;
+  box-shadow: var(--shadow-sm);
+}
+.kanban {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.col {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.col-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  font-weight: 650;
+  font-size: 13px;
+}
+.col-h .n {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.col-body { padding: 0 8px 10px; display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+.wocard {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 11px 9px;
+  box-shadow: var(--shadow-sm);
+}
+.wocard .ttl { font-weight: 600; font-size: 12.5px; letter-spacing: -0.015em; line-height: 1.35; }
+.wocard .meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+.wocard .tag {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 650;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.wocard .due { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.wocard .due.late { color: var(--rose); font-weight: 600; }
+.wocard .due.soon { color: var(--amber); font-weight: 600; }
+.more {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 550;
+  padding: 4px 0 0;
+}
+
+/* avatars palette */
+.a-mc { background: #4f46e5; }
+.a-to { background: #0f766e; }
+.a-ps { background: #c2410c; }
+.a-jw { background: #1d4ed8; }
+.a-er { background: #7c3aed; }
+.a-al { background: #0e7490; }
+.a-ar { background: #0e7490; }
+[data-theme="dark"] .a-mc { background: #6366f1; }
+[data-theme="dark"] .a-to { background: #14b8a6; color: #042f2e; }
+[data-theme="dark"] .a-ps { background: #fb923c; color: #431407; }
+[data-theme="dark"] .a-jw { background: #38bdf8; color: #082f49; }
+[data-theme="dark"] .a-er { background: #a78bfa; color: #2e1065; }
+[data-theme="dark"] .a-al { background: #22d3ee; color: #083344; }
+[data-theme="dark"] .a-ar { background: #2dd4bf; color: #042f2e; }
+
+.icon { display: block; }
+
+/* ---------- live app: scrolling shell ---------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
+.topbar { flex: 0 0 auto; position: sticky; top: 0; z-index: 20; }
+main#view, .content {
+  flex: 1;
+  padding: 18px 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+}
+.sidebar { position: sticky; top: 0; height: 100vh; overflow: auto; }
+.sidebar-foot { margin-top: auto; }
+
+.btn-primary, .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.btn-primary:hover, .btn.primary:hover { background: var(--accent-2); }
+[data-theme="dark"] .btn-primary, [data-theme="dark"] .btn.primary { background: #22d3ee; color: #042f2e; }
+[data-theme="dark"] .btn-primary:hover, [data-theme="dark"] .btn.primary:hover { background: #67e8f9; }
+.btn-danger { color: var(--rose); border-color: color-mix(in srgb, var(--rose) 35%, var(--line)); background: var(--surface); }
+.btn-danger:hover { background: var(--rose-bg); }
+.btn-navy { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn-sm { padding: 4px 8px; font-size: 12px; }
+.btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+.card { padding: 14px 16px; }
+.card h2, .card h3 { margin-bottom: 8px; }
+.stat .label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 700; }
+.stat .value { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.03em; margin-top: 2px; color: var(--ink); }
+.stat .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .row.spread { justify-content: space-between; }
 .stack { display: grid; gap: 1rem; }
-.grid-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; }
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.grid-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 860px) { .grid-2 { grid-template-columns: 1fr; } }
-
-.card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 1rem 1.1rem;
-}
-.card h2, .card h3 { margin-bottom: 0.65rem; }
 .muted { color: var(--muted); }
-.tiny { font-size: 0.78rem; color: var(--muted); }
-.page-lead { margin: 0.25rem 0 1rem; color: var(--muted); max-width: 46rem; }
+.tiny { font-size: 12px; color: var(--muted); }
+.page-lead { margin: 2px 0 0; color: var(--muted); max-width: 46rem; }
+.empty { padding: 1.4rem 0.5rem; color: var(--muted); text-align: center; }
+.help { background: var(--surface-2); border: 1px dashed var(--line); border-radius: 8px; padding: 0.7rem 0.8rem; font-size: 0.85rem; color: var(--muted); }
 
-/* Stat cards */
-.stat { padding: 0.95rem 1rem; }
-.stat .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 700; }
-.stat .value { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.03em; margin-top: 0.15rem; color: var(--navy); }
-.stat .hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.2rem; }
-
-/* Forms */
 label.fld { display: grid; gap: 0.25rem; font-size: 0.8rem; font-weight: 650; color: var(--muted); }
 label.fld > input, label.fld > select, label.fld > textarea,
-input[type="text"], input[type="date"], input[type="time"], input[type="number"], input[type="search"], select, textarea {
+input[type="text"], input[type="date"], input[type="time"], input[type="number"], input[type="search"],
+input[type="password"], input[type="email"], select, textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0.42rem 0.55rem;
-  background: #fff;
+  background: var(--surface);
   font-weight: 500;
   color: var(--ink);
 }
-textarea { min-height: 4.2rem; resize: vertical; }
-input:focus, select:focus, textarea:focus { outline: 2px solid rgba(15,108,140,0.35); border-color: var(--teal); }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.7rem; }
 .form-grid .span-2 { grid-column: span 2; }
 @media (max-width: 640px) { .form-grid .span-2 { grid-column: span 1; } }
 
-/* Tables */
 .table-wrap { overflow-x: auto; }
-table.data {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
+table.data { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 table.data th {
-  text-align: left;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  border-bottom: 1px solid var(--line);
-  padding: 0.45rem 0.5rem;
-  font-weight: 700;
-  white-space: nowrap;
+  text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); border-bottom: 1px solid var(--line); padding: 0.45rem 0.5rem;
+  font-weight: 700; white-space: nowrap;
 }
-table.data td {
-  padding: 0.48rem 0.5rem;
-  border-bottom: 1px solid #edf0f4;
-  vertical-align: top;
-}
-table.data tr:hover td { background: #f7f9fb; }
-table.data .tag { font-family: var(--mono); font-size: 0.84rem; font-weight: 650; color: var(--navy); }
-.empty {
-  padding: 1.4rem 0.5rem;
-  color: var(--muted);
-  text-align: center;
-}
+table.data td { padding: 0.48rem 0.5rem; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+table.data tr:hover td { background: var(--surface-hover); }
+table.data .tag { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.84rem; font-weight: 650; color: var(--ink); }
 
-/* Pills */
-.pill {
-  display: inline-block;
-  font-size: 0.72rem;
-  font-weight: 700;
-  padding: 0.12rem 0.45rem;
-  border-radius: 999px;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-.pill-pass, .pill-closed { background: #e6f5ed; color: var(--pass); }
-.pill-fail, .pill-open { background: #fdecee; color: var(--fail); }
-.pill-na, .pill-not { background: #eef0f3; color: var(--na); }
-.pill-wip { background: #fff4d6; color: #854f0b; }
-.pill-sys { background: #e7f3f7; color: var(--teal-2); }
+.pill-pass, .pill-closed { background: var(--green-bg); color: var(--green); }
+.pill-fail, .pill-open { background: var(--rose-bg); color: var(--rose); }
+.pill-na, .pill-not { background: var(--surface-2); color: var(--muted); }
+.pill-wip { background: var(--amber-bg); color: var(--amber); }
+.pill-sys { background: var(--teal-soft); color: var(--teal); }
+.pill-unack { background: var(--amber-bg); color: var(--amber); }
+.unack-row td { background: color-mix(in srgb, var(--amber-bg) 70%, var(--surface)); }
 
-/* Checklist */
-.check-item {
-  display: grid;
-  grid-template-columns: 4.4rem 1fr;
-  gap: 0.65rem;
-  padding: 0.7rem 0;
-  border-bottom: 1px solid #edf0f4;
-}
+.check-item { display: grid; grid-template-columns: 4.4rem 1fr; gap: 0.65rem; padding: 0.7rem 0; border-bottom: 1px solid var(--line-2); }
 .check-item:last-of-type { border-bottom: 0; }
-.check-id { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); padding-top: 0.15rem; }
+.check-id { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.75rem; color: var(--muted); padding-top: 0.15rem; }
 .check-text { font-weight: 600; }
 .check-method { font-size: 0.8rem; color: var(--muted); margin-top: 0.15rem; }
 .result-row { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.45rem; align-items: center; }
-.result-row label {
-  display: inline-flex; align-items: center; gap: 0.28rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.12rem 0.5rem;
-  font-size: 0.78rem;
-  font-weight: 650;
-  cursor: pointer;
-  background: #fff;
-}
-.result-row label:has(input:checked) { border-color: var(--navy); background: #eef3f8; }
-.result-row input { accent-color: var(--navy); }
-.check-item textarea { margin-top: 0.4rem; min-height: 2.4rem; width: 100%; }
-.progress {
-  height: 8px; background: #e4e9ef; border-radius: 99px; overflow: hidden;
-}
-.progress > span { display: block; height: 100%; background: var(--teal); }
-
-/* Chart */
+.progress { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.progress > span { display: block; height: 100%; background: var(--accent); }
 .chart-wrap { width: 100%; overflow: auto; }
 .chart-wrap svg { display: block; width: 100%; height: auto; max-height: 360px; }
 .legend { display: flex; flex-wrap: wrap; gap: 0.8rem; font-size: 0.8rem; color: var(--muted); margin-top: 0.5rem; }
 .legend i { display: inline-block; width: 12px; height: 3px; margin-right: 0.3rem; vertical-align: middle; border-radius: 2px; }
 .stats-row { display: flex; flex-wrap: wrap; gap: 1.25rem; margin-top: 0.75rem; }
 .stats-row .kv { font-size: 0.85rem; }
-.stats-row .kv b { display: block; font-size: 1.05rem; color: var(--navy); }
+.stats-row .kv b { display: block; font-size: 1.05rem; color: var(--ink); }
 
-/* Modal */
-.modal-back {
-  position: fixed; inset: 0; background: rgba(16, 28, 46, 0.45);
-  z-index: 60; display: grid; place-items: center; padding: 1rem;
-}
+.modal-back { position: fixed; inset: 0; background: var(--overlay); z-index: 60; display: grid; place-items: center; padding: 1rem; }
 .modal {
-  background: #fff; border-radius: 12px; width: min(640px, 100%);
-  max-height: 90vh; overflow: auto;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+  background: var(--surface); color: var(--ink); border-radius: 12px; width: min(640px, 100%);
+  max-height: 90vh; overflow: auto; box-shadow: var(--shadow); border: 1px solid var(--line);
   padding: 1.1rem 1.2rem 1.2rem;
 }
-.modal h2 { margin-bottom: 0.8rem; }
-
 .toast {
   position: fixed; bottom: 1.1rem; right: 1.1rem; z-index: 80;
-  background: var(--navy); color: #fff;
-  padding: 0.65rem 0.9rem; border-radius: 8px;
-  box-shadow: var(--shadow); font-size: 0.88rem;
+  background: var(--ink); color: var(--bg);
+  padding: 0.65rem 0.9rem; border-radius: 8px; box-shadow: var(--shadow); font-size: 0.88rem;
 }
-
-.help {
-  background: #f4f7fa; border: 1px dashed var(--line);
-  border-radius: 8px; padding: 0.7rem 0.8rem; font-size: 0.85rem; color: var(--muted);
-}
-
-/* Print */
-@media print {
-  body { background: #fff; }
-  .app-header, .app-footer, nav.tabs, .no-print, .btn, .header-actions { display: none !important; }
-  main#view { max-width: none; margin: 0; padding: 0; }
-  .card { box-shadow: none; break-inside: avoid; }
-  .print-only { display: block !important; }
-  a { text-decoration: none; color: inherit; }
-  .check-item { break-inside: avoid; }
-}
-.print-only { display: none; }
-.print-head { border-bottom: 2px solid var(--navy); padding-bottom: 0.6rem; margin-bottom: 1rem; }
-.print-head h1 { font-size: 1.3rem; color: var(--navy); }
-
-/* Trend annotations */
-#chart [data-log-id] { cursor: pointer; }
-#chart [data-log-id]:focus { outline: none; }
-#chart [data-log-id]:focus .dot,
-#chart [data-log-id]:hover .dot { stroke: #1b365d; stroke-width: 2; }
-.pill-unack { background: #f8ead0; color: #854f0b; }
-.unack-row td { background: #fffaf0; }
-.annot-table td { font-size: 0.85rem; }
-@media print {
-  .annot-table { font-size: 0.8rem; }
-  .unack-row td { background: #fff4d6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  #chart [data-log-id] { cursor: default; }
-}
-
-/* Spreadsheet-like grid */
 .grid-toolbar { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin-bottom: 0.7rem; }
-table.sheet { width: 100%; border-collapse: collapse; font-size: 0.88rem; table-layout: auto; }
+table.sheet { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 table.sheet th {
-  position: sticky; top: 0; background: #f3f6f9;
-  border: 1px solid var(--line);
-  padding: 0.28rem 0.35rem;
+  position: sticky; top: 0; background: var(--surface-2);
+  border: 1px solid var(--line); padding: 0.28rem 0.35rem;
   font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em;
-  color: var(--muted); font-weight: 700; white-space: nowrap;
-  z-index: 1;
+  color: var(--muted); font-weight: 700; white-space: nowrap; z-index: 1;
 }
-table.sheet td {
-  border: 1px solid #e4e9ef;
-  padding: 0;
-  min-width: 7rem;
-  vertical-align: middle;
-  background: #fff;
-}
-table.sheet td.locked { background: #f7f9fb; }
-table.sheet td.rowhead { min-width: 2.4rem; width: 2.4rem; text-align: center; color: var(--muted); font-size: 0.75rem; background: #f3f6f9; }
-table.sheet td.sel { outline: 2px solid var(--teal); outline-offset: -2px; z-index: 1; }
-table.sheet input, table.sheet select {
-  width: 100%; border: 0; border-radius: 0; padding: 0.35rem 0.4rem;
-  background: transparent; font-weight: 500;
-}
-table.sheet input:focus, table.sheet select:focus { outline: none; background: #fff; }
-table.sheet tr:hover td { background: #fbfcfd; }
+table.sheet td { border: 1px solid var(--line); padding: 0; min-width: 7rem; vertical-align: middle; background: var(--surface); }
+table.sheet td.locked, table.sheet td.rowhead { background: var(--surface-2); }
+table.sheet td.rowhead { min-width: 2.4rem; width: 2.4rem; text-align: center; color: var(--muted); font-size: 0.75rem; }
+table.sheet input, table.sheet select { width: 100%; border: 0; border-radius: 0; padding: 0.35rem 0.4rem; background: transparent; }
+table.sheet tr:hover td { background: var(--surface-hover); }
 .col-chip {
   display: inline-flex; align-items: center; gap: 0.3rem;
-  border: 1px solid var(--line); background: #fff;
-  border-radius: 999px; padding: 0.2rem 0.5rem;
-  font-size: 0.8rem; font-weight: 650;
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: 999px; padding: 0.2rem 0.5rem; font-size: 0.8rem; font-weight: 650;
 }
-.col-chip button { border: 0; background: transparent; cursor: pointer; color: var(--muted); padding: 0 .1rem; font-weight: 700; }
-.col-chip button:hover { color: var(--navy); }
+.col-chip button { border: 0; background: transparent; cursor: pointer; color: var(--muted); }
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
-
-/* Template builder */
 .builder { display: grid; grid-template-columns: 220px 1fr; gap: 1rem; }
 @media (max-width: 800px) { .builder { grid-template-columns: 1fr; } }
 .tpl-list button.tpl-item {
   display: block; width: 100%; text-align: left;
-  border: 1px solid var(--line); background: #fff;
-  border-radius: 8px; padding: 0.5rem 0.65rem; margin-bottom: 0.35rem;
-  cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: 8px; padding: 0.5rem 0.65rem; margin-bottom: 0.35rem; cursor: pointer; color: inherit;
 }
-.tpl-list button.tpl-item.active { border-color: var(--teal); background: #eef6f9; }
+.tpl-list button.tpl-item.active { border-color: var(--accent); background: var(--accent-soft); }
 .tpl-list button.tpl-item .nm { font-weight: 700; display: block; }
 .kind-pill { font-size: 0.7rem; color: var(--muted); }
-
-/* Import wizard */
 .steps { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .steps span {
   font-size: 0.78rem; font-weight: 700; color: var(--muted);
-  border: 1px solid var(--line); border-radius: 999px; padding: 0.2rem 0.6rem; background: #fff;
+  border: 1px solid var(--line); border-radius: 999px; padding: 0.2rem 0.6rem; background: var(--surface);
 }
-.steps span.on { background: var(--navy); color: #fff; border-color: var(--navy); }
-.drop {
-  border: 1.5px dashed var(--line); border-radius: 10px;
-  padding: 1.2rem; text-align: center; color: var(--muted); background: #f7f9fb;
-}
-.drop.over { border-color: var(--teal); background: #eef6f9; }
-.map-row { display: grid; grid-template-columns: 1fr 1.2fr; gap: 0.5rem; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid #edf0f4; }
-.preview-note { font-size: 0.78rem; color: var(--muted); margin: 0.4rem 0; }
-
-.pack-card { border: 1px solid var(--line); border-radius: 10px; padding: 0.85rem 1rem; background: #fbfcfd; }
-.pack-card h3 { margin-bottom: 0.3rem; }
-.pack-card p { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.7rem; }
-
-
-.header-actions { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
+.steps span.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+[data-theme="dark"] .steps span.on { background: #22d3ee; color: #042f2e; }
+.drop { border: 1.5px dashed var(--line); border-radius: 10px; padding: 1.2rem; text-align: center; color: var(--muted); background: var(--surface-2); }
+.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.map-row { display: grid; grid-template-columns: 1fr 1.2fr; gap: 0.5rem; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--line-2); }
+.pack-card { border: 1px solid var(--line); border-radius: 10px; padding: 0.85rem 1rem; background: var(--surface-2); }
 .docs-link {
-  color: #d7e6ef; font-size: 0.8rem; font-weight: 600; text-decoration: none;
-  border: 1px solid rgba(255,255,255,0.25); border-radius: 999px; padding: 0.2rem 0.7rem;
+  color: var(--ink-2); font-size: 0.8rem; font-weight: 600; text-decoration: none;
+  border: 1px solid var(--line); border-radius: 999px; padding: 0.2rem 0.7rem;
 }
-.docs-link:hover { background: rgba(255,255,255,0.08); }
+.docs-link:hover { background: var(--surface-hover); }
 .api-badge {
   font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
-  border-radius: 999px; padding: 0.2rem 0.6rem; background: #3d4a5c; color: #e8eef4;
+  border-radius: 999px; padding: 0.2rem 0.6rem; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line);
 }
-.api-badge.ok { background: #1f6a4a; color: #e8fff4; }
-.api-badge.err { background: #8b2e2e; color: #ffe8e8; }
+.api-badge.ok { background: var(--green-bg); color: var(--green); border-color: transparent; }
+.api-badge.err { background: var(--rose-bg); color: var(--rose); border-color: transparent; }
 
-/* v0.4 — login, work orders, users */
 .login-gate {
   position: fixed; inset: 0; z-index: 80;
-  background: linear-gradient(160deg, #132845, #1b365d 40%, #0c5670);
+  background: var(--bg);
   display: flex; align-items: center; justify-content: center;
   padding: 1.5rem;
 }
 .login-gate[hidden] { display: none !important; }
-body.login-open .app-header, body.login-open main, body.login-open .app-footer { display: none; }
+body.login-open .app { display: none; }
 .login-card { width: min(26rem, 100%); padding: 1.5rem 1.4rem 1.3rem; }
-.login-card .brand { display: flex; gap: 0.75rem; align-items: center; color: var(--ink); }
-.login-card .brand .sub { color: var(--muted); font-size: 0.85rem; }
-.login-card .fld { display: block; margin: 0.55rem 0; }
-.login-card .fld span { display: block; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.2rem; }
-.login-card input { width: 100%; padding: 0.45rem 0.55rem; border: 1px solid var(--line); border-radius: 8px; }
-.form-error { color: var(--fail); font-size: 0.85rem; margin: 0.4rem 0 0; }
-.user-chip {
-  font-size: 0.75rem; font-weight: 600; background: rgba(255,255,255,0.12);
-  border-radius: 999px; padding: 0.15rem 0.65rem; color: #e8eef4;
-}
-.header-logout { background: transparent; color: #d7e6ef; border-color: rgba(255,255,255,0.25); }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.7rem; margin: 0.6rem 0; }
+.form-error { color: var(--rose); font-size: 0.85rem; margin: 0.4rem 0 0; }
+.user-chip { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); }
 .split-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 @media (max-width: 900px) { .split-2 { grid-template-columns: 1fr; } }
 .plain-list { margin: 0 0 0.7rem; padding-left: 1.1rem; }
-.plain-list li { margin: 0.25rem 0; }
-.linkish { background: none; border: 0; color: var(--teal); font-weight: 600; cursor: pointer; padding: 0; text-align: left; }
+.linkish { background: none; border: 0; color: var(--accent); font-weight: 600; cursor: pointer; padding: 0; text-align: left; }
 .pager { display: flex; gap: 0.6rem; align-items: center; margin-top: 0.7rem; }
 .perm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.2rem 0.8rem; margin: 0.6rem 0 0.8rem; }
 .role-block { padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
 .check { font-size: 0.85rem; display: flex; align-items: center; gap: 0.35rem; }
-.kind-pill.st-open { background: #e8f1ff; color: #1b365d; }
-.kind-pill.st-in_progress { background: #e8f6ee; color: #18794e; }
-.kind-pill.st-on_hold { background: #fff4d6; color: #9a6700; }
-.kind-pill.st-done { background: #e8f6ee; color: #18794e; }
-.kind-pill.st-closed { background: #edf0f4; color: #5c6778; }
-
+.kind-pill.st-open { background: var(--pill-open-bg); color: var(--pill-open-ink); }
+.kind-pill.st-in_progress { background: var(--pill-prog-bg); color: var(--pill-prog-ink); }
+.kind-pill.st-on_hold { background: var(--pill-hold-bg); color: var(--pill-hold-ink); }
+.kind-pill.st-done { background: var(--pill-prog-bg); color: var(--pill-prog-ink); }
+.kind-pill.st-closed { background: var(--pill-done-bg); color: var(--pill-done-ink); }
 [hidden] { display: none !important; }
+
+.theme-toggle {
+  width: 36px; height: 36px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface);
+  display: grid; place-items: center; color: var(--ink-2); cursor: pointer;
+}
+.theme-toggle:hover { background: var(--surface-hover); }
+.theme-toggle .icon-sun { display: none; }
+[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+
+.search input { flex: 1; border: 0 !important; background: transparent; outline: none; min-width: 0; color: var(--ink); font-weight: 500; padding: 0; }
+.search input::placeholder { color: var(--faint); }
+
+.kanban { align-items: flex-start; min-height: 0; }
+.kanban-col { max-height: none; }
+.wocard { cursor: pointer; }
+.wocard:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+
+.doc-preview { background: var(--preview-paper); border: 1px solid var(--line); border-radius: 10px; margin: 0 12px 12px; min-height: 240px; max-height: 420px; overflow: auto; }
+.doc-preview iframe, .doc-preview img { display: block; width: 100%; height: 400px; min-height: 240px; border: 0; background: var(--preview-paper); }
+.doc-preview .no-preview { padding: 2rem; text-align: center; color: var(--muted); }
+.preview-col.card, .thread-col.card { display: flex; flex-direction: column; min-height: 0; min-width: 0; padding: 0; }
+.thread-col .thread { padding: 2px 4px 0; }
+.page-head .row { flex-wrap: wrap; justify-content: flex-end; }
+
+.page-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.page-head h2 { font-size: 1.25rem; letter-spacing: -0.03em; }
+.crumb { font-size: 12px; color: var(--muted); }
+
+@media (max-width: 900px) {
+  .sidebar { width: 72px; flex-basis: 72px; padding: 12px 8px; }
+  .brand { flex-direction: column; align-items: center; padding: 4px 0 12px; }
+  .brand h1, .brand .sub, .nav-label, .nav a span.lbl, .nav button span.lbl, .nav a .count, .nav button .count, .sidebar-foot .who { display: none; }
+  .nav a, .nav button { justify-content: center; padding: 10px; }
+  .search { width: 100%; max-width: none; }
+}
+@media (max-width: 720px) {
+  .app { flex-direction: column; }
+  .sidebar { width: 100%; flex-basis: auto; height: auto; position: relative; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px 10px; }
+  .sidebar .nav { flex-direction: row; flex-wrap: wrap; }
+  .sidebar-foot { margin-top: 0; margin-left: auto; }
+  .kpi { grid-template-columns: 1fr 1fr; }
+  .dash-grid, .approve-grid { grid-template-columns: 1fr; }
+}
+
+@media print {
+  .sidebar, .topbar, .no-print, .btn { display: none !important; }
+  .app { display: block; }
+  main#view { max-width: none; margin: 0; padding: 0; }
+  .card { box-shadow: none; break-inside: avoid; }
+}
+.print-only { display: none; }
+@media print { .print-only { display: block !important; } }
+.print-head { border-bottom: 2px solid var(--ink); padding-bottom: 0.6rem; margin-bottom: 1rem; }
+#chart [data-log-id] { cursor: pointer; }
+#chart [data-log-id]:focus { outline: none; }
 
   </style>
 </head>
@@ -454,12 +1082,7 @@ body.login-open .app-header, body.login-open main, body.login-open .app-footer {
   <div id="login-gate" class="login-gate" hidden>
     <div class="login-card card">
       <div class="brand" style="margin-bottom:1rem">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8">
-            <path d="M5 5h14v14H5z"/>
-            <path d="M5 10h14M10 5v14"/>
-          </svg>
-        </div>
+        <div class="brand-mark" aria-hidden="true"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v14H5z"/><path d="M5 10h14M10 5v14"/></svg></div>
         <div>
           <h1 id="login-product">Logbook</h1>
           <div class="sub">Sign in to continue</div>
@@ -471,51 +1094,126 @@ body.login-open .app-header, body.login-open main, body.login-open .app-footer {
         <p id="login-error" class="form-error" hidden></p>
         <button type="submit" class="btn btn-primary" style="width:100%;margin-top:.6rem">Sign in</button>
       </form>
-      <p class="tiny" style="margin-top:1rem">On-prem v0.4 – early release. Create the first admin with <code>python run.py create-admin</code>.</p>
+      <p class="tiny" style="margin-top:1rem">On-prem v0.5 – early release. Create the first admin with <code>python run.py create-admin</code>.</p>
     </div>
   </div>
-  <header class="app-header">
-    <div class="app-header-inner">
+  <div class="app" id="app-shell">
+    <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8">
-            <path d="M5 5h14v14H5z"/>
-            <path d="M5 10h14M10 5v14"/>
-          </svg>
-        </div>
+        <div class="brand-mark" aria-hidden="true"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v14H5z"/><path d="M5 10h14M10 5v14"/></svg></div>
         <div>
           <h1 data-product-name>Logbook</h1>
-          <div class="sub">Equipment, records, work orders, and trends — with a local database and API</div>
+          <div class="sub">v0.5 – early release</div>
         </div>
       </div>
-      <div class="header-actions">
-        <a class="docs-link" href="/docs" target="_blank" rel="noopener">API docs</a>
-        <span id="api-badge" class="api-badge">Connecting…</span>
-        <span class="version-badge">v0.4 – early release</span>
-        <span id="user-chip" class="user-chip" hidden></span>
-        <button type="button" id="logout-btn" class="btn btn-sm header-logout" hidden>Sign out</button>
+      <div class="nav-label">Operations</div>
+      <nav class="nav" aria-label="Main">
+        <button type="button" data-view="dashboard"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span class="lbl">Dashboard</span></button>
+        <button type="button" data-view="equipment"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg><span class="lbl">Equipment</span></button>
+        <button type="button" data-view="workorders"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="lbl">Work orders</span><span class="count" id="nav-wo-count" hidden></span></button>
+        <button type="button" data-view="approvals" data-need-perm="documents.read"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 15 2 2 4-4"/></svg><span class="lbl">Approvals</span><span class="count" id="nav-appr-count" hidden></span></button>
+        <button type="button" data-view="trends"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><span class="lbl">Trends</span></button>
+        <button type="button" data-view="logbook"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg><span class="lbl">Logs</span></button>
+        <button type="button" data-view="records"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg><span class="lbl">Records</span></button>
+      </nav>
+      <div class="nav-label">Admin</div>
+      <nav class="nav" aria-label="Admin">
+        <button type="button" data-view="templates"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg><span class="lbl">Templates</span></button>
+        <button type="button" data-view="users" data-need-perm="users.manage"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="lbl">Users &amp; roles</span></button>
+        <button type="button" data-view="routes" data-need-perm="routes.manage"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 15 2 2 4-4"/></svg><span class="lbl">Approval routes</span></button>
+        <button type="button" data-view="import"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg><span class="lbl">Import</span></button>
+        <button type="button" data-view="backup"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg><span class="lbl">Backup</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="avatar a-mc" id="who-avatar">•</div>
+        <div class="who grow">
+          <div class="name" id="who-name">Local user</div>
+          <div class="role" id="who-role">Open mode</div>
+        </div>
       </div>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <div class="search">
+          <svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input id="global-search" type="search" placeholder="Search tags, work orders, documents" aria-label="Search">
+          <span class="kbd">/</span>
+        </div>
+        <div class="topbar-right">
+          <div class="site-chip" id="site-chip">Local site</div>
+          <span id="api-badge" class="api-badge">Connecting…</span>
+          <a class="docs-link" href="/docs" target="_blank" rel="noopener">API docs</a>
+          <span id="user-chip" class="user-chip" hidden></span>
+          <button type="button" id="theme-toggle" class="theme-toggle" title="Toggle light / dark theme" aria-label="Toggle theme">
+            <svg class="icon icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/></svg>
+            <svg class="icon icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          </button>
+          <button type="button" id="logout-btn" class="btn btn-sm" hidden>Sign out</button>
+        </div>
+      </header>
+      <main id="view"></main>
     </div>
-    <nav class="tabs" aria-label="Main">
-      <button type="button" data-view="dashboard" class="active">Dashboard</button>
-      <button type="button" data-view="equipment">Equipment</button>
-      <button type="button" data-view="templates">Templates</button>
-      <button type="button" data-view="records">Records</button>
-      <button type="button" data-view="logbook">Logs</button>
-      <button type="button" data-view="trends">Trends</button>
-      <button type="button" data-view="workorders">Work orders</button>
-      <button type="button" data-view="users" data-need-perm="users.manage">Users</button>
-      <button type="button" data-view="import">Import</button>
-      <button type="button" data-view="backup">Backup</button>
-    </nav>
-  </header>
-  <main id="view"></main>
-  <footer class="app-footer">
-    Logbook v0.4 – early release. The UI talks to a local open-source database over a REST API — use it from this page, IoT tools, Grafana, or another agent.
-    Do not store passwords or confidential site data. Not a certified design tool.
-  </footer>
+  </div>
   <script>
-window.LOGBOOK_PRODUCT = { name: "Logbook", version: "0.4.0", label: "v0.4 – early release" };
+window.LOGBOOK_PRODUCT = { name: "Logbook", version: "0.5.0", label: "v0.5 – early release" };
+/* Light / dark theme: localStorage wins, otherwise prefers-color-scheme. */
+(function (global) {
+  "use strict";
+  var KEY = "logbook.theme";
+
+  function systemTheme() {
+    try {
+      return (global.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+    } catch (e) { return "light"; }
+  }
+  function stored() {
+    try { return global.localStorage && localStorage.getItem(KEY); } catch (e) { return null; }
+  }
+  function save(theme) {
+    try { localStorage.setItem(KEY, theme); } catch (e) {}
+  }
+  function resolved() {
+    var t = stored();
+    if (t === "light" || t === "dark") return t;
+    return systemTheme();
+  }
+  function apply(theme) {
+    var t = (theme === "dark" || theme === "light") ? theme : resolved();
+    document.documentElement.setAttribute("data-theme", t);
+    var btn = document.getElementById("theme-toggle");
+    if (btn) btn.setAttribute("aria-label", t === "dark" ? "Switch to light theme" : "Switch to dark theme");
+    return t;
+  }
+  function toggle() {
+    var next = (resolved() === "dark") ? "light" : "dark";
+    save(next);
+    apply(next);
+    // redraw charts if visible
+    if (global.Logbook && global.Logbook.render) {
+      try { global.Logbook.render(); } catch (e) {}
+    }
+    return next;
+  }
+  function bind() {
+    apply(resolved());
+    var btn = document.getElementById("theme-toggle");
+    if (btn && !btn._bound) {
+      btn._bound = true;
+      btn.addEventListener("click", function () { toggle(); });
+    }
+    try {
+      if (global.matchMedia) {
+        matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+          if (stored() !== "light" && stored() !== "dark") apply(systemTheme());
+        });
+      }
+    } catch (e) {}
+  }
+  global.LogbookTheme = { apply: apply, toggle: toggle, resolved: resolved, key: KEY };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
+  else bind();
+})(typeof window !== "undefined" ? window : globalThis);
+
 /* Minimal XLSX read/write for simple tables. No CDN. Uses DecompressionStream for deflate. */
 (function (global) {
   "use strict";
@@ -846,7 +1544,9 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       headers["X-API-Key"] = global.LOGBOOK_API_KEY;
     }
     const init = { method, headers };
-    if (body !== undefined) {
+    if (body instanceof FormData) {
+      init.body = body;
+    } else if (body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(body);
     }
@@ -965,7 +1665,25 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     revokeApiKey: (uid, kid) => req("DELETE", "/users/" + encodeURIComponent(uid) + "/api-keys/" + encodeURIComponent(kid)),
     listSites: () => req("GET", "/sites"),
     createSite: (body) => req("POST", "/sites", body),
-    listLogs: (params) => req("GET", "/logs" + qs(params))
+    listLogs: (params) => req("GET", "/logs" + qs(params)),
+    dashboard: () => req("GET", "/dashboard"),
+    listDocuments: (params) => req("GET", "/documents" + qs(params)),
+    getDocument: (id) => req("GET", "/documents/" + encodeURIComponent(id)),
+    documentFileUrl: (id, versionId) => API + "/documents/" + encodeURIComponent(id) + "/file" + (versionId ? "?version_id=" + encodeURIComponent(versionId) : ""),
+    uploadDocument: (form) => req("POST", "/documents", form),
+    addDocumentVersion: (id, form) => req("POST", "/documents/" + encodeURIComponent(id) + "/versions", form),
+    patchDocument: (id, body) => req("PATCH", "/documents/" + encodeURIComponent(id), body),
+    submitDocument: (id, body) => req("POST", "/documents/" + encodeURIComponent(id) + "/submit", body || {}),
+    approveDocument: (id, comment) => req("POST", "/documents/" + encodeURIComponent(id) + "/approve", { comment: comment || "" }),
+    rejectDocument: (id, comment) => req("POST", "/documents/" + encodeURIComponent(id) + "/reject", { comment: comment }),
+    returnDocument: (id, comment) => req("POST", "/documents/" + encodeURIComponent(id) + "/return", { comment: comment }),
+    commentDocument: (id, body) => req("POST", "/documents/" + encodeURIComponent(id) + "/comments", { body: body }),
+    documentsQueue: (params) => req("GET", "/documents/queue" + qs(params)),
+    listRoutes: (params) => req("GET", "/approval-routes" + qs(params)),
+    getRoute: (id) => req("GET", "/approval-routes/" + encodeURIComponent(id)),
+    createRoute: (body) => req("POST", "/approval-routes", body),
+    patchRoute: (id, body) => req("PATCH", "/approval-routes/" + encodeURIComponent(id), body),
+    deleteRoute: (id) => req("DELETE", "/approval-routes/" + encodeURIComponent(id))
   };
 
   function qs(params) {
@@ -987,7 +1705,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
 
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
-  const APP_VERSION = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.version) || "0.4.0";
+  const APP_VERSION = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.version) || "0.5.0";
   const PRODUCT_NAME = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.name) || "Logbook";
 
   const FIELD_TYPES = [
@@ -1831,10 +2549,20 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     else t += " — click to annotate";
     return t;
   }
+  function cssVar(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
   function drawTrend(el, points, param) {
     el.innerHTML = "";
     const data = points.filter((p) => p.value !== null);
     if (!data.length) { el.innerHTML = '<p class="empty">No numeric readings in this range.</p>'; return; }
+    const gridC = cssVar("--chart-grid", "#eceef3");
+    const muted = cssVar("--muted", "#6b7380");
+    const ink = cssVar("--ink", "#14171f");
+    const card = cssVar("--surface", "#ffffff");
+    const line = cssVar("--chart-line", cssVar("--accent", "#4f46e5"));
+    const danger = cssVar("--chart-limit", cssVar("--rose", "#be123c"));
     const W = 860, H = 336, L = 54, R = 18, T = 32, B = 44;
     const innerW = W - L - R, innerH = H - T - B;
     const values = data.map((p) => p.value);
@@ -1852,48 +2580,49 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     for (let t = 0; t <= 5; t++) {
       const v = vmin + (t / 5) * (vmax - vmin);
       const yy = y(v).toFixed(1);
-      grid += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="#e4e9ef" />';
-      grid += '<text x="' + (L - 8) + '" y="' + (Number(yy) + 3) + '" text-anchor="end" font-size="10" fill="#5c6778">' +
+      grid += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="' + gridC + '" />';
+      grid += '<text x="' + (L - 8) + '" y="' + (Number(yy) + 3) + '" text-anchor="end" font-size="10" fill="' + muted + '">' +
         (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2)) + "</text>";
     }
     let limitLines = "";
     if (hasMax) {
       const yy = y(Number(param.max)).toFixed(1);
-      limitLines += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="#b42318" stroke-dasharray="5 4" />';
-      limitLines += '<text x="' + (W - R) + '" y="' + (Number(yy) - 4) + '" text-anchor="end" font-size="10" fill="#b42318">max ' + param.max + "</text>";
+      limitLines += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="' + danger + '" stroke-dasharray="5 4" />';
+      limitLines += '<text x="' + (W - R) + '" y="' + (Number(yy) - 4) + '" text-anchor="end" font-size="10" fill="' + danger + '">max ' + param.max + "</text>";
     }
     if (hasMin) {
       const yy = y(Number(param.min)).toFixed(1);
-      limitLines += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="#b42318" stroke-dasharray="5 4" />';
-      limitLines += '<text x="' + (W - R) + '" y="' + (Number(yy) + 12) + '" text-anchor="end" font-size="10" fill="#b42318">min ' + param.min + "</text>";
+      limitLines += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" stroke="' + danger + '" stroke-dasharray="5 4" />';
+      limitLines += '<text x="' + (W - R) + '" y="' + (Number(yy) + 12) + '" text-anchor="end" font-size="10" fill="' + danger + '">min ' + param.min + "</text>";
     }
     const path = data.map((p, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.value).toFixed(1)).join(" ");
     const dots = data.map((p, i) => {
       const cx = x(i).toFixed(1), cy = y(p.value).toFixed(1), bad = !!p.oor;
       let mark = "";
       if (p.flag) {
-        mark = '<line x1="' + cx + '" y1="' + (y(p.value) - 5).toFixed(1) + '" x2="' + cx + '" y2="' + (y(p.value) - 20).toFixed(1) + '" stroke="#1b365d" stroke-width="1.4"/>' +
-          '<rect x="' + (x(i) + 0.5).toFixed(1) + '" y="' + (y(p.value) - 29).toFixed(1) + '" width="15" height="13" rx="2" fill="#1b365d"/>' +
-          '<text x="' + (x(i) + 8).toFixed(1) + '" y="' + (y(p.value) - 19.5).toFixed(1) + '" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">' + p.flag + "</text>";
+        mark = '<line x1="' + cx + '" y1="' + (y(p.value) - 5).toFixed(1) + '" x2="' + cx + '" y2="' + (y(p.value) - 20).toFixed(1) + '" stroke="' + ink + '" stroke-width="1.4"/>' +
+          '<rect x="' + (x(i) + 0.5).toFixed(1) + '" y="' + (y(p.value) - 29).toFixed(1) + '" width="15" height="13" rx="2" fill="' + ink + '"/>' +
+          '<text x="' + (x(i) + 8).toFixed(1) + '" y="' + (y(p.value) - 19.5).toFixed(1) + '" text-anchor="middle" font-size="9" font-weight="700" fill="' + card + '">' + p.flag + "</text>";
       } else if (p.unack) {
-        mark = '<circle cx="' + cx + '" cy="' + (y(p.value) - 13).toFixed(1) + '" r="7" fill="#9a6700" stroke="#fff" stroke-width="1"/>' +
-          '<text x="' + cx + '" y="' + (y(p.value) - 9.2).toFixed(1) + '" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">!</text>';
+        mark = '<circle cx="' + cx + '" cy="' + (y(p.value) - 13).toFixed(1) + '" r="7" fill="#9a6700" stroke="' + card + '" stroke-width="1"/>' +
+          '<text x="' + cx + '" y="' + (y(p.value) - 9.2).toFixed(1) + '" text-anchor="middle" font-size="10" font-weight="700" fill="' + card + '">!</text>';
       }
       return '<g class="pt" tabindex="0" role="button" data-log-id="' + esc(p.logId) + '" data-param="' + esc(param.key) + '">' +
         '<circle class="hit" cx="' + cx + '" cy="' + cy + '" r="14" fill="transparent"/>' +
-        '<circle class="dot" cx="' + cx + '" cy="' + cy + '" r="' + (bad ? 5.2 : 3.2) + '" fill="' + (bad ? "#b42318" : "#0f6c8c") + '"/>' +
+        '<circle class="dot" cx="' + cx + '" cy="' + cy + '" r="' + (bad ? 5.2 : 3.2) + '" fill="' + (bad ? danger : line) + '"/>' +
         mark + "<title>" + esc(annotTooltip(p)) + "</title></g>";
     }).join("");
     const labels = data.map((p, i) => {
       const show = data.length <= 12 || i === 0 || i === data.length - 1 || i % Math.ceil(data.length / 8) === 0;
       if (!show) return "";
-      return '<text x="' + x(i).toFixed(1) + '" y="' + (H - 14) + '" text-anchor="middle" font-size="10" fill="#5c6778">' + esc((p.date || "").slice(5)) + "</text>";
+      return '<text x="' + x(i).toFixed(1) + '" y="' + (H - 14) + '" text-anchor="middle" font-size="10" fill="' + muted + '">' + esc((p.date || "").slice(5)) + "</text>";
     }).join("");
     el.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Trend chart. Click a point to annotate.">' +
-      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#fff"/>' + grid + limitLines +
-      '<path d="' + path + '" fill="none" stroke="#0f6c8c" stroke-width="2"/>' + dots + labels +
-      '<text x="' + (W / 2) + '" y="' + (H - 2) + '" text-anchor="middle" font-size="10" fill="#5c6778">Date</text></svg>';
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="' + card + '"/>' + grid + limitLines +
+      '<path d="' + path + '" fill="none" stroke="' + line + '" stroke-width="2"/>' + dots + labels +
+      '<text x="' + (W / 2) + '" y="' + (H - 2) + '" text-anchor="middle" font-size="10" fill="' + muted + '">Date</text></svg>';
   }
+
   function stats(values) {
     const v = values.filter((x) => x !== null);
     if (!v.length) return null;
@@ -1944,9 +2673,9 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       trends: viewTrends, import: viewImport, backup: viewBackup
     };
     if (v4 && v4.views) Object.assign(views, v4.views);
-    const groupMap = { recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders" };
+    const groupMap = { recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
     root.innerHTML = (views[ui.view] || viewDashboard)();
-    document.querySelectorAll("nav.tabs button").forEach((b) => {
+    document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
       const group = groupMap[ui.view] || ui.view;
       b.classList.toggle("active", b.dataset.view === group);
     });
@@ -2977,10 +3706,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       const maybe = window.LogbookV4.handleAction(act, btn, e);
       if (maybe && typeof maybe.then === "function") {
         maybe.then((handled) => { if (handled) e.preventDefault(); });
-        if (["wo-new","wo-open","wo-page","wo-create","wo-save","wo-comment","wo-labour","wo-attach","wo-rules","wor-create","wor-toggle","wor-del","usr-create","usr-del","usr-key","role-create"].indexOf(act) >= 0) {
-          e.preventDefault();
-          return;
-        }
+        e.preventDefault();
+        return;
       } else if (maybe) {
         e.preventDefault();
         return;
@@ -3265,7 +3992,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     if (ui.view === "recordEdit") { collectRecordEdits(); persist(); }
   });
 
-  document.querySelectorAll("nav.tabs button").forEach((b) => {
+  document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
     b.addEventListener("click", () => {
       if (ui.view === "templates") collectTplMeta(), persist();
       if (ui.view === "recordEdit") collectRecordEdits(), persist();
@@ -3277,6 +4004,23 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         render();
       }
     });
+  });
+  const gsearch = document.getElementById("global-search");
+  if (gsearch && !gsearch._bound) {
+    gsearch._bound = true;
+    gsearch.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        const q = gsearch.value.trim();
+        window.Logbook.goto("equipment", { q: q });
+      }
+    });
+  }
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "/" && ev.target && ev.target.tagName !== "INPUT" && ev.target.tagName !== "TEXTAREA" && ev.target.tagName !== "SELECT") {
+      const box = document.getElementById("global-search");
+      if (box) { ev.preventDefault(); box.focus(); }
+    }
   });
 
   async function init() {
@@ -3290,6 +4034,9 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     } catch (err) {
       if (v4) v4.showLogin(err.message || "Please sign in.");
       return;
+    }
+    if (v4 && v4.beforeView) {
+      try { await v4.beforeView(ui.view || "dashboard", ui); } catch (e) { /* first paint still useful */ }
     }
     render();
   }
@@ -3311,6 +4058,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       } else render();
     },
     applyPack, handleImportFile, tableFromFile,
+    drawTrend, trendPoints, eqById, paramsFor, eqTag, eqVal, outOfRange, annotOf, cssVar,
     // test hook: set import wizard and run
     importTable: (kind, rows, mapping, extra) => {
       ui.import = Object.assign({ step: 2, kind, logMode: "long", rows, mapping, createMissing: true }, extra || {});
@@ -3368,6 +4116,36 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       }
     }
     if (out) out.hidden = !(authMode === "users" && me && me.mode === "user");
+    const nameEl = document.getElementById("who-name");
+    const roleEl = document.getElementById("who-role");
+    const av = document.getElementById("who-avatar");
+    if (me && me.mode === "user") {
+      const label = me.display_name || me.username || "user";
+      if (nameEl) nameEl.textContent = label;
+      if (roleEl) roleEl.textContent = (me.role || "user");
+      if (av) {
+        const parts = String(label).trim().split(/\s+/);
+        av.textContent = ((parts[0] || "?")[0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+      }
+    } else {
+      if (nameEl) nameEl.textContent = (me && me.username) || "Local user";
+      if (roleEl) roleEl.textContent = (authMode === "open") ? "Open mode" : (me && me.role) || "";
+      if (av) av.textContent = "LB";
+    }
+    const site = document.getElementById("site-chip");
+    if (site && state) site.textContent = plantLabel(state);
+  }
+
+  function plantLabel(state) {
+    const locs = (state.equipment || []).map((e) => {
+      const v = e.values || {};
+      return v.fld_location || v.location || "";
+    }).filter(Boolean);
+    for (const loc of locs) {
+      const parts = String(loc).split(/\s+[—–-]\s+/);
+      if (parts.length > 1) return parts[parts.length - 1].trim();
+    }
+    return locs[0] || "All sites";
   }
 
   /* ---------- login ---------- */
@@ -3472,7 +4250,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const api = global.LogbookAPI;
     const params = {
       page: ui.woPage || 1,
-      page_size: 25,
+      page_size: ui.woPageSize || 200,
       q: ui.woQ || "",
       status: ui.woStatus || "",
       priority: ui.woPrio || "",
@@ -3481,6 +4259,46 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     return cache.list;
   }
 
+  function initials(name) {
+    const parts = String(name || "").trim().split(/\s+/);
+    return ((parts[0] || "?")[0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+  }
+  function formatDue(due) {
+    if (!due) return { text: "No due date", cls: "" };
+    const raw = String(due);
+    const day = raw.slice(0, 10);
+    const today = new Date();
+    const z = (n) => String(n).padStart(2, "0");
+    const tiso = today.getFullYear() + "-" + z(today.getMonth() + 1) + "-" + z(today.getDate());
+    const yest = new Date(today); yest.setDate(yest.getDate() - 1);
+    const yiso = yest.getFullYear() + "-" + z(yest.getMonth() + 1) + "-" + z(yest.getDate());
+    let text = day;
+    if (day === tiso) {
+      text = raw.length > 10 ? "Today " + raw.slice(11, 16) : "Today";
+    } else if (day === yiso) text = "Yesterday";
+    else {
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const [Y,M,D] = day.split("-");
+      text = (D ? parseInt(D, 10) : "") + " " + (months[parseInt(M, 10) - 1] || "");
+    }
+    const overdue = day && day < tiso;
+    return { text: text, cls: overdue ? "late" : (day === tiso ? "soon" : "") };
+  }
+  function woCard(w) {
+    const prio = w.priority || "medium";
+    const due = formatDue(w.due_at);
+    const who = w.assignee || "Unassigned";
+    const tag = w.tag || "—";
+    const closed = w.status === "closed" || w.status === "done";
+    const dueLabel = closed ? ("Closed " + (w.closed_at || w.completed_at || w.due_at || "").slice(5, 10)) : due.text;
+    const dueCls = closed ? "" : due.cls;
+    return '<article class="wocard" data-act="wo-open" data-id="' + esc(w.id) + '">' +
+      '<div class="row spread" style="margin-bottom:6px"><span class="pill ' + esc(prio) + '">' + esc(prio[0].toUpperCase() + prio.slice(1)) + '</span>' +
+      '<span class="tag">' + esc(tag) + '</span></div>' +
+      '<div class="ttl">' + esc(w.title) + '</div>' +
+      '<div class="meta"><span class="avatar sm">' + esc(initials(who)) + '</span> ' + esc(who) +
+      '<span class="due ' + dueCls + '">' + esc(dueLabel) + '</span></div></article>';
+  }
   function viewWorkOrders() {
     const L = global.Logbook;
     const state = L.getState();
@@ -3488,50 +4306,56 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const data = cache.list || { items: [], total: 0, page: 1, pages: 1 };
     const items = data.items || [];
     const canCreate = can("workorders.create");
+    const cols = [
+      { key: "open", label: "Open", items: [] },
+      { key: "in_progress", label: "In progress", items: [] },
+      { key: "on_hold", label: "On hold", items: [] },
+      { key: "done", label: "Done", items: [] }
+    ];
+    const bucket = { open: 0, in_progress: 1, on_hold: 2, done: 3, closed: 3 };
+    items.forEach((w) => {
+      const i = bucket[w.status];
+      if (i == null) return;
+      if (ui.woStatus && w.status !== ui.woStatus && !(ui.woStatus === "done" && w.status === "closed")) return;
+      cols[i].items.push(w);
+    });
+    const openN = items.filter((w) => w.status === "open" || w.status === "in_progress" || w.status === "on_hold").length;
+    const overdueN = items.filter((w) => {
+      if (!(w.status === "open" || w.status === "in_progress" || w.status === "on_hold")) return false;
+      const d = (w.due_at || "").slice(0, 10);
+      if (!d) return false;
+      const t = new Date();
+      const z = (n) => String(n).padStart(2, "0");
+      return d < (t.getFullYear() + "-" + z(t.getMonth() + 1) + "-" + z(t.getDate()));
+    }).length;
     return `
-      <div class="row spread">
+      <div class="page-head">
         <div>
           <h2>Work orders</h2>
-          <p class="page-lead">Create, assign, and close maintenance or commissioning work. Status flows from open → in progress → on hold → done → closed.</p>
+          <p class="page-lead">${openN} open across the plant${overdueN ? " · " + overdueN + " overdue" : ""} · board shows the live load</p>
         </div>
         <div class="row">
-          ${canCreate ? '<button class="btn btn-primary" data-act="wo-new">New work order</button>' : ""}
-          ${can("workorders.assign") ? '<button class="btn" data-act="wo-rules">Auto-create rules</button>' : ""}
-        </div>
-      </div>
-      <div class="card">
-        <div class="grid-toolbar">
-          <label class="fld" style="min-width:10rem"><span>Search</span>
-            <input type="search" id="wo-q" value="${esc(ui.woQ || "")}" placeholder="Title or id…">
-          </label>
-          <label class="fld"><span>Status</span>
-            <select id="wo-status"><option value="">All</option>${statusOptions(ui.woStatus || "")}</select>
+          <label class="fld"><span>Search</span>
+            <input type="search" id="wo-q" value="${esc(ui.woQ || "")}" placeholder="Tags or titles…">
           </label>
           <label class="fld"><span>Priority</span>
-            <select id="wo-prio"><option value="">All</option>${prioOptions(ui.woPrio || "")}</select>
+            <select id="wo-prio"><option value="">All priorities</option>${prioOptions(ui.woPrio || "")}</select>
           </label>
-          <span class="tiny" style="margin-left:auto">${data.total || 0} orders</span>
+          ${can("workorders.assign") ? '<button class="btn" data-act="wo-rules">Auto-create rules</button>' : ""}
+          ${canCreate ? '<button class="btn btn-primary" data-act="wo-new">+ New work order</button>' : ""}
         </div>
-        <div class="table-wrap">
-          <table class="sheet">
-            <thead><tr><th>Title</th><th>Status</th><th>Priority</th><th>Equipment</th><th>Assignee</th><th>Due</th><th></th></tr></thead>
-            <tbody>
-              ${items.length ? items.map((w) =>
-                "<tr>" +
-                "<td><button class='linkish' data-act='wo-open' data-id='" + esc(w.id) + "'>" + esc(w.title) + "</button></td>" +
-                "<td><span class='kind-pill st-" + esc(w.status) + "'>" + esc(w.status.replace("_", " ")) + "</span></td>" +
-                "<td>" + esc(w.priority) + "</td>" +
-                "<td>" + esc(w.tag || w.equipment_id || "—") + "</td>" +
-                "<td>" + esc(w.assignee || "—") + "</td>" +
-                "<td>" + esc((w.due_at || "").slice(0, 10) || "—") + "</td>" +
-                "<td class='no-print'><button class='btn btn-sm' data-act='wo-open' data-id='" + esc(w.id) + "'>Open</button></td>" +
-                "</tr>"
-              ).join("") : '<tr><td colspan="7"><p class="empty">No work orders yet. Create one, or enable an auto-create rule on out-of-range readings.</p></td></tr>'}
-            </tbody>
-          </table>
-        </div>
-        <div class="pager">${pager("wo-page", data)}</div>
       </div>
+      <div class="kanban">
+        ${cols.map((c) => `
+          <section class="col">
+            <div class="col-h"><span class="pill ${c.key === "in_progress" ? "progress" : (c.key === "on_hold" ? "hold" : c.key)}">${esc(c.label)}</span>
+              <span class="n">${c.items.length}</span></div>
+            <div class="col-body">
+              ${c.items.length ? c.items.map(woCard).join("") : '<p class="empty">Nothing here</p>'}
+            </div>
+          </section>`).join("")}
+      </div>
+      ${data.pages > 1 ? '<div class="pager">' + pager("wo-page", data) + "</div>" : ""}
     `;
   }
 
@@ -3745,7 +4569,17 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     console.log(msg);
   }
 
-  async function handleAction(act, el, ev) {
+  const V4_ACTS = new Set([
+    "wo-new","wo-open","wo-page","wo-create","wo-save","wo-comment","wo-labour","wo-attach","wo-rules",
+    "wor-create","wor-toggle","wor-del","usr-create","usr-del","usr-key","role-create",
+  ]);
+
+  function handleAction(act, el, ev) {
+    if (!V4_ACTS.has(act)) return false;
+    return handleActionAsync(act, el, ev);
+  }
+
+  async function handleActionAsync(act, el, ev) {
     const api = global.LogbookAPI;
     const L = global.Logbook;
     const ui = L._ui || (L._ui = {});
@@ -3927,13 +4761,745 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   }
 
   global.LogbookV4 = {
-    can, applyChrome, showLogin, hideLogin, maybeRequireLogin, bindLogin,
+    can, applyChrome, plantLabel, showLogin, hideLogin, maybeRequireLogin, bindLogin,
     views, handleAction, beforeView, bindFilters, refreshUsers, cache,
     product,
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bindLogin);
   else bindLogin();
+})(typeof window !== "undefined" ? window : globalThis);
+
+/* v0.5: themed dashboard, document approvals, routes, chrome badges. */
+(function (global) {
+  "use strict";
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+  function can(perm) {
+    const L = global.Logbook;
+    const state = L && L.getState && L.getState();
+    const me = state && state.me;
+    if (!me || me.mode === "open" || me.mode === "legacy_key") return true;
+    return (me.permissions || []).indexOf(perm) >= 0;
+  }
+  function toast(msg) {
+    if (global.Logbook && global.Logbook._toast) return global.Logbook._toast(msg);
+    console.log(msg);
+  }
+  function fmtWhen(ts) {
+    if (!ts) return "";
+    const s = String(ts).replace("T", " ");
+    const day = s.slice(0, 10);
+    const now = new Date();
+    const z = (n) => String(n).padStart(2, "0");
+    const today = now.getFullYear() + "-" + z(now.getMonth() + 1) + "-" + z(now.getDate());
+    const y = new Date(now); y.setDate(y.getDate() - 1);
+    const yest = y.getFullYear() + "-" + z(y.getMonth() + 1) + "-" + z(y.getDate());
+    if (day === today) return s.slice(11, 16) || "Today";
+    if (day === yest) return "Yesterday";
+    return s.slice(0, 16);
+  }
+  function initials(name) {
+    const parts = String(name || "?").trim().split(/\s+/);
+    return ((parts[0] || "?")[0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+  }
+  function spark(values, color) {
+    const w = 88, h = 28;
+    if (!values || values.length < 2) return "";
+    const mn = Math.min.apply(null, values), mx = Math.max.apply(null, values);
+    const span = (mx - mn) || 1;
+    const pts = values.map((v, i) => {
+      const x = 1 + i * (w - 2) / (values.length - 1);
+      const y = h - 2 - (v - mn) / span * (h - 4);
+      return x.toFixed(1) + " " + y.toFixed(1);
+    });
+    const d = "M " + pts.join(" L ");
+    const last = pts[pts.length - 1].split(" ");
+    const first = pts[0].split(" ");
+    const area = d + " L " + last[0] + " " + h + " L " + first[0] + " " + h + " Z";
+    color = color || "currentColor";
+    return '<svg class="spark" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" fill="none" aria-hidden="true">' +
+      '<path d="' + area + '" fill="' + color + '" opacity="0.15"/>' +
+      '<path d="' + d + '" stroke="' + color + '" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+  function statusLabel(st) {
+    return ({ draft: "Draft", in_review: "In review", approved: "Approved", rejected: "Rejected", returned: "Returned" }[st] || st || "—");
+  }
+  function statusPill(st) {
+    const cls = ({ draft: "done", in_review: "review", approved: "ok", rejected: "urgent", returned: "high" }[st] || "done");
+    return '<span class="pill ' + cls + '">' + esc(statusLabel(st)) + "</span>";
+  }
+
+  const cache = { dash: null, docs: null, queue: null, detail: null, routes: null, err: "" };
+
+  async function loadDash() {
+    const api = global.LogbookAPI;
+    try { cache.dash = await api.dashboard(); }
+    catch (e) { cache.dash = null; cache.err = e.message; }
+    return cache.dash;
+  }
+  async function loadDocs(ui) {
+    const api = global.LogbookAPI;
+    const [list, queue, routes] = await Promise.all([
+      api.listDocuments({ page: ui.docPage || 1, page_size: 50, q: ui.docQ || "", status: ui.docStatus || "" }),
+      api.documentsQueue({ page: 1, page_size: 20 }),
+      api.listRoutes({ enabled: false }),
+    ]);
+    cache.docs = list;
+    cache.queue = queue;
+    cache.routes = routes;
+    return list;
+  }
+  async function loadDetail(id) {
+    cache.detail = await global.LogbookAPI.getDocument(id);
+    if (!cache.routes) cache.routes = await global.LogbookAPI.listRoutes();
+    return cache.detail;
+  }
+
+  function paintDashChart() {
+    const L = global.Logbook;
+    if (!L || !L.drawTrend) return;
+    const el = document.getElementById("dash-chart");
+    if (!el) return;
+    const state = L.getState();
+    const ui = L._ui || {};
+    let eq = L.eqById(ui.logEq || "eq_p101") || (state.equipment && state.equipment[0]);
+    if (!eq) { el.innerHTML = '<p class="empty">Load the demo or add equipment to see a trend.</p>'; return; }
+    const params = L.paramsFor(eq) || [];
+    // prefer a parameter that has an out-of-range point
+    let param = params.find((p) => p.key === (ui.trendParam || "vibration")) || params[0];
+    const prefer = params.find((p) => {
+      const pts = L.trendPoints(eq, p, "", "");
+      return pts.some((x) => x.oor);
+    });
+    if (prefer) param = prefer;
+    if (!param) { el.innerHTML = '<p class="empty">No parameters on this asset.</p>'; return; }
+    const title = document.getElementById("dash-chart-title");
+    if (title) title.textContent = (L.eqTag(eq) || eq.id) + " — " + (param.label || param.key) + (param.unit ? " (" + param.unit + ")" : "");
+    L.drawTrend(el, L.trendPoints(eq, param, "", ""), param);
+    el.querySelectorAll("[data-log-id]").forEach((g) => {
+      g.addEventListener("click", () => L.goto("trends", { logEq: eq.id, trendParam: param.key, from: "", to: "" }));
+    });
+  }
+
+  function viewDashboard() {
+    const L = global.Logbook;
+    const state = L.getState();
+    const dash = cache.dash || {};
+    const eqN = dash.equipment_count != null ? dash.equipment_count : (state.equipment || []).length;
+    const openWo = dash.open_work_orders || 0;
+    const overdue = dash.overdue_work_orders || 0;
+    const oor = dash.out_of_range_alerts || 0;
+    const pending = dash.pending_approvals || 0;
+    const myN = dash.my_pending_approvals || 0;
+    const alerts = dash.recent_alerts || [];
+    const queue = dash.my_approvals || [];
+    const loc = (global.LogbookV4 && global.LogbookV4.plantLabel)
+      ? global.LogbookV4.plantLabel(state)
+      : ((state.equipment || []).map((e) => (e.values && (e.values.fld_location || e.values.location)) || "").find((x) => x) || "your plant");
+    return `
+      <div class="page-head">
+        <div>
+          <h2>Dashboard</h2>
+          <p class="page-lead">${esc(String(loc))} · ${eqN.toLocaleString()} assets in the register · live readings from the plant bus</p>
+        </div>
+        <div class="row no-print">
+          <button class="btn" data-act="demo" data-need-perm="settings.manage">${state.equipment.length ? "Reload fictional demo" : "Load fictional demo"}</button>
+          <button class="btn btn-primary" data-act="goto" data-view="workorders">+ New work order</button>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi">
+          <div class="k">Pending approvals</div>
+          <div class="v">${pending}</div>
+          <div class="meta"><span>${myN} waiting on you</span>${spark([Math.max(0,pending-4),pending-2,pending-1,pending], "currentColor")}</div>
+        </div>
+        <div class="kpi">
+          <div class="k">Open work orders</div>
+          <div class="v">${openWo}</div>
+          <div class="meta"><span class="${overdue ? "delta up" : ""}">${overdue} overdue</span>${spark([Math.max(0,openWo-5),openWo-3,openWo-1,openWo], "currentColor")}</div>
+        </div>
+        <div class="kpi">
+          <div class="k">Out-of-range alerts</div>
+          <div class="v">${oor}</div>
+          <div class="meta"><span>Unacknowledged</span>${spark([oor+2,oor+1,oor+3,oor], "currentColor")}</div>
+        </div>
+        <div class="kpi">
+          <div class="k">Equipment</div>
+          <div class="v">${eqN.toLocaleString()}</div>
+          <div class="meta"><span>in the register</span>${spark([Math.max(0,eqN-3),eqN-2,eqN-1,eqN], "currentColor")}</div>
+        </div>
+      </div>
+      <div class="dash-grid">
+        <div class="card chart-card">
+          <div class="card-h">
+            <h3 id="dash-chart-title">Trend</h3>
+            <button class="linkish" data-act="goto" data-view="trends">Open in trends</button>
+          </div>
+          <div id="dash-chart" class="chart-wrap"></div>
+        </div>
+        <div class="card alerts-card">
+          <div class="card-h">
+            <h3>Recent alerts</h3>
+            <button class="linkish" data-act="goto" data-view="logbook">View all</button>
+          </div>
+          ${alerts.length ? '<div class="table-wrap"><table class="data"><tbody>' + alerts.map((a) => {
+            const limit = a.max != null ? " · max " + a.max : (a.min != null ? " · min " + a.min : "");
+            return "<tr class='" + (a.acknowledged ? "" : "unack-row") + "'><td><b>" + esc(a.tag) + "</b> " + esc(a.parameter) + " " + esc(a.value) + esc(limit) +
+              "<div class='tiny'>" + (a.acknowledged ? esc(a.cause || "Acknowledged") : "Unacknowledged") + "</div></td>" +
+              "<td class='tiny' style='text-align:right;white-space:nowrap'>" + esc(fmtWhen(a.ts)) + "</td></tr>";
+          }).join("") + "</tbody></table></div>" : '<p class="empty">No out-of-range alerts.</p>'}
+        </div>
+        <div class="card queue-card">
+          <div class="card-h">
+            <h3>My approvals queue</h3>
+            <span class="pill review">${myN} waiting on you</span>
+          </div>
+          ${queue.length ? queue.map((d) => {
+            const pending = d.pending_step;
+            return '<div class="row spread" style="padding:8px 0;border-bottom:1px solid var(--line-2)">' +
+              '<div><div class="row" style="gap:8px"><span class="avatar sm">' + esc(initials(d.submitted_by || "DOC")) + '</span>' +
+              '<div><b>' + esc(d.title) + '</b><div class="tiny">' + esc(d.equipment_tag || "") + (d.document_type ? " · " + esc(d.document_type) : "") +
+              (pending ? " · " + esc(pending.label) : "") + '</div></div></div></div>' +
+              '<button class="btn btn-sm" data-act="doc-open" data-id="' + esc(d.id) + '">Review</button></div>';
+          }).join("") : '<p class="empty">Nothing waiting on you.</p>'}
+          <div style="margin-top:10px"><button class="linkish" data-act="goto" data-view="approvals">Open approvals</button></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function viewApprovals() {
+    const L = global.Logbook;
+    const ui = L._ui || (L._ui = {});
+    const list = cache.docs || { items: [], total: 0 };
+    const queue = cache.queue || { items: [], total: 0 };
+    const items = list.items || [];
+    return `
+      <div class="page-head">
+        <div>
+          <h2>Approvals</h2>
+          <p class="page-lead">Upload a test sheet, report, or photos against equipment, a record, or a work order, and route it for sequential sign-off.</p>
+        </div>
+        <div class="row">
+          ${can("routes.manage") ? '<button class="btn" data-act="goto" data-view="routes">Routing rules</button>' : ""}
+          ${can("documents.upload") ? '<button class="btn btn-primary" data-act="doc-new">Submit for approval</button>' : ""}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h3>Waiting on you</h3><span class="pill review">${queue.total || 0}</span></div>
+        ${queue.items && queue.items.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Document</th><th>Asset</th><th>Step</th><th>Submitted</th><th></th></tr></thead><tbody>' +
+          queue.items.map((d) => "<tr><td><b>" + esc(d.title) + "</b><div class='tiny'>" + statusPill(d.status) + "</div></td><td class='tag'>" +
+            esc(d.equipment_tag || "—") + "</td><td>" + esc((d.pending_step && d.pending_step.label) || "—") +
+            "</td><td class='tiny'>" + esc(fmtWhen(d.submitted_at)) + "</td><td><button class='btn btn-sm' data-act='doc-open' data-id='" + esc(d.id) + "'>Review</button></td></tr>").join("") +
+          "</tbody></table></div>" : '<p class="empty">No documents are waiting on your approval.</p>'}
+      </div>
+      <div class="card">
+        <div class="grid-toolbar">
+          <h3 style="margin:0">All documents</h3>
+          <label class="fld" style="min-width:10rem;margin-left:auto"><span>Search</span>
+            <input type="search" id="doc-q" value="${esc(ui.docQ || "")}" placeholder="Title or type…">
+          </label>
+          <label class="fld"><span>Status</span>
+            <select id="doc-status">
+              <option value="">All</option>
+              ${["draft","in_review","returned","approved","rejected"].map((s) =>
+                "<option value='" + s + "'" + (ui.docStatus === s ? " selected" : "") + ">" + statusLabel(s) + "</option>").join("")}
+            </select>
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Title</th><th>Status</th><th>Type</th><th>Asset</th><th>Updated</th><th></th></tr></thead>
+            <tbody>
+              ${items.length ? items.map((d) =>
+                "<tr><td><button class='linkish' data-act='doc-open' data-id='" + esc(d.id) + "'>" + esc(d.title) + "</button></td>" +
+                "<td>" + statusPill(d.status) + (d.locked ? " <span class='tiny'>locked</span>" : "") + "</td>" +
+                "<td>" + esc(d.document_type || "—") + "</td>" +
+                "<td class='tag'>" + esc(d.equipment_tag || "—") + "</td>" +
+                "<td class='tiny'>" + esc(fmtWhen(d.updated_at)) + "</td>" +
+                "<td><button class='btn btn-sm' data-act='doc-open' data-id='" + esc(d.id) + "'>Open</button></td></tr>"
+              ).join("") : '<tr><td colspan="6"><p class="empty">No documents yet. Upload a file to start a review.</p></td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function stepperHtml(doc) {
+    const steps = doc.steps || [];
+    const submitted = {
+      label: "Submitted",
+      status: doc.submitted_at ? "approved" : "waiting",
+      actor_name: doc.submitted_by,
+      acted_at: doc.submitted_at,
+    };
+    const all = [submitted].concat(steps);
+    return '<div class="stepper">' + all.map((s, i) => {
+      const done = s.status === "approved";
+      const pending = s.status === "pending";
+      const failed = s.status === "rejected" || s.status === "returned";
+      const cls = done ? "done" : (pending ? "current" : "pending");
+      const meta = done ? esc(s.actor_name || "") + "<br>" + esc(fmtWhen(s.acted_at || (i === 0 ? doc.submitted_at : "")))
+        : (pending ? "Waiting · " + esc(s.label || "") : (failed ? esc(s.status) : "Not started"));
+      return '<div class="step ' + cls + '"><div class="step-top"><div class="step-num">' + (done ? "✓" : (i + 1)) + '</div><div class="step-line"></div></div>' +
+        '<div class="stitle">' + esc(s.label || (i === 0 ? "Submitted" : "Step")) + "</div>" +
+        '<div class="smeta">' + meta + "</div></div>";
+    }).join("") + "</div>";
+  }
+
+  function previewHtml(doc) {
+    const ver = doc.current_version;
+    if (!ver) return '<div class="doc-preview"><p class="no-preview">No file uploaded.</p></div>';
+    const url = global.LogbookAPI.documentFileUrl(doc.id, ver.id);
+    const mime = (ver.mime || "").toLowerCase();
+    const token = global.LogbookAPI.getToken && global.LogbookAPI.getToken();
+    // iframe/img can use same-origin cookie/session; token is header-only so append is not used.
+    // File endpoint uses Authorization; iframe won't send it. Open-mode is fine.
+    // For users-mode we still try iframe (cookie not used). Fallback: download link always.
+    if (mime.indexOf("pdf") >= 0) {
+      return '<div class="doc-preview"><iframe title="Document preview" src="' + esc(url) + (token ? "" : "") + '"></iframe></div>';
+    }
+    if (mime.indexOf("image/") === 0) {
+      return '<div class="doc-preview"><img alt="' + esc(ver.filename) + '" src="' + esc(url) + '"></div>';
+    }
+    return '<div class="doc-preview"><div class="no-preview">No inline preview for ' + esc(ver.filename) +
+      ' (' + esc(ver.mime || "unknown") + '). <a href="' + esc(url) + '" target="_blank" rel="noopener">Download</a></div></div>';
+  }
+
+  // For authenticated preview, fetch as blob after render.
+  async function hydratePreview(doc) {
+    const box = document.querySelector(".doc-preview");
+    if (!box || !doc || !doc.current_version) return;
+    const ver = doc.current_version;
+    const mime = (ver.mime || "").toLowerCase();
+    if (mime.indexOf("pdf") < 0 && mime.indexOf("image/") !== 0) return;
+    const token = global.LogbookAPI.getToken && global.LogbookAPI.getToken();
+    if (!token) return; // iframe already pointed at the file
+    try {
+      const res = await fetch(global.LogbookAPI.documentFileUrl(doc.id, ver.id), {
+        headers: { Authorization: "Bearer " + token, Accept: mime || "*/*" }
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (mime.indexOf("pdf") >= 0) box.innerHTML = '<iframe title="Document preview" src="' + url + '"></iframe>';
+      else box.innerHTML = '<img alt="' + esc(ver.filename) + '" src="' + url + '">';
+    } catch (e) { /* keep fallback */ }
+  }
+
+  function viewApprovalDetail() {
+    const doc = cache.detail;
+    if (!doc) return '<p class="empty">Document not found. <button class="btn" data-act="goto" data-view="approvals">Back</button></p>';
+    const ver = doc.current_version;
+    const comments = doc.comments || [];
+    const canAct = can("documents.approve") && doc.status === "in_review" && !doc.locked;
+    const canSubmit = can("documents.upload") && (doc.status === "draft" || doc.status === "returned") && !doc.locked;
+    const routes = cache.routes || [];
+    return `
+      <div class="page-head">
+        <div>
+          <div class="crumb">Approvals / ${esc(doc.document_type || "Document")} / ${esc(doc.id)}</div>
+          <h2>${esc(doc.title)}</h2>
+          <p class="page-lead">${esc(doc.equipment_tag || "")}${doc.work_order_id ? " · work order " + esc(doc.work_order_id) : ""}${doc.record_id ? " · record " + esc(doc.record_id) : ""}
+            ${doc.submitted_at ? " · submitted " + esc(fmtWhen(doc.submitted_at)) : ""} · ${statusPill(doc.status)}${doc.locked ? " · locked" : ""}</p>
+        </div>
+        <div class="row">
+          <button class="btn" data-act="goto" data-view="approvals">← All documents</button>
+          ${ver ? '<a class="btn" href="' + esc(global.LogbookAPI.documentFileUrl(doc.id, ver.id)) + '" target="_blank" rel="noopener">Download</a>' : ""}
+          ${canAct ? '<button class="btn success btn-primary" data-act="doc-approve">Approve</button>' +
+            '<button class="btn warn" data-act="doc-return">Return for changes</button>' +
+            '<button class="btn danger" data-act="doc-reject">Reject</button>' : ""}
+        </div>
+      </div>
+      ${stepperHtml(doc)}
+      <div class="approve-grid">
+        <div class="preview-col card">
+          <div class="card-h"><h3>Preview${ver ? " · " + esc(ver.filename) : ""}</h3>
+            <span class="tiny">${ver ? "Rev " + ver.version_no + " · " + (ver.size || 0) + " bytes" : ""}</span></div>
+          ${previewHtml(doc)}
+          ${canSubmit ? submitPanel(doc, routes) : ""}
+        </div>
+        <div class="thread-col card">
+          <div class="card-h"><h3>Comment thread</h3><span class="tiny">Audit trail</span></div>
+          <div class="thread">
+            ${comments.length ? comments.map((c) =>
+              '<div class="comment"><div class="avatar sm">' + esc(initials(c.author || "SYS")) + '</div>' +
+              '<div><div><span class="nm">' + esc(c.author || "System") + '</span> <span class="tiny">' + esc(fmtWhen(c.created_at)) + "</span></div>" +
+              '<div class="tx">' + esc(c.body) + "</div></div></div>"
+            ).join("") : '<p class="empty">No comments yet.</p>'}
+          </div>
+          <form id="doc-comment-form" class="row" style="margin:10px 12px 0" data-act="doc-comment">
+            <input type="text" id="doc-comment" placeholder="Add a comment…" style="flex:1">
+            <button class="btn" type="submit" data-act="doc-comment">Comment</button>
+          </form>
+          ${canAct ? '<div class="actions">' +
+            '<button class="btn success btn-primary" data-act="doc-approve">Approve</button>' +
+            '<button class="btn warn" data-act="doc-return">Return for changes</button>' +
+            '<button class="btn danger" data-act="doc-reject">Reject</button></div>' : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  function submitPanel(existing, routes) {
+    const L = global.Logbook;
+    const state = L.getState();
+    const eqs = state.equipment || [];
+    const doc = existing;
+    return `
+      <div class="card submit-card">
+        <h3>Submit for approval</h3>
+        <div class="fields">
+          <div class="fld"><label>Title</label>
+            <input id="sub-title" class="ctrl" value="${esc(doc ? doc.title : "")}" placeholder="Commissioning test sheet">
+          </div>
+          <div class="fld"><label>Document type</label>
+            <input id="sub-type" class="ctrl" value="${esc(doc ? (doc.document_type || "") : "")}" placeholder="commissioning_test_sheet">
+          </div>
+          <div class="fld"><label>Link to equipment</label>
+            <select id="sub-eq"><option value=""></option>${eqs.map((e) => {
+              const tag = (L.eqTag && L.eqTag(e)) || e.tag || e.id;
+              const sel = doc && doc.equipment_id === e.id ? " selected" : "";
+              return "<option value='" + esc(e.id) + "'" + sel + ">" + esc(tag) + "</option>";
+            }).join("")}</select>
+          </div>
+          <div class="fld"><label>Work order id</label>
+            <input id="sub-wo" class="ctrl" value="${esc(doc ? (doc.work_order_id || "") : "")}" placeholder="optional">
+          </div>
+        </div>
+        <div class="fld" style="margin-top:8px"><label>Routing rule</label>
+          <select id="sub-route">
+            <option value="">Auto-match by type / site</option>
+            ${(routes || []).map((r) => "<option value='" + esc(r.id) + "'" + (doc && doc.route_id === r.id ? " selected" : "") + ">" +
+              esc(r.name) + (r.document_type ? " (" + esc(r.document_type) + ")" : "") + "</option>").join("")}
+          </select>
+        </div>
+        <div class="drop" id="sub-drop" style="margin-top:8px">
+          Drop a PDF, sheet, or photos — or <label class="linkish" style="display:inline">choose file
+            <input type="file" id="sub-file" hidden>
+          </label>
+          <div class="tiny" id="sub-file-name">${doc && doc.current_version ? esc(doc.current_version.filename) : ""}</div>
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:10px">
+          ${doc ? '<button class="btn btn-primary" data-act="doc-submit-existing" data-id="' + esc(doc.id) + '">Submit for approval</button>'
+                 : '<button class="btn btn-primary" data-act="doc-submit-new">Submit for approval</button>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function viewSubmit() {
+    return `
+      <div class="page-head">
+        <div>
+          <h2>Submit for approval</h2>
+          <p class="page-lead">Upload a document and pick a routing rule. The first approver is notified when you submit.</p>
+        </div>
+        <button class="btn" data-act="goto" data-view="approvals">Cancel</button>
+      </div>
+      ${submitPanel(null, cache.routes || [])}
+    `;
+  }
+
+  function viewRoutes() {
+    const routes = cache.routes || [];
+    return `
+      <div class="page-head">
+        <div>
+          <h2>Approval routes</h2>
+          <p class="page-lead">Admin-defined sequences of approvers (a role or a named user). Optional filters match a document type or site. The most specific matching enabled route is used when a submitter does not pick one.</p>
+        </div>
+        ${can("routes.manage") ? '<button class="btn btn-primary" data-act="rt-new">New route</button>' : ""}
+      </div>
+      <div class="card">
+        ${routes.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Name</th><th>Type filter</th><th>Steps</th><th>Enabled</th><th></th></tr></thead><tbody>' +
+          routes.map((r) => "<tr><td><b>" + esc(r.name) + "</b><div class='tiny'>" + esc(r.description || "") + "</div></td>" +
+            "<td>" + esc(r.document_type || "any") + "</td>" +
+            "<td>" + esc((r.steps || []).map((s) => s.label || s.role_name || s.user_id).join(" → ")) + "</td>" +
+            "<td>" + (r.enabled ? "Yes" : "No") + "</td>" +
+            "<td>" + (can("routes.manage") ? "<button class='btn btn-sm' data-act='rt-edit' data-id='" + esc(r.id) + "'>Edit</button> " +
+              "<button class='btn btn-sm btn-danger' data-act='rt-del' data-id='" + esc(r.id) + "'>Delete</button>" : "") +
+            "</td></tr>").join("") + "</tbody></table></div>" : '<p class="empty">No routes defined yet.</p>'}
+      </div>
+    `;
+  }
+
+  function routeForm(route) {
+    const steps = (route && route.steps) || [{ assignee_type: "role", role_name: "supervisor", label: "Supervisor" }, { assignee_type: "role", role_name: "admin", label: "Admin" }];
+    return '<div class="stack">' +
+      '<label class="fld"><span>Name</span><input id="rt-name" value="' + esc(route ? route.name : "") + '" required></label>' +
+      '<label class="fld"><span>Description</span><input id="rt-desc" value="' + esc(route ? (route.description || "") : "") + '"></label>' +
+      '<label class="fld"><span>Document type filter (optional)</span><input id="rt-type" value="' + esc(route ? (route.document_type || "") : "") + '" placeholder="commissioning_test_sheet"></label>' +
+      '<label class="fld check"><input type="checkbox" id="rt-enabled"' + (!route || route.enabled ? " checked" : "") + '> Enabled</label>' +
+      '<p class="tiny">Steps (role name or leave role and set a user id). One per line: <code>role,supervisor,Supervisor</code> or <code>user,usr_…,Maya Chen</code></p>' +
+      '<textarea id="rt-steps" rows="5">' + esc(steps.map((s) => [s.assignee_type, s.role_name || s.user_id || "", s.label || ""].join(",")).join("\\n")) + "</textarea></div>";
+  }
+
+  function parseSteps(text) {
+    return String(text || "").split("\\n").map((line) => line.trim()).filter(Boolean).map((line, i) => {
+      const parts = line.split(",").map((x) => x.trim());
+      const type = (parts[0] || "role").toLowerCase() === "user" ? "user" : "role";
+      const step = { sort_order: i, assignee_type: type, label: parts[2] || "" };
+      if (type === "user") step.user_id = parts[1];
+      else step.role_name = parts[1];
+      return step;
+    });
+  }
+
+  async function collectAndSaveRoute(id) {
+    const body = {
+      name: document.getElementById("rt-name").value,
+      description: document.getElementById("rt-desc").value,
+      document_type: document.getElementById("rt-type").value,
+      enabled: document.getElementById("rt-enabled").checked,
+      steps: parseSteps(document.getElementById("rt-steps").value),
+    };
+    if (id) await global.LogbookAPI.patchRoute(id, body);
+    else await global.LogbookAPI.createRoute(body);
+  }
+
+  async function doSubmitNew() {
+    const fileEl = document.getElementById("sub-file");
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    if (!file) { toast("Choose a file to upload."); return; }
+    const form = new FormData();
+    form.append("file", file);
+    form.append("title", (document.getElementById("sub-title") || {}).value || file.name);
+    form.append("document_type", (document.getElementById("sub-type") || {}).value || "");
+    form.append("equipment_id", (document.getElementById("sub-eq") || {}).value || "");
+    form.append("work_order_id", (document.getElementById("sub-wo") || {}).value || "");
+    form.append("route_id", (document.getElementById("sub-route") || {}).value || "");
+    form.append("submit", "true");
+    const doc = await global.LogbookAPI.uploadDocument(form);
+    toast("Submitted for approval.");
+    const L = global.Logbook;
+    cache.detail = doc;
+    L.goto("approvalDetail", { docId: doc.id });
+  }
+
+  async function doSubmitExisting(id) {
+    const fileEl = document.getElementById("sub-file");
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    const api = global.LogbookAPI;
+    if (file) {
+      const form = new FormData();
+      form.append("file", file);
+      await api.addDocumentVersion(id, form);
+    }
+    const patch = {
+      title: (document.getElementById("sub-title") || {}).value,
+      document_type: (document.getElementById("sub-type") || {}).value,
+      equipment_id: (document.getElementById("sub-eq") || {}).value || null,
+      work_order_id: (document.getElementById("sub-wo") || {}).value || null,
+    };
+    try { await api.patchDocument(id, patch); } catch (e) { /* may already be submitted */ }
+    const doc = await api.submitDocument(id, { route_id: (document.getElementById("sub-route") || {}).value || null });
+    toast("Submitted for approval.");
+    cache.detail = doc;
+    global.Logbook.goto("approvalDetail", { docId: doc.id });
+  }
+
+  async function commentRequired(action) {
+    const existing = (document.getElementById("doc-comment") || {}).value;
+    if (action === "approve") return existing || "";
+    const text = existing || prompt(action === "reject" ? "Rejection comment (required)" : "Describe the changes required");
+    if (!text || !String(text).trim()) {
+      toast("A comment is required.");
+      return null;
+    }
+    return String(text).trim();
+  }
+
+  const ACTS = new Set(["doc-open","doc-new","doc-submit-new","doc-submit-existing","doc-approve","doc-reject","doc-return","doc-comment","rt-new","rt-edit","rt-del"]);
+
+  async function handleAction(act, el, ev) {
+    if (!ACTS.has(act)) return false;
+    const L = global.Logbook;
+    const api = global.LogbookAPI;
+    const ui = L._ui || (L._ui = {});
+    try {
+      if (act === "doc-open") {
+        ui.docId = el.dataset.id;
+        await loadDetail(ui.docId);
+        L.goto("approvalDetail", { docId: ui.docId });
+        return true;
+      }
+      if (act === "doc-new") {
+        if (!cache.routes) cache.routes = await api.listRoutes();
+        L.goto("docSubmit");
+        return true;
+      }
+      if (act === "doc-submit-new") { await doSubmitNew(); return true; }
+      if (act === "doc-submit-existing") { await doSubmitExisting(el.dataset.id); return true; }
+      if (act === "doc-approve" || act === "doc-reject" || act === "doc-return") {
+        const id = (cache.detail && cache.detail.id) || ui.docId;
+        const comment = await commentRequired(act === "doc-approve" ? "approve" : (act === "doc-reject" ? "reject" : "return"));
+        if (act !== "doc-approve" && comment == null) return true;
+        if (act === "doc-approve") cache.detail = await api.approveDocument(id, comment);
+        if (act === "doc-reject") cache.detail = await api.rejectDocument(id, comment);
+        if (act === "doc-return") cache.detail = await api.returnDocument(id, comment);
+        toast(act === "doc-approve" ? "Approved." : (act === "doc-reject" ? "Rejected." : "Returned for changes."));
+        L.render();
+        hydratePreview(cache.detail);
+        return true;
+      }
+      if (act === "doc-comment") {
+        ev && ev.preventDefault();
+        const id = (cache.detail && cache.detail.id) || ui.docId;
+        const text = (document.getElementById("doc-comment") || {}).value;
+        if (!text) { toast("Write a comment first."); return true; }
+        cache.detail = await api.commentDocument(id, text);
+        L.render();
+        hydratePreview(cache.detail);
+        return true;
+      }
+      if (act === "rt-new" || act === "rt-edit") {
+        const route = act === "rt-edit" ? (cache.routes || []).find((r) => r.id === el.dataset.id) : null;
+        L.openModal ? null : null;
+        const html = '<h2>' + (route ? "Edit route" : "New route") + "</h2>" + routeForm(route) +
+          '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-act="close-modal">Cancel</button> ' +
+          '<button class="btn btn-primary" id="rt-save">Save</button></div>';
+        if (L && document.getElementById) {
+          // use the existing modal helper via a lightweight overlay
+          let back = document.getElementById("modal-root");
+          if (back) back.remove();
+          back = document.createElement("div");
+          back.id = "modal-root";
+          back.className = "modal-back";
+          back.innerHTML = '<div class="modal">' + html + "</div>";
+          back.addEventListener("click", (e) => { if (e.target === back) back.remove(); });
+          document.body.appendChild(back);
+          back.querySelector("#rt-save").addEventListener("click", async () => {
+            try {
+              await collectAndSaveRoute(route && route.id);
+              back.remove();
+              cache.routes = await api.listRoutes();
+              toast("Route saved.");
+              L.render();
+            } catch (err) { toast(err.message || "Save failed"); }
+          });
+          back.querySelector("[data-act=close-modal]").addEventListener("click", () => back.remove());
+        }
+        return true;
+      }
+      if (act === "rt-del") {
+        if (!confirm("Delete this approval route?")) return true;
+        await api.deleteRoute(el.dataset.id);
+        cache.routes = await api.listRoutes();
+        toast("Route deleted.");
+        L.render();
+        return true;
+      }
+    } catch (err) {
+      toast(err.message || "Action failed");
+    }
+    return true;
+  }
+
+  function bindFilters() {
+    const L = global.Logbook;
+    const ui = L && (L._ui || (L._ui = {}));
+    const q = document.getElementById("doc-q");
+    const st = document.getElementById("doc-status");
+    function go() {
+      if (q) ui.docQ = q.value;
+      if (st) ui.docStatus = st.value;
+      Promise.resolve(loadDocs(ui)).finally(() => L.render());
+    }
+    if (q && !q._bound) { q._bound = true; q.addEventListener("change", go); q.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); }); }
+    if (st && !st._bound) { st._bound = true; st.addEventListener("change", go); }
+    const drop = document.getElementById("sub-drop");
+    const file = document.getElementById("sub-file");
+    if (drop && file && !drop._bound) {
+      drop._bound = true;
+      ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+      ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+      drop.addEventListener("drop", (e) => {
+        const f = e.dataTransfer.files[0];
+        if (f) {
+          const dt = new DataTransfer();
+          dt.items.add(f);
+          file.files = dt.files;
+          const name = document.getElementById("sub-file-name");
+          if (name) name.textContent = f.name;
+        }
+      });
+      file.addEventListener("change", () => {
+        const name = document.getElementById("sub-file-name");
+        if (name && file.files[0]) name.textContent = file.files[0].name;
+      });
+    }
+    const cform = document.getElementById("doc-comment-form");
+    if (cform && !cform._bound) {
+      cform._bound = true;
+      cform.addEventListener("submit", (e) => { e.preventDefault(); handleAction("doc-comment", cform, e); });
+    }
+  }
+
+  function applyBadges() {
+    const dash = cache.dash;
+    const wo = document.getElementById("nav-wo-count");
+    const ap = document.getElementById("nav-appr-count");
+    if (dash && wo) {
+      wo.hidden = !dash.open_work_orders;
+      wo.textContent = dash.open_work_orders || "";
+    }
+    if (dash && ap) {
+      const n = dash.my_pending_approvals || dash.pending_approvals || 0;
+      ap.hidden = !n;
+      ap.textContent = n || "";
+    }
+    paintDashChart();
+    if (cache.detail) hydratePreview(cache.detail);
+  }
+
+  // Hook into v4
+  const v4 = global.LogbookV4 || {};
+  const prevChrome = v4.applyChrome;
+  const prevBefore = v4.beforeView;
+  const prevHandle = v4.handleAction;
+  const prevBind = v4.bindFilters;
+  const prevViews = v4.views || {};
+
+  v4.views = Object.assign({}, prevViews, {
+    dashboard: viewDashboard,
+    approvals: viewApprovals,
+    approvalDetail: viewApprovalDetail,
+    docSubmit: viewSubmit,
+    routes: viewRoutes,
+  });
+  v4.applyChrome = function () {
+    if (prevChrome) prevChrome();
+    applyBadges();
+  };
+  v4.beforeView = async function (name, ui) {
+    if (prevBefore) await prevBefore(name, ui);
+    if (name === "dashboard") await loadDash();
+    if (name === "approvals" || name === "docSubmit" || name === "routes") await loadDocs(ui || {});
+    if (name === "approvalDetail") {
+      const id = (ui && ui.docId) || (cache.detail && cache.detail.id);
+      if (id) await loadDetail(id);
+    }
+  };
+  v4.handleAction = function (act, el, ev) {
+    if (ACTS.has(act)) return handleAction(act, el, ev);
+    return prevHandle ? prevHandle(act, el, ev) : false;
+  };
+  v4.bindFilters = function () {
+    if (prevBind) prevBind();
+    bindFilters();
+  };
+  // preload dashboard counts so badges show after first render
+  if (global.LogbookAPI) {
+    loadDash().catch(() => {});
+  }
+  global.LogbookV5 = { cache, loadDash, loadDocs, viewDashboard };
 })(typeof window !== "undefined" ? window : globalThis);
 
   </script>

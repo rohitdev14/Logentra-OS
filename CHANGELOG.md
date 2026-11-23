@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.5.0 – early release
+
+A rebuilt web UI (light and dark) and a document approval workflow so technicians can submit test sheets, reports, and photos for sequential sign-off.
+
+- Modern sidebar UI with cards, status pills, a Kanban work-order board, and an annotated trend chart on the dashboard
+- Light (indigo accent, Linear/Notion-like) and dark (industrial control-room, cyan/amber) themes via CSS variables, toggled in the top bar, remembered in `localStorage`, defaulting to the OS `prefers-color-scheme`
+- Product name still comes from `logbook_server/branding.py` (Logbook placeholder)
+- Documents with versioned files under `data/attachments` (sha256, MIME, size), linked to equipment, a record, or a work order
+- Admin-defined approval routes (ordered steps by role or named user, optional document-type / site rules)
+- Submit → approve / reject (comment required) / return for changes; resubmit creates a new version and restarts the route; the approved version is locked read-only
+- Timestamped comment / audit trail and webhook events `document.submitted`, `document.step_approved`, `document.approved`, `document.rejected`, `document.returned`
+- Permissions `documents.read`, `documents.upload`, `documents.approve`, `routes.manage`
+- “My approvals” queue and a dashboard KPI; REST API for upload, submit, decide, and query (so agents and IoT tools can participate)
+- UI for document detail (PDF/image preview, stepper, comment thread, action buttons, submit panel) and route management
+- Alembic migration `0003_v05`
+
 ## 0.4.0 – early release
 
 On-prem users, roles, work orders, and scale provisions so a site can run Logbook as an open-source alternative to a paid CMMS/Cx cloud app.

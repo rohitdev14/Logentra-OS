@@ -17,7 +17,7 @@ from logbook_server.schemas import AnnotationIn, BulkReadingsIn, ReadingIn, Sync
 from sqlalchemy.orm import Session
 
 from logbook_server import __version__, demo, events, importers, migrate, mqtt_worker, seed, service
-from logbook_server.routers import auth_users, work_orders
+from logbook_server.routers import auth_users, documents, work_orders
 from logbook_server.config import Settings, load_settings
 from logbook_server.database import init_db, make_engine, make_session_factory
 from logbook_server.models import (
@@ -56,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     with SessionLocal() as db:
         service.ensure_default_fields(db)
         seed.ensure_builtin_roles(db)
+        seed.ensure_default_routes(db)
         seed.maybe_bootstrap_admin(db, settings)
         if settings.outbound_webhooks and db.query(OutboundWebhook).count() == 0:
             for wh in settings.outbound_webhooks:
@@ -76,7 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         description=(
             f"On-prem open-source backend for {PRODUCT_NAME} {RELEASE_LABEL} — equipment, "
-            "record templates, time-series readings, users/roles, and work orders. "
+            "record templates, time-series readings, users/roles, work orders, and document approvals. "
             "SQLite by default; set LOGBOOK_DATABASE_URL to a PostgreSQL connection string to switch. "
             "Set LOGBOOK_AUTH_MODE=users to require login."
         ),
@@ -167,6 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(auth_users.build_router(get_db, get_principal, settings))
     app.include_router(work_orders.build_router(get_db, get_principal, settings))
+    app.include_router(documents.build_router(get_db, get_principal, settings))
 
     # -------------- bootstrap / catalog --------------
     @app.get("/api/bootstrap", tags=["catalog"], summary="Full app state (UI-compatible)", dependencies=read_eq)

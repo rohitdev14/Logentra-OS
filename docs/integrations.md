@@ -95,6 +95,9 @@ Useful tools for an agent:
 - `GET /api/events/out-of-range?unacknowledged=true` — what still needs a note.
 - `PUT /api/logs/{entry_id}/annotations/{parameter}` — add a cause / action / initials after the user reviews it.
 - `POST /api/readings` — only when the user is handing the agent a value to file.
+- `POST /api/documents` — upload a test sheet or photo (multipart) and optionally submit it.
+- `GET /api/documents/queue` and `GET /api/dashboard` — what is waiting for approval.
+- `POST /api/documents/{id}/approve` (or `/return`, `/reject`) — only after the user reviews the file.
 
 The agent should treat this as an operations notebook, not as a control system.
 
@@ -147,6 +150,77 @@ curl -s -X POST http://127.0.0.1:8787/api/work-order-rules \
         "cooldown_minutes": 1440
       }'
 ```
+
+## Document approvals
+
+Technicians (or an agent / IoT tool) upload a file, submit it on an approval route, and later query status. Approvers decide via the API or the UI. Files are stored under `data/attachments/documents/` with a sha256 checksum.
+
+```bash
+# Upload a draft (multipart). Pass submit=true to send it along a route immediately.
+curl -s -X POST http://127.0.0.1:8787/api/documents \
+  -F 'file=@test-sheet.pdf;type=application/pdf' \
+  -F 'title=P-101 commissioning test sheet' \
+  -F 'document_type=commissioning_test_sheet' \
+  -F 'equipment_id=eq_p101' \
+  -F 'work_order_id=' \
+  -F 'route_id=' \
+  -F 'submit=true'
+
+# List and inspect
+curl -s "http://127.0.0.1:8787/api/documents?status=in_review&page=1"
+curl -s http://127.0.0.1:8787/api/documents/DOC_ID
+curl -s -o sheet.pdf http://127.0.0.1:8787/api/documents/DOC_ID/file
+
+# Queue waiting on the current user
+curl -s http://127.0.0.1:8787/api/documents/queue
+curl -s http://127.0.0.1:8787/api/dashboard
+
+# Decisions (reject and return require a comment)
+curl -s -X POST http://127.0.0.1:8787/api/documents/DOC_ID/approve \
+  -H 'Content-Type: application/json' -d '{"comment":"Limits checked against the trend"}'
+curl -s -X POST http://127.0.0.1:8787/api/documents/DOC_ID/return \
+  -H 'Content-Type: application/json' -d '{"comment":"Please retake photo 3"}'
+
+# After a return: upload a new version, then resubmit (restarts the route)
+curl -s -X POST http://127.0.0.1:8787/api/documents/DOC_ID/versions \
+  -F 'file=@test-sheet-revC.pdf;type=application/pdf'
+curl -s -X POST http://127.0.0.1:8787/api/documents/DOC_ID/submit \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
+Python (an agent submitting a sheet):
+
+```python
+import httpx
+base = "http://127.0.0.1:8787/api"
+with open("test-sheet.pdf", "rb") as f:
+    doc = httpx.post(f"{base}/documents", files={"file": ("test-sheet.pdf", f, "application/pdf")},
+                     data={"title": "P-101 commissioning test sheet",
+                           "document_type": "commissioning_test_sheet",
+                           "equipment_id": "eq_p101",
+                           "submit": "true"}).json()
+print(doc["id"], doc["status"])
+queue = httpx.get(f"{base}/documents/queue").json()
+print(queue["total"], "waiting")
+```
+
+Define or adjust a route (`routes.manage`):
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/approval-routes \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "name": "Commissioning test sheet",
+        "document_type": "commissioning_test_sheet",
+        "enabled": true,
+        "steps": [
+          {"assignee_type": "role", "role_name": "supervisor", "label": "Supervisor"},
+          {"assignee_type": "role", "role_name": "admin", "label": "Admin"}
+        ]
+      }'
+```
+
+Outbound webhooks can subscribe to `document.submitted`, `document.step_approved`, `document.approved`, `document.rejected`, and `document.returned`. An approved document is locked read-only; further versions or decisions are rejected.
 
 ## Login (when LOGBOOK_AUTH_MODE=users)
 

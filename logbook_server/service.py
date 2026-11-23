@@ -358,6 +358,8 @@ def logs_to_ui(db: Session) -> list[dict[str, Any]]:
 
 def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500, principal=None) -> dict[str, Any]:
     ensure_default_fields(db)
+    from logbook_server import seed as _seed
+    _seed.ensure_default_routes(db)
     db.commit()
     fields = db.query(FieldDefinition).order_by(FieldDefinition.sort_order, FieldDefinition.key).all()
     eq_query = apply_scope(db.query(Equipment), Equipment, principal)
@@ -964,12 +966,24 @@ def delete_entry(db: Session, entry_id: str) -> int:
 def clear_all(db: Session, *, actor: str = "ui") -> None:
     # order respects FKs; cascade covers most. Users/roles/sessions are kept.
     from logbook_server.models import (
+        ApprovalRoute,
+        ApprovalRouteStep,
         AutoWorkOrderRule,
+        Document,
+        DocumentApprovalStep,
+        DocumentComment,
+        DocumentVersion,
         WorkOrder,
         WorkOrderAttachment,
         WorkOrderComment,
         WorkOrderLabour,
     )
+    db.query(DocumentComment).delete()
+    db.query(DocumentApprovalStep).delete()
+    db.query(DocumentVersion).delete()
+    db.query(Document).delete()
+    db.query(ApprovalRouteStep).delete()
+    db.query(ApprovalRoute).delete()
     db.query(WorkOrderLabour).delete()
     db.query(WorkOrderAttachment).delete()
     db.query(WorkOrderComment).delete()
@@ -996,4 +1010,6 @@ def clear_all(db: Session, *, actor: str = "ui") -> None:
     audit(db, "clear", actor=actor, entity_type="database")
     db.commit()
     ensure_default_fields(db)
+    from logbook_server import seed as _seed
+    _seed.ensure_default_routes(db)
     db.commit()
