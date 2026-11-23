@@ -1,8 +1,8 @@
-# Logbook v0.3 — local database and API
+# Logbook — local database and API
 
-v0.3 – early release. See the [root README](../README.md) for a short overview, screenshots, and contributing notes.
+v0.4 – early release. See the [root README](../README.md) for a short overview, screenshots, and contributing notes.
 
-v0.3 keeps the v0.2 industry-neutral UI (equipment register, record templates, logs, trends, annotations, CSV/Excel import) and puts the data in an open-source database with a REST API. Other tools can both **write** into it (IoT gateways, MQTT, scripts, agents) and **read** from it (Grafana, Node-RED, Python, another logbook or CMMS).
+v0.4 keeps the industry-neutral UI (equipment register, record templates, logs, trends, annotations, CSV/Excel import) and puts the data in an open-source database with a REST API. Other tools can both **write** into it (IoT gateways, MQTT, scripts, agents) and **read** from it (Grafana, Node-RED, Python, another logbook or CMMS).
 
 The v0.2 offline single-file app is shipped at [`standalone/Logbook.html`](../standalone/Logbook.html).
 
@@ -28,7 +28,9 @@ python run.py
 
 Or copy `config.example.yaml` to `config.yaml` and edit `database_url`. Environment variables `LOGBOOK_*` override the file (`LOGBOOK_DATABASE_URL`, `LOGBOOK_API_KEY`, `LOGBOOK_HOST`, `LOGBOOK_PORT`, `LOGBOOK_MQTT_ENABLED`, …).
 
-Optional API key: set `api_key` in config or `LOGBOOK_API_KEY`. Every `/api` route except `/api/health` then requires `X-API-Key: <key>` or `Authorization: Bearer <key>`.
+Optional API key (single-user mode): set `api_key` in config or `LOGBOOK_API_KEY`. Every `/api` route except `/api/health` then requires `X-API-Key: <key>` or `Authorization: Bearer <key>`.
+
+To require login, set `LOGBOOK_AUTH_MODE=users` and create an admin (`python run.py create-admin`, or `LOGBOOK_BOOTSTRAP_ADMIN_USER` / `LOGBOOK_BOOTSTRAP_ADMIN_PASSWORD` on first start). Schema changes are applied with Alembic (`migrations/`) on startup; see [postgres.md](postgres.md) for a 5,000-equipment deployment.
 
 ## Architecture
 
@@ -75,6 +77,10 @@ erDiagram
     RECORDS ||--o| SIGNOFFS : signed
     RECORDS ||--o{ PUNCHES : lists
     READINGS ||--o| ANNOTATIONS : explained_by
+    EQUIPMENT ||--o{ WORK_ORDERS : subject_of
+    ROLES ||--o{ USERS : grants
+    USERS ||--o{ WORK_ORDERS : assigned
+    WORK_ORDERS ||--o{ WORK_ORDER_COMMENTS : has
     OUTBOUND_WEBHOOKS ||--o{ WEBHOOK_DELIVERIES : logs
     AUDIT_LOG }o--o{ EQUIPMENT : "entity_id"
     SETTINGS }o..o{ SETTINGS : kv

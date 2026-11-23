@@ -1,4 +1,4 @@
-# Pointing other tools at Logbook v0.3
+# Pointing other tools at Logbook
 
 All examples assume the server is at `http://127.0.0.1:8787`. Add `X-API-Key` if you enabled one. Demo limits and tag names below are fictional.
 
@@ -97,3 +97,62 @@ Useful tools for an agent:
 - `POST /api/readings` — only when the user is handing the agent a value to file.
 
 The agent should treat this as an operations notebook, not as a control system.
+
+## Work orders
+
+Create, list, transition, and comment. In `users` auth mode send `Authorization: Bearer <token>` (from `POST /api/auth/login`) or `X-API-Key` for a user-bound key.
+
+```bash
+# Create
+curl -s -X POST http://127.0.0.1:8787/api/work-orders \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "title": "Replace seal on P-101",
+        "description": "Leak at the stuffing box",
+        "priority": "high",
+        "equipment_id": "eq_p101",
+        "due_at": "2026-12-01"
+      }'
+
+# List (server-side pagination and filters)
+curl -s "http://127.0.0.1:8787/api/work-orders?status=open&priority=high&page=1&page_size=50"
+
+# Move along the workflow: open → in_progress → on_hold → done → closed
+curl -s -X POST http://127.0.0.1:8787/api/work-orders/WO_ID/transition \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"in_progress"}'
+
+# Assign, comment, labour
+curl -s -X POST http://127.0.0.1:8787/api/work-orders/WO_ID/assign \
+  -H 'Content-Type: application/json' -d '{"assignee_id":"usr_..."}'
+curl -s -X POST http://127.0.0.1:8787/api/work-orders/WO_ID/comments \
+  -H 'Content-Type: application/json' -d '{"body":"Parts on order"}'
+curl -s -X POST http://127.0.0.1:8787/api/work-orders/WO_ID/labour \
+  -H 'Content-Type: application/json' -d '{"minutes":45,"note":"Removed coupling"}'
+```
+
+Outbound webhooks can subscribe to `workorder.created`, `workorder.updated`, and `workorder.closed` (in addition to `out_of_range`). Subscribe with `POST /api/webhooks` and `"events": ["workorder.created","workorder.closed"]`.
+
+Auto-create from out-of-range readings is **off by default**. Enable a rule:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/work-order-rules \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "equipment_id": "eq_p101",
+        "parameter_key": "vibration",
+        "enabled": true,
+        "priority": "urgent",
+        "title_template": "Out of range: {tag} {parameter} = {value}",
+        "cooldown_minutes": 1440
+      }'
+```
+
+## Login (when LOGBOOK_AUTH_MODE=users)
+
+```bash
+TOKEN=$(curl -s -X POST http://127.0.0.1:8787/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"..."}' | python -c "import sys,json; print(json.load(sys.stdin)["token"])")
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/auth/me
+```

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from logbook_server import events
@@ -28,15 +28,15 @@ from logbook_server.models import (
     TemplateColumn,
     TemplateItem,
 )
+from logbook_server.branding import APP_VERSION, PRODUCT_NAME
+from logbook_server.pagination import clamp_page, page_result
 from logbook_server.utils import as_float, dumps, loads, out_of_range, parse_ts, split_ts, uid, utcnow_iso
-
-APP_VERSION = "0.3.0"
 
 
 def audit(db: Session, action: str, *, actor: str | None = "api", entity_type: str | None = None,
-          entity_id: str | None = None, detail: Any = None) -> None:
+          entity_id: str | None = None, detail: Any = None, user_id: str | None = None) -> None:
     db.add(AuditLog(
-        id=uid("aud"), ts=utcnow_iso(), actor=actor, action=action,
+        id=uid("aud"), ts=utcnow_iso(), actor=actor, user_id=user_id, action=action,
         entity_type=entity_type, entity_id=entity_id, detail=dumps(detail) if detail is not None else None,
     ))
 
@@ -84,8 +84,201 @@ def equipment_to_ui(eq: Equipment) -> dict[str, Any]:
         "id": eq.id,
         "values": {v.field_id: (v.value if v.value is not None else "") for v in eq.values},
         "params": [param_to_ui(p) for p in sorted(eq.parameters, key=lambda x: (x.sort_order, x.key))],
+        "site_id": eq.site_id,
+        "area_id": eq.area_id,
+        "tag": eq.tag,
         "createdAt": eq.created_at[:10] if eq.created_at else "",
     }
+
+
+def equipment_index_row(eq: Equipment) -> dict[str, Any]:
+    return {"id": eq.id, "tag": eq.tag, "site_id": eq.site_id, "area_id": eq.area_id}
+
+
+def apply_scope(query, model, principal) -> Any:
+    """Limit a query to the caller's site/area when those are set on the user."""
+    if principal is None:
+        return query
+    site_id = getattr(principal, "site_id", None)
+    area_id = getattr(principal, "area_id", None)
+    if site_id and hasattr(model, "site_id"):
+        query = query.filter(model.site_id == site_id)
+    if area_id and hasattr(model, "area_id"):
+        query = query.filter(model.area_id == area_id)
+    return query
+
+
+def list_equipment(
+    db: Session,
+    *,
+    q: str | None = None,
+    site_id: str | None = None,
+    area_id: str | None = None,
+    category: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    principal=None,
+    paginate: bool = False,
+) -> Any:
+    query = db.query(Equipment).options(selectinload(Equipment.values), selectinload(Equipment.parameters))
+    query = apply_scope(query, Equipment, principal)
+    if site_id:
+        query = query.filter(Equipment.site_id == site_id)
+    if area_id:
+        query = query.filter(Equipment.area_id == area_id)
+    if q:
+        like = f"%{q.strip()}%"
+        val_exists = exists().where(
+            EquipmentFieldValue.equipment_id == Equipment.id,
+            EquipmentFieldValue.value.ilike(like),
+        )
+        query = query.filter(or_(Equipment.tag.ilike(like), Equipment.id.ilike(like), val_exists))
+    if category:
+        # category lives in the EAV bag — join field_definitions.key == 'category'
+        from logbook_server.models import FieldDefinition
+        cat_exists = exists().where(
+            EquipmentFieldValue.equipment_id == Equipment.id,
+            EquipmentFieldValue.field_id == FieldDefinition.id,
+            FieldDefinition.key == "category",
+            EquipmentFieldValue.value == category,
+        )
+        query = query.filter(cat_exists)
+    query = query.order_by(Equipment.tag, Equipment.id)
+    if not paginate and page is None:
+        return [equipment_to_ui(e) for e in query.all()]
+    page, page_size = clamp_page(page, page_size)
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return page_result([equipment_to_ui(e) for e in rows], total, page, page_size)
+
+
+def list_templates(db: Session, *, q: str | None = None, page: int | None = None, page_size: int | None = None, paginate: bool = False):
+    query = db.query(Template).options(selectinload(Template.columns), selectinload(Template.items))
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.filter(or_(Template.name.ilike(like), Template.kind.ilike(like)))
+    query = query.order_by(Template.name, Template.id)
+    if not paginate and page is None:
+        return [template_to_ui(t) for t in query.all()]
+    page, page_size = clamp_page(page, page_size)
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return page_result([template_to_ui(t) for t in rows], total, page, page_size)
+
+
+def list_records(
+    db: Session,
+    *,
+    q: str | None = None,
+    equipment_id: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    paginate: bool = False,
+    principal=None,
+):
+    query = db.query(Record).options(
+        selectinload(Record.columns),
+        selectinload(Record.items).selectinload(RecordItem.values),
+        selectinload(Record.punches),
+        selectinload(Record.signoff),
+    )
+    if equipment_id:
+        query = query.filter(Record.equipment_id == equipment_id)
+    if principal and getattr(principal, "site_id", None):
+        query = query.filter(
+            or_(
+                Record.equipment_id.is_(None),
+                exists().where(Equipment.id == Record.equipment_id, Equipment.site_id == principal.site_id),
+            )
+        )
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.filter(or_(Record.template_name.ilike(like), Record.id.ilike(like), Record.notes.ilike(like)))
+    query = query.order_by(Record.created_at.desc(), Record.id.desc())
+    if not paginate and page is None:
+        return [record_to_ui(r) for r in query.all()]
+    page, page_size = clamp_page(page, page_size)
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return page_result([record_to_ui(r) for r in rows], total, page, page_size)
+
+
+def list_logs(
+    db: Session,
+    *,
+    equipment_id: str | None = None,
+    q: str | None = None,
+    ts_from: str | None = None,
+    ts_to: str | None = None,
+    page: int | None = 1,
+    page_size: int | None = 50,
+    principal=None,
+) -> dict[str, Any]:
+    """Paginate grouped log-book lines (one row per entry_id)."""
+    page, page_size = clamp_page(page, page_size)
+    entry_q = db.query(Reading.entry_id, func.min(Reading.ts).label("ts"))
+    if equipment_id:
+        entry_q = entry_q.filter(Reading.equipment_id == equipment_id)
+    if principal and getattr(principal, "site_id", None):
+        entry_q = entry_q.join(Equipment, Equipment.id == Reading.equipment_id).filter(Equipment.site_id == principal.site_id)
+    if ts_from:
+        start = parse_ts(ts=ts_from) if ("T" in ts_from or len(ts_from) > 10) else (ts_from + "T00:00:00")
+        entry_q = entry_q.filter(Reading.ts >= start)
+    if ts_to:
+        end = ts_to if ("T" in ts_to or len(ts_to) > 10) else (ts_to + "T23:59:59")
+        entry_q = entry_q.filter(Reading.ts <= end)
+    if q:
+        like = f"%{q.strip()}%"
+        entry_q = entry_q.filter(or_(Reading.entry_id.ilike(like), Reading.parameter_key.ilike(like), Reading.remarks.ilike(like)))
+    entry_q = entry_q.group_by(Reading.entry_id)
+    total = entry_q.count()
+    page_ids = (
+        entry_q.order_by(func.min(Reading.ts).desc(), Reading.entry_id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    ids = [row[0] for row in page_ids]
+    if not ids:
+        return page_result([], total, page, page_size)
+    # Reuse logs_to_ui grouping on just this page of entries
+    rows = (
+        db.query(Reading)
+        .options(selectinload(Reading.annotation))
+        .filter(Reading.entry_id.in_(ids))
+        .order_by(Reading.ts, Reading.id)
+        .all()
+    )
+    # temporarily group
+    groups: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r.entry_id not in groups:
+            date, time = split_ts(r.ts)
+            groups[r.entry_id] = {
+                "id": r.entry_id,
+                "equipmentId": r.equipment_id,
+                "date": date,
+                "time": time,
+                "readings": {},
+                "remarks": r.remarks or "",
+                "enteredBy": r.entered_by or "",
+                "annotations": {},
+            }
+        g = groups[r.entry_id]
+        g["readings"][r.parameter_key] = r.value
+        if r.remarks:
+            g["remarks"] = r.remarks
+        if r.entered_by:
+            g["enteredBy"] = r.entered_by
+        if r.annotation and (r.annotation.cause or r.annotation.action or r.annotation.annotated_by):
+            g["annotations"][r.parameter_key] = {
+                "cause": r.annotation.cause or "",
+                "action": r.annotation.action or "",
+                "by": r.annotation.annotated_by or "",
+                "at": r.annotation.annotated_at or "",
+            }
+    items = [groups[i] for i in ids if i in groups]
+    return page_result(items, total, page, page_size)
 
 
 def template_to_ui(t: Template) -> dict[str, Any]:
@@ -163,21 +356,39 @@ def logs_to_ui(db: Session) -> list[dict[str, Any]]:
     return [groups[k] for k in order]
 
 
-def bootstrap(db: Session, *, backend: str = "sqlite") -> dict[str, Any]:
+def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500, principal=None) -> dict[str, Any]:
     ensure_default_fields(db)
     db.commit()
     fields = db.query(FieldDefinition).order_by(FieldDefinition.sort_order, FieldDefinition.key).all()
-    equipment = db.query(Equipment).options(
-        selectinload(Equipment.values), selectinload(Equipment.parameters)
-    ).all()
+    eq_query = apply_scope(db.query(Equipment), Equipment, principal)
+    eq_count = eq_query.count()
+    reading_count = db.query(func.count(Reading.id)).scalar() or 0
+    paginated = eq_count > equipment_cap or reading_count > 8000
+    if paginated:
+        equipment: list[dict[str, Any]] = []
+        index_rows = apply_scope(db.query(Equipment), Equipment, principal).order_by(Equipment.tag).all()
+        equipment_index = [equipment_index_row(e) for e in index_rows]
+        logs = list_logs(db, page=1, page_size=200, principal=principal).get("items", [])
+        rec_page = list_records(db, page=1, page_size=200, paginate=True, principal=principal)
+        records = rec_page["items"]
+        record_total = rec_page["total"]
+    else:
+        equipment_rows = eq_query.options(
+            selectinload(Equipment.values), selectinload(Equipment.parameters)
+        ).order_by(Equipment.tag, Equipment.id).all()
+        equipment = [equipment_to_ui(e) for e in equipment_rows]
+        equipment_index = [equipment_index_row(e) for e in equipment_rows]
+        rec_query = db.query(Record).options(
+            selectinload(Record.columns),
+            selectinload(Record.items).selectinload(RecordItem.values),
+            selectinload(Record.punches),
+            selectinload(Record.signoff),
+        )
+        records = [record_to_ui(r) for r in rec_query.all()]
+        record_total = len(records)
+        logs = logs_to_ui(db)
     templates = db.query(Template).options(
         selectinload(Template.columns), selectinload(Template.items)
-    ).all()
-    records = db.query(Record).options(
-        selectinload(Record.columns),
-        selectinload(Record.items).selectinload(RecordItem.values),
-        selectinload(Record.punches),
-        selectinload(Record.signoff),
     ).all()
     presets: dict[str, list] = {}
     for p in db.query(ParamPreset).order_by(ParamPreset.category, ParamPreset.sort_order).all():
@@ -186,19 +397,25 @@ def bootstrap(db: Session, *, backend: str = "sqlite") -> dict[str, Any]:
     updated = db.get(Setting, "updated_at")
     return {
         "meta": {
-            "version": 3,
+            "version": 4,
             "app": APP_VERSION,
+            "product": PRODUCT_NAME,
             "updatedAt": updated.value if updated else None,
             "demo": (demo_flag.value == "1") if demo_flag else False,
             "backend": backend,
             "store": "database",
+            "equipmentTotal": eq_count,
+            "readingsTotal": reading_count,
+            "recordTotal": record_total,
+            "paginated": paginated,
         },
         "equipmentFields": [field_to_ui(f) for f in fields],
-        "equipment": [equipment_to_ui(e) for e in equipment],
+        "equipment": equipment,
+        "equipmentIndex": equipment_index,
         "templates": [template_to_ui(t) for t in templates],
-        "records": [record_to_ui(r) for r in records],
+        "records": records,
         "paramPresets": presets,
-        "logs": logs_to_ui(db),
+        "logs": logs,
     }
 
 
@@ -563,6 +780,7 @@ def ingest_readings(
             limit_max=param.max_value,
             created_at=now,
         )
+        reading.out_of_range = 1 if out_of_range(value, param.min_value, param.max_value) else 0
         db.add(reading)
         db.flush()
         # optional annotation in the same payload
@@ -582,9 +800,16 @@ def ingest_readings(
     set_setting(db, "updated_at", now)
     db.commit()
     hook_results = []
-    if fire_webhooks and oor_events:
+    auto_wo: list[str] = []
+    if oor_events:
+        if fire_webhooks:
+            for reading, tag, label in oor_events:
+                hook_results.extend(events.deliver(db, "out_of_range", events.oor_payload(reading, tag, label)))
+        from logbook_server.workorders import maybe_auto_create
         for reading, tag, label in oor_events:
-            hook_results.extend(events.deliver(db, "out_of_range", events.oor_payload(reading, tag, label)))
+            wo = maybe_auto_create(db, reading, tag, label)
+            if wo:
+                auto_wo.append(wo.id)
     return {
         "added": len(created),
         "skipped": len(skipped),
@@ -593,6 +818,7 @@ def ingest_readings(
         "ids": [r.id for r in created],
         "entry_ids": list({r.entry_id for r in created}),
         "webhooks": hook_results,
+        "work_orders": auto_wo,
     }
 
 
@@ -668,16 +894,46 @@ def query_events(
     ts_from: str | None = None,
     ts_to: str | None = None,
     limit: int = 500,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
-    rows = query_readings(
-        db, equipment_id=equipment_id, tag=tag, ts_from=ts_from, ts_to=ts_to, limit=limit,
+    q = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment))
+    # Prefer the denormalised flag (indexed); also accept legacy rows if any slipped through.
+    oor = or_(
+        Reading.out_of_range == 1,
+        and_(Reading.limit_min.isnot(None), Reading.value < Reading.limit_min),
+        and_(Reading.limit_max.isnot(None), Reading.value > Reading.limit_max),
     )
-    out = [r for r in rows if r["out_of_range"]]
+    q = q.filter(oor)
+    if equipment_id:
+        q = q.filter(Reading.equipment_id == equipment_id)
+    if tag:
+        eq = get_equipment(db, tag=tag)
+        if not eq:
+            return []
+        q = q.filter(Reading.equipment_id == eq.id)
+    if ts_from:
+        start = parse_ts(ts=ts_from) if ("T" in ts_from or len(ts_from) > 10) else (ts_from + "T00:00:00")
+        q = q.filter(Reading.ts >= start)
+    if ts_to:
+        end = ts_to if ("T" in ts_to or len(ts_to) > 10) else (ts_to + "T23:59:59")
+        q = q.filter(Reading.ts <= end)
     if unacknowledged is True:
-        out = [r for r in out if r["unacknowledged"]]
+        q = q.outerjoin(Annotation, Annotation.reading_id == Reading.id).filter(
+            or_(
+                Annotation.id.is_(None),
+                and_(
+                    func.coalesce(Annotation.cause, "") == "",
+                    func.coalesce(Annotation.action, "") == "",
+                    func.coalesce(Annotation.annotated_by, "") == "",
+                ),
+            )
+        )
     elif unacknowledged is False:
-        out = [r for r in out if not r["unacknowledged"]]
-    return out
+        q = q.join(Annotation, Annotation.reading_id == Reading.id).filter(
+            or_(Annotation.cause != "", Annotation.action != "", Annotation.annotated_by != "")
+        )
+    rows = q.order_by(Reading.ts.desc(), Reading.id.desc()).offset(offset).limit(min(limit, 10000)).all()
+    return [reading_to_dict(r, r.equipment.tag if r.equipment else None) for r in rows]
 
 
 def upsert_annotation(db: Session, reading_id: str, data: dict[str, Any], *, actor: str = "ui") -> Annotation:
@@ -706,7 +962,19 @@ def delete_entry(db: Session, entry_id: str) -> int:
 
 
 def clear_all(db: Session, *, actor: str = "ui") -> None:
-    # order respects FKs; cascade covers most
+    # order respects FKs; cascade covers most. Users/roles/sessions are kept.
+    from logbook_server.models import (
+        AutoWorkOrderRule,
+        WorkOrder,
+        WorkOrderAttachment,
+        WorkOrderComment,
+        WorkOrderLabour,
+    )
+    db.query(WorkOrderLabour).delete()
+    db.query(WorkOrderAttachment).delete()
+    db.query(WorkOrderComment).delete()
+    db.query(WorkOrder).delete()
+    db.query(AutoWorkOrderRule).delete()
     db.query(WebhookDelivery).delete()
     db.query(Annotation).delete()
     db.query(Reading).delete()

@@ -3,9 +3,22 @@
   "use strict";
 
   const API = "/api";
+  const TOKEN_KEY = "logbook.token";
+
+  function getToken() {
+    try { return global.sessionStorage && sessionStorage.getItem(TOKEN_KEY); } catch (e) { return global.LOGBOOK_TOKEN || ""; }
+  }
+  function setToken(token) {
+    try {
+      if (token) sessionStorage.setItem(TOKEN_KEY, token);
+      else sessionStorage.removeItem(TOKEN_KEY);
+    } catch (e) { global.LOGBOOK_TOKEN = token || ""; }
+  }
 
   async function req(method, path, body, opts) {
     const headers = Object.assign({ "Accept": "application/json" }, (opts && opts.headers) || {});
+    const token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
     if (global.LOGBOOK_API_KEY) {
       headers["X-API-Key"] = global.LOGBOOK_API_KEY;
     }
@@ -21,6 +34,9 @@
         const j = await res.json();
         if (j.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
       } catch (e) { /* ignore */ }
+      if (res.status === 401 && !(opts && opts.skipAuthHandler)) {
+        try { global.dispatchEvent && dispatchEvent(new CustomEvent("logbook:auth-required")); } catch (e2) {}
+      }
       const err = new Error(detail);
       err.status = res.status;
       throw err;
@@ -90,8 +106,54 @@
     ingestReadings: (payload) => req("POST", "/ingest/readings", payload),
     exportUrl: (name) => API + "/export/" + name,
     docsUrl: "/docs",
-    logToReadings
+    logToReadings,
+    getToken, setToken,
+    login: (username, password) => req("POST", "/auth/login", { username, password }, { skipAuthHandler: true }).then((r) => {
+      if (r && r.token) setToken(r.token);
+      return r;
+    }),
+    logout: () => req("POST", "/auth/logout").catch(() => null).finally(() => setToken("")),
+    me: () => req("GET", "/auth/me"),
+    listEquipment: (params) => req("GET", "/equipment" + qs(params)),
+    listWorkOrders: (params) => req("GET", "/work-orders" + qs(params)),
+    getWorkOrder: (id) => req("GET", "/work-orders/" + encodeURIComponent(id)),
+    createWorkOrder: (body) => req("POST", "/work-orders", body),
+    patchWorkOrder: (id, body) => req("PATCH", "/work-orders/" + encodeURIComponent(id), body),
+    transitionWorkOrder: (id, status) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/transition", { status }),
+    assignWorkOrder: (id, assignee_id) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/assign", { assignee_id }),
+    commentWorkOrder: (id, body) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/comments", { body }),
+    labourWorkOrder: (id, payload) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/labour", payload),
+    attachWorkOrderMeta: (id, payload) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/attachments", payload),
+    listRules: () => req("GET", "/work-order-rules"),
+    createRule: (body) => req("POST", "/work-order-rules", body),
+    patchRule: (id, body) => req("PATCH", "/work-order-rules/" + encodeURIComponent(id), body),
+    deleteRule: (id) => req("DELETE", "/work-order-rules/" + encodeURIComponent(id)),
+    listUsers: (params) => req("GET", "/users" + qs(params)),
+    createUser: (body) => req("POST", "/users", body),
+    patchUser: (id, body) => req("PATCH", "/users/" + encodeURIComponent(id), body),
+    deleteUser: (id) => req("DELETE", "/users/" + encodeURIComponent(id)),
+    listRoles: () => req("GET", "/roles"),
+    createRole: (body) => req("POST", "/roles", body),
+    patchRole: (id, body) => req("PATCH", "/roles/" + encodeURIComponent(id), body),
+    deleteRole: (id) => req("DELETE", "/roles/" + encodeURIComponent(id)),
+    listPermissions: () => req("GET", "/auth/permissions"),
+    createApiKey: (uid, body) => req("POST", "/users/" + encodeURIComponent(uid) + "/api-keys", body || {}),
+    listApiKeys: (uid) => req("GET", "/users/" + encodeURIComponent(uid) + "/api-keys"),
+    revokeApiKey: (uid, kid) => req("DELETE", "/users/" + encodeURIComponent(uid) + "/api-keys/" + encodeURIComponent(kid)),
+    listSites: () => req("GET", "/sites"),
+    createSite: (body) => req("POST", "/sites", body),
+    listLogs: (params) => req("GET", "/logs" + qs(params))
   };
+
+  function qs(params) {
+    if (!params) return "";
+    const u = new URLSearchParams();
+    Object.keys(params).forEach((k) => {
+      if (params[k] !== undefined && params[k] !== null && params[k] !== "") u.set(k, params[k]);
+    });
+    const s = u.toString();
+    return s ? "?" + s : "";
+  }
 
   global.LogbookAPI = api;
 })(typeof window !== "undefined" ? window : globalThis);

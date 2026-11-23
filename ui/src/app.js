@@ -1,10 +1,11 @@
-/* Logbook v0.3 — Equipment & Records with a local database/API. Early release. */
+/* Logbook — Equipment, records, and work orders with a local database/API. */
 (function () {
   "use strict";
 
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
-  const APP_VERSION = "0.3.0";
+  const APP_VERSION = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.version) || "0.4.0";
+  const PRODUCT_NAME = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.name) || "Logbook";
 
   const FIELD_TYPES = [
     { id: "text", label: "Text" },
@@ -31,7 +32,9 @@
   }
   function emptyState() {
     return {
-      meta: { version: 3, app: APP_VERSION, updatedAt: null, demo: false, store: "database" },
+      meta: { version: 4, app: APP_VERSION, product: PRODUCT_NAME, updatedAt: null, demo: false, store: "database", paginated: false },
+      me: null,
+      auth_mode: "open",
       equipmentFields: defaultFields(),
       equipment: [],
       templates: [],
@@ -162,7 +165,7 @@
 
   function persist() {
     state.meta.updatedAt = new Date().toISOString();
-    state.meta.version = 3;
+    state.meta.version = 4;
     const api = window.LogbookAPI;
     if (!api) {
       try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (err) { toast("Could not save: " + err.message); }
@@ -258,21 +261,31 @@
       try {
         const data = await api.bootstrap();
         setApiBadge(true, (data.meta && data.meta.backend ? data.meta.backend + " · " : "") + "connected");
-        return normalize(data);
+        const next = normalize(data);
+        next.me = data.me || null;
+        next.auth_mode = data.auth_mode || (data.me && data.me.mode) || "open";
+        next.equipmentIndex = data.equipmentIndex || (next.equipment || []).map((e) => ({ id: e.id, tag: e.tag }));
+        state = next;
+        return state;
       } catch (err) {
+        if (err.status === 401) {
+          setApiBadge(false, "Sign in required");
+          throw err;
+        }
         setApiBadge(false, "API offline");
-        toast("Could not reach the Logbook API. Start it with python run.py. " + err.message);
+        toast("Could not reach the " + PRODUCT_NAME + " API. Start it with python run.py. " + err.message);
         console.warn("API load failed", err);
       }
     }
-    return emptyState();
+    state = emptyState();
+    return state;
   }
 
   /* ---------- demo (generic plant, fictional) ---------- */
   async function loadDemo() {
     if (window.LogbookAPI) {
       await window.LogbookAPI.loadDemo();
-      state = normalize(await window.LogbookAPI.bootstrap());
+      await loadStore();
       setApiBadge(true, "Database connected");
       return;
     }
@@ -941,17 +954,24 @@
   }
   function render() {
     const root = document.getElementById("view");
+    const v4 = window.LogbookV4;
     const views = {
       dashboard: viewDashboard, equipment: viewEquipment, templates: viewTemplates,
       records: viewRecords, recordEdit: viewRecordEdit, logbook: viewLogbook,
       trends: viewTrends, import: viewImport, backup: viewBackup
     };
+    if (v4 && v4.views) Object.assign(views, v4.views);
+    const groupMap = { recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders" };
     root.innerHTML = (views[ui.view] || viewDashboard)();
     document.querySelectorAll("nav.tabs button").forEach((b) => {
-      const group = ui.view === "recordEdit" ? "records" : ui.view;
+      const group = groupMap[ui.view] || ui.view;
       b.classList.toggle("active", b.dataset.view === group);
     });
     bindView();
+    if (v4) {
+      v4.applyChrome();
+      v4.bindFilters();
+    }
   }
   function openPunches() {
     const list = [];
@@ -982,7 +1002,7 @@
           <p class="page-lead">A private logbook for any industry, now backed by a local database and a REST API. You define the equipment columns, record templates, and log parameters — or import a table, subscribe to MQTT, or POST readings from a gateway.</p>
         </div>
         <div class="row no-print">
-          <button class="btn" data-act="demo">${state.equipment.length ? "Reload fictional demo" : "Load fictional demo"}</button>
+          <button class="btn" data-act="demo" data-need-perm="settings.manage">${state.equipment.length ? "Reload fictional demo" : "Load fictional demo"}</button>
           <button class="btn btn-primary" data-act="goto" data-view="equipment">Add equipment</button>
         </div>
       </div>
@@ -1034,8 +1054,8 @@
       </div>
       <div class="card">
         <div class="grid-toolbar">
-          <button class="btn btn-primary" data-act="eq-add">Add row</button>
-          <button class="btn" data-act="col-manage">Columns…</button>
+          <button class="btn btn-primary" data-act="eq-add" data-need-perm="equipment.write">Add row</button>
+          <button class="btn" data-act="col-manage" data-need-perm="equipment.write">Columns…</button>
           <button class="btn" data-act="goto" data-view="import">Import table</button>
           <button class="btn" data-act="export-eq-csv">Export CSV</button>
           <button class="btn" data-act="export-eq-xlsx">Export Excel</button>
@@ -1091,7 +1111,7 @@
           <p class="page-lead">Design a commissioning, inspection, maintenance, or any other record. You control the rows (items) and the columns (result fields). Then start a record on a piece of equipment.</p>
         </div>
         <div class="row">
-          <button class="btn btn-primary" data-act="tpl-new">New template</button>
+          <button class="btn btn-primary" data-act="tpl-new" data-need-perm="templates.write">New template</button>
         </div>
       </div>
       <div class="builder">
@@ -1156,7 +1176,7 @@
           <h2>Records</h2>
           <p class="page-lead">Filled-in instances of your templates — inspections, commissioning, maintenance, or anything else — tied to a piece of equipment.</p>
         </div>
-        <button class="btn btn-primary" data-act="rec-start" ${state.templates.length && state.equipment.length ? "" : "disabled"}>New record</button>
+        <button class="btn btn-primary" data-act="rec-start" data-need-perm="records.write" ${state.templates.length && state.equipment.length ? "" : "disabled"}>New record</button>
       </div>
       <div class="card">
         ${rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Opened</th><th>Template</th><th>Tag</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>' +
@@ -1970,6 +1990,19 @@
     const btn = e.target.closest("[data-act]");
     if (!btn) return;
     const act = btn.dataset.act;
+    if (window.LogbookV4 && window.LogbookV4.handleAction) {
+      const maybe = window.LogbookV4.handleAction(act, btn, e);
+      if (maybe && typeof maybe.then === "function") {
+        maybe.then((handled) => { if (handled) e.preventDefault(); });
+        if (["wo-new","wo-open","wo-page","wo-create","wo-save","wo-comment","wo-labour","wo-attach","wo-rules","wor-create","wor-toggle","wor-del","usr-create","usr-del","usr-key","role-create"].indexOf(act) >= 0) {
+          e.preventDefault();
+          return;
+        }
+      } else if (maybe) {
+        e.preventDefault();
+        return;
+      }
+    }
     if (act === "goto") { if (ui.view === "templates") collectTplMeta(), persist(); if (ui.view === "recordEdit") collectRecordEdits(), persist(); ui.view = btn.dataset.view; render(); return; }
     if (act === "demo") {
       if (!confirmDemo()) return;
@@ -2254,12 +2287,27 @@
       if (ui.view === "templates") collectTplMeta(), persist();
       if (ui.view === "recordEdit") collectRecordEdits(), persist();
       ui.view = b.dataset.view;
-      render();
+      const v4 = window.LogbookV4;
+      if (v4 && v4.beforeView) {
+        Promise.resolve(v4.beforeView(ui.view, ui)).finally(() => render());
+      } else {
+        render();
+      }
     });
   });
 
   async function init() {
-    state = await loadStore();
+    const v4 = window.LogbookV4;
+    if (v4 && v4.maybeRequireLogin) {
+      const ok = await v4.maybeRequireLogin();
+      if (!ok) return;
+    }
+    try {
+      state = await loadStore();
+    } catch (err) {
+      if (v4) v4.showLogin(err.message || "Please sign in.");
+      return;
+    }
     render();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => { init(); });
@@ -2267,9 +2315,18 @@
 
   window.Logbook = {
     version: APP_VERSION,
+    product: PRODUCT_NAME,
     getState: () => state,
     loadDemo, persist, render, loadStore,
-    goto: (v, extra) => { Object.assign(ui, extra || {}, { view: v }); render(); },
+    _ui: ui,
+    _toast: toast,
+    goto: (v, extra) => {
+      Object.assign(ui, extra || {}, { view: v });
+      const v4 = window.LogbookV4;
+      if (v4 && v4.beforeView) {
+        Promise.resolve(v4.beforeView(ui.view, ui)).finally(() => render());
+      } else render();
+    },
     applyPack, handleImportFile, tableFromFile,
     // test hook: set import wizard and run
     importTable: (kind, rows, mapping, extra) => {

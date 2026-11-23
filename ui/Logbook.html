@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Logbook v0.3 — Equipment, records, and API</title>
+  <title>Logbook v0.4 – early release — Equipment, records, and work orders</title>
   <style>
 :root {
   --navy: #1b365d;
@@ -409,9 +409,71 @@ table.sheet tr:hover td { background: #fbfcfd; }
 .api-badge.ok { background: #1f6a4a; color: #e8fff4; }
 .api-badge.err { background: #8b2e2e; color: #ffe8e8; }
 
+/* v0.4 — login, work orders, users */
+.login-gate {
+  position: fixed; inset: 0; z-index: 80;
+  background: linear-gradient(160deg, #132845, #1b365d 40%, #0c5670);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+.login-gate[hidden] { display: none !important; }
+body.login-open .app-header, body.login-open main, body.login-open .app-footer { display: none; }
+.login-card { width: min(26rem, 100%); padding: 1.5rem 1.4rem 1.3rem; }
+.login-card .brand { display: flex; gap: 0.75rem; align-items: center; color: var(--ink); }
+.login-card .brand .sub { color: var(--muted); font-size: 0.85rem; }
+.login-card .fld { display: block; margin: 0.55rem 0; }
+.login-card .fld span { display: block; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.2rem; }
+.login-card input { width: 100%; padding: 0.45rem 0.55rem; border: 1px solid var(--line); border-radius: 8px; }
+.form-error { color: var(--fail); font-size: 0.85rem; margin: 0.4rem 0 0; }
+.user-chip {
+  font-size: 0.75rem; font-weight: 600; background: rgba(255,255,255,0.12);
+  border-radius: 999px; padding: 0.15rem 0.65rem; color: #e8eef4;
+}
+.header-logout { background: transparent; color: #d7e6ef; border-color: rgba(255,255,255,0.25); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.7rem; margin: 0.6rem 0; }
+.split-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 900px) { .split-2 { grid-template-columns: 1fr; } }
+.plain-list { margin: 0 0 0.7rem; padding-left: 1.1rem; }
+.plain-list li { margin: 0.25rem 0; }
+.linkish { background: none; border: 0; color: var(--teal); font-weight: 600; cursor: pointer; padding: 0; text-align: left; }
+.pager { display: flex; gap: 0.6rem; align-items: center; margin-top: 0.7rem; }
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.2rem 0.8rem; margin: 0.6rem 0 0.8rem; }
+.role-block { padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
+.check { font-size: 0.85rem; display: flex; align-items: center; gap: 0.35rem; }
+.kind-pill.st-open { background: #e8f1ff; color: #1b365d; }
+.kind-pill.st-in_progress { background: #e8f6ee; color: #18794e; }
+.kind-pill.st-on_hold { background: #fff4d6; color: #9a6700; }
+.kind-pill.st-done { background: #e8f6ee; color: #18794e; }
+.kind-pill.st-closed { background: #edf0f4; color: #5c6778; }
+
+[hidden] { display: none !important; }
+
   </style>
 </head>
 <body>
+  <div id="login-gate" class="login-gate" hidden>
+    <div class="login-card card">
+      <div class="brand" style="margin-bottom:1rem">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8">
+            <path d="M5 5h14v14H5z"/>
+            <path d="M5 10h14M10 5v14"/>
+          </svg>
+        </div>
+        <div>
+          <h1 id="login-product">Logbook</h1>
+          <div class="sub">Sign in to continue</div>
+        </div>
+      </div>
+      <form id="login-form" autocomplete="on">
+        <label class="fld"><span>Username</span><input type="text" id="login-user" name="username" required autofocus></label>
+        <label class="fld"><span>Password</span><input type="password" id="login-pass" name="password" required></label>
+        <p id="login-error" class="form-error" hidden></p>
+        <button type="submit" class="btn btn-primary" style="width:100%;margin-top:.6rem">Sign in</button>
+      </form>
+      <p class="tiny" style="margin-top:1rem">On-prem v0.4 – early release. Create the first admin with <code>python run.py create-admin</code>.</p>
+    </div>
+  </div>
   <header class="app-header">
     <div class="app-header-inner">
       <div class="brand">
@@ -422,14 +484,16 @@ table.sheet tr:hover td { background: #fbfcfd; }
           </svg>
         </div>
         <div>
-          <h1>Logbook</h1>
-          <div class="sub">Equipment, records, and trends — with a local database and API</div>
+          <h1 data-product-name>Logbook</h1>
+          <div class="sub">Equipment, records, work orders, and trends — with a local database and API</div>
         </div>
       </div>
       <div class="header-actions">
         <a class="docs-link" href="/docs" target="_blank" rel="noopener">API docs</a>
         <span id="api-badge" class="api-badge">Connecting…</span>
-        <span class="version-badge">v0.3 – early release</span>
+        <span class="version-badge">v0.4 – early release</span>
+        <span id="user-chip" class="user-chip" hidden></span>
+        <button type="button" id="logout-btn" class="btn btn-sm header-logout" hidden>Sign out</button>
       </div>
     </div>
     <nav class="tabs" aria-label="Main">
@@ -439,16 +503,19 @@ table.sheet tr:hover td { background: #fbfcfd; }
       <button type="button" data-view="records">Records</button>
       <button type="button" data-view="logbook">Logs</button>
       <button type="button" data-view="trends">Trends</button>
+      <button type="button" data-view="workorders">Work orders</button>
+      <button type="button" data-view="users" data-need-perm="users.manage">Users</button>
       <button type="button" data-view="import">Import</button>
       <button type="button" data-view="backup">Backup</button>
     </nav>
   </header>
   <main id="view"></main>
   <footer class="app-footer">
-    Logbook v0.3 – early release. The UI talks to a local open-source database over a REST API — use it from this page, IoT tools, Grafana, or another agent.
+    Logbook v0.4 – early release. The UI talks to a local open-source database over a REST API — use it from this page, IoT tools, Grafana, or another agent.
     Do not store passwords or confidential site data. Not a certified design tool.
   </footer>
   <script>
+window.LOGBOOK_PRODUCT = { name: "Logbook", version: "0.4.0", label: "v0.4 – early release" };
 /* Minimal XLSX read/write for simple tables. No CDN. Uses DecompressionStream for deflate. */
 (function (global) {
   "use strict";
@@ -759,9 +826,22 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   "use strict";
 
   const API = "/api";
+  const TOKEN_KEY = "logbook.token";
+
+  function getToken() {
+    try { return global.sessionStorage && sessionStorage.getItem(TOKEN_KEY); } catch (e) { return global.LOGBOOK_TOKEN || ""; }
+  }
+  function setToken(token) {
+    try {
+      if (token) sessionStorage.setItem(TOKEN_KEY, token);
+      else sessionStorage.removeItem(TOKEN_KEY);
+    } catch (e) { global.LOGBOOK_TOKEN = token || ""; }
+  }
 
   async function req(method, path, body, opts) {
     const headers = Object.assign({ "Accept": "application/json" }, (opts && opts.headers) || {});
+    const token = getToken();
+    if (token) headers["Authorization"] = "Bearer " + token;
     if (global.LOGBOOK_API_KEY) {
       headers["X-API-Key"] = global.LOGBOOK_API_KEY;
     }
@@ -777,6 +857,9 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         const j = await res.json();
         if (j.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
       } catch (e) { /* ignore */ }
+      if (res.status === 401 && !(opts && opts.skipAuthHandler)) {
+        try { global.dispatchEvent && dispatchEvent(new CustomEvent("logbook:auth-required")); } catch (e2) {}
+      }
       const err = new Error(detail);
       err.status = res.status;
       throw err;
@@ -846,19 +929,66 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     ingestReadings: (payload) => req("POST", "/ingest/readings", payload),
     exportUrl: (name) => API + "/export/" + name,
     docsUrl: "/docs",
-    logToReadings
+    logToReadings,
+    getToken, setToken,
+    login: (username, password) => req("POST", "/auth/login", { username, password }, { skipAuthHandler: true }).then((r) => {
+      if (r && r.token) setToken(r.token);
+      return r;
+    }),
+    logout: () => req("POST", "/auth/logout").catch(() => null).finally(() => setToken("")),
+    me: () => req("GET", "/auth/me"),
+    listEquipment: (params) => req("GET", "/equipment" + qs(params)),
+    listWorkOrders: (params) => req("GET", "/work-orders" + qs(params)),
+    getWorkOrder: (id) => req("GET", "/work-orders/" + encodeURIComponent(id)),
+    createWorkOrder: (body) => req("POST", "/work-orders", body),
+    patchWorkOrder: (id, body) => req("PATCH", "/work-orders/" + encodeURIComponent(id), body),
+    transitionWorkOrder: (id, status) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/transition", { status }),
+    assignWorkOrder: (id, assignee_id) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/assign", { assignee_id }),
+    commentWorkOrder: (id, body) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/comments", { body }),
+    labourWorkOrder: (id, payload) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/labour", payload),
+    attachWorkOrderMeta: (id, payload) => req("POST", "/work-orders/" + encodeURIComponent(id) + "/attachments", payload),
+    listRules: () => req("GET", "/work-order-rules"),
+    createRule: (body) => req("POST", "/work-order-rules", body),
+    patchRule: (id, body) => req("PATCH", "/work-order-rules/" + encodeURIComponent(id), body),
+    deleteRule: (id) => req("DELETE", "/work-order-rules/" + encodeURIComponent(id)),
+    listUsers: (params) => req("GET", "/users" + qs(params)),
+    createUser: (body) => req("POST", "/users", body),
+    patchUser: (id, body) => req("PATCH", "/users/" + encodeURIComponent(id), body),
+    deleteUser: (id) => req("DELETE", "/users/" + encodeURIComponent(id)),
+    listRoles: () => req("GET", "/roles"),
+    createRole: (body) => req("POST", "/roles", body),
+    patchRole: (id, body) => req("PATCH", "/roles/" + encodeURIComponent(id), body),
+    deleteRole: (id) => req("DELETE", "/roles/" + encodeURIComponent(id)),
+    listPermissions: () => req("GET", "/auth/permissions"),
+    createApiKey: (uid, body) => req("POST", "/users/" + encodeURIComponent(uid) + "/api-keys", body || {}),
+    listApiKeys: (uid) => req("GET", "/users/" + encodeURIComponent(uid) + "/api-keys"),
+    revokeApiKey: (uid, kid) => req("DELETE", "/users/" + encodeURIComponent(uid) + "/api-keys/" + encodeURIComponent(kid)),
+    listSites: () => req("GET", "/sites"),
+    createSite: (body) => req("POST", "/sites", body),
+    listLogs: (params) => req("GET", "/logs" + qs(params))
   };
+
+  function qs(params) {
+    if (!params) return "";
+    const u = new URLSearchParams();
+    Object.keys(params).forEach((k) => {
+      if (params[k] !== undefined && params[k] !== null && params[k] !== "") u.set(k, params[k]);
+    });
+    const s = u.toString();
+    return s ? "?" + s : "";
+  }
 
   global.LogbookAPI = api;
 })(typeof window !== "undefined" ? window : globalThis);
 
-/* Logbook v0.3 — Equipment & Records with a local database/API. Early release. */
+/* Logbook — Equipment, records, and work orders with a local database/API. */
 (function () {
   "use strict";
 
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
-  const APP_VERSION = "0.3.0";
+  const APP_VERSION = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.version) || "0.4.0";
+  const PRODUCT_NAME = (window.LOGBOOK_PRODUCT && window.LOGBOOK_PRODUCT.name) || "Logbook";
 
   const FIELD_TYPES = [
     { id: "text", label: "Text" },
@@ -885,7 +1015,9 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   }
   function emptyState() {
     return {
-      meta: { version: 3, app: APP_VERSION, updatedAt: null, demo: false, store: "database" },
+      meta: { version: 4, app: APP_VERSION, product: PRODUCT_NAME, updatedAt: null, demo: false, store: "database", paginated: false },
+      me: null,
+      auth_mode: "open",
       equipmentFields: defaultFields(),
       equipment: [],
       templates: [],
@@ -1016,7 +1148,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
 
   function persist() {
     state.meta.updatedAt = new Date().toISOString();
-    state.meta.version = 3;
+    state.meta.version = 4;
     const api = window.LogbookAPI;
     if (!api) {
       try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (err) { toast("Could not save: " + err.message); }
@@ -1112,21 +1244,31 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       try {
         const data = await api.bootstrap();
         setApiBadge(true, (data.meta && data.meta.backend ? data.meta.backend + " · " : "") + "connected");
-        return normalize(data);
+        const next = normalize(data);
+        next.me = data.me || null;
+        next.auth_mode = data.auth_mode || (data.me && data.me.mode) || "open";
+        next.equipmentIndex = data.equipmentIndex || (next.equipment || []).map((e) => ({ id: e.id, tag: e.tag }));
+        state = next;
+        return state;
       } catch (err) {
+        if (err.status === 401) {
+          setApiBadge(false, "Sign in required");
+          throw err;
+        }
         setApiBadge(false, "API offline");
-        toast("Could not reach the Logbook API. Start it with python run.py. " + err.message);
+        toast("Could not reach the " + PRODUCT_NAME + " API. Start it with python run.py. " + err.message);
         console.warn("API load failed", err);
       }
     }
-    return emptyState();
+    state = emptyState();
+    return state;
   }
 
   /* ---------- demo (generic plant, fictional) ---------- */
   async function loadDemo() {
     if (window.LogbookAPI) {
       await window.LogbookAPI.loadDemo();
-      state = normalize(await window.LogbookAPI.bootstrap());
+      await loadStore();
       setApiBadge(true, "Database connected");
       return;
     }
@@ -1795,17 +1937,24 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   }
   function render() {
     const root = document.getElementById("view");
+    const v4 = window.LogbookV4;
     const views = {
       dashboard: viewDashboard, equipment: viewEquipment, templates: viewTemplates,
       records: viewRecords, recordEdit: viewRecordEdit, logbook: viewLogbook,
       trends: viewTrends, import: viewImport, backup: viewBackup
     };
+    if (v4 && v4.views) Object.assign(views, v4.views);
+    const groupMap = { recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders" };
     root.innerHTML = (views[ui.view] || viewDashboard)();
     document.querySelectorAll("nav.tabs button").forEach((b) => {
-      const group = ui.view === "recordEdit" ? "records" : ui.view;
+      const group = groupMap[ui.view] || ui.view;
       b.classList.toggle("active", b.dataset.view === group);
     });
     bindView();
+    if (v4) {
+      v4.applyChrome();
+      v4.bindFilters();
+    }
   }
   function openPunches() {
     const list = [];
@@ -1836,7 +1985,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
           <p class="page-lead">A private logbook for any industry, now backed by a local database and a REST API. You define the equipment columns, record templates, and log parameters — or import a table, subscribe to MQTT, or POST readings from a gateway.</p>
         </div>
         <div class="row no-print">
-          <button class="btn" data-act="demo">${state.equipment.length ? "Reload fictional demo" : "Load fictional demo"}</button>
+          <button class="btn" data-act="demo" data-need-perm="settings.manage">${state.equipment.length ? "Reload fictional demo" : "Load fictional demo"}</button>
           <button class="btn btn-primary" data-act="goto" data-view="equipment">Add equipment</button>
         </div>
       </div>
@@ -1888,8 +2037,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       </div>
       <div class="card">
         <div class="grid-toolbar">
-          <button class="btn btn-primary" data-act="eq-add">Add row</button>
-          <button class="btn" data-act="col-manage">Columns…</button>
+          <button class="btn btn-primary" data-act="eq-add" data-need-perm="equipment.write">Add row</button>
+          <button class="btn" data-act="col-manage" data-need-perm="equipment.write">Columns…</button>
           <button class="btn" data-act="goto" data-view="import">Import table</button>
           <button class="btn" data-act="export-eq-csv">Export CSV</button>
           <button class="btn" data-act="export-eq-xlsx">Export Excel</button>
@@ -1945,7 +2094,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
           <p class="page-lead">Design a commissioning, inspection, maintenance, or any other record. You control the rows (items) and the columns (result fields). Then start a record on a piece of equipment.</p>
         </div>
         <div class="row">
-          <button class="btn btn-primary" data-act="tpl-new">New template</button>
+          <button class="btn btn-primary" data-act="tpl-new" data-need-perm="templates.write">New template</button>
         </div>
       </div>
       <div class="builder">
@@ -2010,7 +2159,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
           <h2>Records</h2>
           <p class="page-lead">Filled-in instances of your templates — inspections, commissioning, maintenance, or anything else — tied to a piece of equipment.</p>
         </div>
-        <button class="btn btn-primary" data-act="rec-start" ${state.templates.length && state.equipment.length ? "" : "disabled"}>New record</button>
+        <button class="btn btn-primary" data-act="rec-start" data-need-perm="records.write" ${state.templates.length && state.equipment.length ? "" : "disabled"}>New record</button>
       </div>
       <div class="card">
         ${rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Opened</th><th>Template</th><th>Tag</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>' +
@@ -2824,6 +2973,19 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const btn = e.target.closest("[data-act]");
     if (!btn) return;
     const act = btn.dataset.act;
+    if (window.LogbookV4 && window.LogbookV4.handleAction) {
+      const maybe = window.LogbookV4.handleAction(act, btn, e);
+      if (maybe && typeof maybe.then === "function") {
+        maybe.then((handled) => { if (handled) e.preventDefault(); });
+        if (["wo-new","wo-open","wo-page","wo-create","wo-save","wo-comment","wo-labour","wo-attach","wo-rules","wor-create","wor-toggle","wor-del","usr-create","usr-del","usr-key","role-create"].indexOf(act) >= 0) {
+          e.preventDefault();
+          return;
+        }
+      } else if (maybe) {
+        e.preventDefault();
+        return;
+      }
+    }
     if (act === "goto") { if (ui.view === "templates") collectTplMeta(), persist(); if (ui.view === "recordEdit") collectRecordEdits(), persist(); ui.view = btn.dataset.view; render(); return; }
     if (act === "demo") {
       if (!confirmDemo()) return;
@@ -3108,12 +3270,27 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       if (ui.view === "templates") collectTplMeta(), persist();
       if (ui.view === "recordEdit") collectRecordEdits(), persist();
       ui.view = b.dataset.view;
-      render();
+      const v4 = window.LogbookV4;
+      if (v4 && v4.beforeView) {
+        Promise.resolve(v4.beforeView(ui.view, ui)).finally(() => render());
+      } else {
+        render();
+      }
     });
   });
 
   async function init() {
-    state = await loadStore();
+    const v4 = window.LogbookV4;
+    if (v4 && v4.maybeRequireLogin) {
+      const ok = await v4.maybeRequireLogin();
+      if (!ok) return;
+    }
+    try {
+      state = await loadStore();
+    } catch (err) {
+      if (v4) v4.showLogin(err.message || "Please sign in.");
+      return;
+    }
     render();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => { init(); });
@@ -3121,9 +3298,18 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
 
   window.Logbook = {
     version: APP_VERSION,
+    product: PRODUCT_NAME,
     getState: () => state,
     loadDemo, persist, render, loadStore,
-    goto: (v, extra) => { Object.assign(ui, extra || {}, { view: v }); render(); },
+    _ui: ui,
+    _toast: toast,
+    goto: (v, extra) => {
+      Object.assign(ui, extra || {}, { view: v });
+      const v4 = window.LogbookV4;
+      if (v4 && v4.beforeView) {
+        Promise.resolve(v4.beforeView(ui.view, ui)).finally(() => render());
+      } else render();
+    },
     applyPack, handleImportFile, tableFromFile,
     // test hook: set import wizard and run
     importTable: (kind, rows, mapping, extra) => {
@@ -3132,6 +3318,623 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     }
   };
 })();
+
+/* v0.4 screens: login gate, work orders, users/roles, permission-aware chrome. */
+(function (global) {
+  "use strict";
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+  function product() {
+    return (global.LOGBOOK_PRODUCT && global.LOGBOOK_PRODUCT.name) || "Logbook";
+  }
+  function can(perm) {
+    const L = global.Logbook;
+    const state = L && L.getState && L.getState();
+    const me = state && state.me;
+    if (!me || me.mode === "open" || me.mode === "legacy_key") return true;
+    return (me.permissions || []).indexOf(perm) >= 0;
+  }
+
+  function applyChrome() {
+    const L = global.Logbook;
+    const state = L && L.getState && L.getState();
+    const me = state && state.me;
+    const authMode = (state && state.auth_mode) || (me && me.mode) || "open";
+    document.querySelectorAll("[data-need-perm]").forEach((el) => {
+      const need = el.getAttribute("data-need-perm");
+      const ok = !need || need.split(/\s+/).every((p) => can(p));
+      el.hidden = !ok;
+      if (el.tagName === "BUTTON" || el.tagName === "A") {
+        el.style.display = ok ? "" : "none";
+      }
+    });
+    document.querySelectorAll("[data-need-any]").forEach((el) => {
+      const need = el.getAttribute("data-need-any").split(/\s+/);
+      const ok = need.some((p) => can(p));
+      el.style.display = ok ? "" : "none";
+    });
+    const chip = document.getElementById("user-chip");
+    const out = document.getElementById("logout-btn");
+    if (chip) {
+      if (me && me.mode === "user") {
+        chip.hidden = false;
+        chip.textContent = (me.username || "user") + " · " + (me.role || "");
+      } else {
+        chip.hidden = true;
+      }
+    }
+    if (out) out.hidden = !(authMode === "users" && me && me.mode === "user");
+  }
+
+  /* ---------- login ---------- */
+  function showLogin(message) {
+    const gate = document.getElementById("login-gate");
+    if (!gate) return;
+    gate.hidden = false;
+    document.body.classList.add("login-open");
+    const err = document.getElementById("login-error");
+    if (err) {
+      if (message) { err.hidden = false; err.textContent = message; }
+      else { err.hidden = true; err.textContent = ""; }
+    }
+  }
+  function hideLogin() {
+    const gate = document.getElementById("login-gate");
+    if (gate) gate.hidden = true;
+    document.body.classList.remove("login-open");
+  }
+
+  async function maybeRequireLogin() {
+    const api = global.LogbookAPI;
+    if (!api) return true;
+    let health;
+    try { health = await api.health(); } catch (e) { return true; }
+    if (!health || health.auth_mode !== "users") return true;
+    if (api.getToken()) {
+      try {
+        await api.me();
+        hideLogin();
+        return true;
+      } catch (e) {
+        api.setToken("");
+      }
+    }
+    showLogin();
+    return false;
+  }
+
+  function bindLogin() {
+    const form = document.getElementById("login-form");
+    if (!form || form._bound) return;
+    form._bound = true;
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const user = document.getElementById("login-user").value;
+      const pass = document.getElementById("login-pass").value;
+      const err = document.getElementById("login-error");
+      try {
+        await global.LogbookAPI.login(user, pass);
+        hideLogin();
+        if (global.Logbook && global.Logbook.loadStore) {
+          const s = await global.Logbook.loadStore();
+          // loadStore assigns state internally; re-render
+          global.Logbook.render();
+        }
+      } catch (e) {
+        if (err) { err.hidden = false; err.textContent = e.message || "Sign-in failed"; }
+      }
+    });
+    const out = document.getElementById("logout-btn");
+    if (out && !out._bound) {
+      out._bound = true;
+      out.addEventListener("click", async () => {
+        try { await global.LogbookAPI.logout(); } catch (e) {}
+        showLogin("Signed out.");
+      });
+    }
+    global.addEventListener("logbook:auth-required", () => {
+      if (global.LogbookAPI) global.LogbookAPI.setToken("");
+      showLogin("Your session expired. Please sign in again.");
+    });
+  }
+
+  /* ---------- work orders ---------- */
+  const cache = { list: null, detail: null, users: [], rules: [], err: "" };
+
+  function statusOptions(current) {
+    return ["open", "in_progress", "on_hold", "done", "closed"].map((s) =>
+      "<option value=\"" + s + "\"" + (s === current ? " selected" : "") + ">" + s.replace("_", " ") + "</option>"
+    ).join("");
+  }
+  function prioOptions(current) {
+    return ["low", "medium", "high", "urgent"].map((s) =>
+      "<option" + (s === current ? " selected" : "") + ">" + s + "</option>"
+    ).join("");
+  }
+  function eqOptions(state, selected) {
+    const list = (state && (state.equipmentIndex || state.equipment)) || [];
+    return '<option value=""></option>' + list.map((e) => {
+      const tag = e.tag || (e.values && Object.values(e.values)[0]) || e.id;
+      return "<option value=\"" + esc(e.id) + "\"" + (e.id === selected ? " selected" : "") + ">" + esc(tag) + "</option>";
+    }).join("");
+  }
+  function userOptions(selected) {
+    return '<option value=""></option>' + (cache.users || []).map((u) =>
+      "<option value=\"" + esc(u.id) + "\"" + (u.id === selected ? " selected" : "") + ">" + esc(u.display_name || u.username) + "</option>"
+    ).join("");
+  }
+
+  async function loadWorkOrderList(ui) {
+    const api = global.LogbookAPI;
+    const params = {
+      page: ui.woPage || 1,
+      page_size: 25,
+      q: ui.woQ || "",
+      status: ui.woStatus || "",
+      priority: ui.woPrio || "",
+    };
+    cache.list = await api.listWorkOrders(params);
+    return cache.list;
+  }
+
+  function viewWorkOrders() {
+    const L = global.Logbook;
+    const state = L.getState();
+    const ui = L._ui || (L._ui = {});
+    const data = cache.list || { items: [], total: 0, page: 1, pages: 1 };
+    const items = data.items || [];
+    const canCreate = can("workorders.create");
+    return `
+      <div class="row spread">
+        <div>
+          <h2>Work orders</h2>
+          <p class="page-lead">Create, assign, and close maintenance or commissioning work. Status flows from open → in progress → on hold → done → closed.</p>
+        </div>
+        <div class="row">
+          ${canCreate ? '<button class="btn btn-primary" data-act="wo-new">New work order</button>' : ""}
+          ${can("workorders.assign") ? '<button class="btn" data-act="wo-rules">Auto-create rules</button>' : ""}
+        </div>
+      </div>
+      <div class="card">
+        <div class="grid-toolbar">
+          <label class="fld" style="min-width:10rem"><span>Search</span>
+            <input type="search" id="wo-q" value="${esc(ui.woQ || "")}" placeholder="Title or id…">
+          </label>
+          <label class="fld"><span>Status</span>
+            <select id="wo-status"><option value="">All</option>${statusOptions(ui.woStatus || "")}</select>
+          </label>
+          <label class="fld"><span>Priority</span>
+            <select id="wo-prio"><option value="">All</option>${prioOptions(ui.woPrio || "")}</select>
+          </label>
+          <span class="tiny" style="margin-left:auto">${data.total || 0} orders</span>
+        </div>
+        <div class="table-wrap">
+          <table class="sheet">
+            <thead><tr><th>Title</th><th>Status</th><th>Priority</th><th>Equipment</th><th>Assignee</th><th>Due</th><th></th></tr></thead>
+            <tbody>
+              ${items.length ? items.map((w) =>
+                "<tr>" +
+                "<td><button class='linkish' data-act='wo-open' data-id='" + esc(w.id) + "'>" + esc(w.title) + "</button></td>" +
+                "<td><span class='kind-pill st-" + esc(w.status) + "'>" + esc(w.status.replace("_", " ")) + "</span></td>" +
+                "<td>" + esc(w.priority) + "</td>" +
+                "<td>" + esc(w.tag || w.equipment_id || "—") + "</td>" +
+                "<td>" + esc(w.assignee || "—") + "</td>" +
+                "<td>" + esc((w.due_at || "").slice(0, 10) || "—") + "</td>" +
+                "<td class='no-print'><button class='btn btn-sm' data-act='wo-open' data-id='" + esc(w.id) + "'>Open</button></td>" +
+                "</tr>"
+              ).join("") : '<tr><td colspan="7"><p class="empty">No work orders yet. Create one, or enable an auto-create rule on out-of-range readings.</p></td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <div class="pager">${pager("wo-page", data)}</div>
+      </div>
+    `;
+  }
+
+  function pager(act, data) {
+    const page = data.page || 1, pages = data.pages || 1;
+    if (pages <= 1) return "";
+    return '<button class="btn btn-sm" data-act="' + act + '" data-page="' + (page - 1) + '" ' + (page <= 1 ? "disabled" : "") + ">Previous</button> " +
+      "<span class='tiny'>Page " + page + " of " + pages + "</span> " +
+      '<button class="btn btn-sm" data-act="' + act + '" data-page="' + (page + 1) + '" ' + (page >= pages ? "disabled" : "") + ">Next</button>";
+  }
+
+  function viewWorkOrderDetail() {
+    const w = cache.detail;
+    if (!w) return '<p class="empty">Work order not found. <button class="btn" data-act="goto" data-view="workorders">Back</button></p>';
+    const comments = (w.comments || []).map((c) =>
+      "<li><strong>" + esc(c.author || "someone") + "</strong> <span class='tiny'>" + esc((c.created_at || "").replace("T", " ").slice(0, 16)) + "</span><div>" + esc(c.body) + "</div></li>"
+    ).join("") || "<li class='tiny'>No comments yet.</li>";
+    const labour = (w.labour || []).map((e) =>
+      "<li>" + esc(String(e.minutes)) + " min · " + esc(e.author || "") + " · " + esc(e.worked_on || "") + (e.note ? " — " + esc(e.note) : "") + "</li>"
+    ).join("") || "<li class='tiny'>No labour entries.</li>";
+    const atts = (w.attachments || []).map((a) =>
+      "<li>" + esc(a.filename) + (a.size ? " (" + a.size + " bytes)" : "") + " · " + esc(a.uploaded_by || "") + "</li>"
+    ).join("") || "<li class='tiny'>No attachments. Metadata can also be posted via the API.</li>";
+    const canMove = can("workorders.create") || can("workorders.assign") || can("workorders.close");
+    return `
+      <div class="row spread">
+        <div>
+          <h2>${esc(w.title)}</h2>
+          <p class="page-lead">${esc(w.id)} · source ${esc(w.source || "manual")}</p>
+        </div>
+        <div class="row">
+          <button class="btn" data-act="goto" data-view="workorders">← All work orders</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="form-grid">
+          <label class="fld"><span>Status</span>
+            <select id="wo-d-status" ${canMove ? "" : "disabled"}>${statusOptions(w.status)}</select>
+          </label>
+          <label class="fld"><span>Priority</span>
+            <select id="wo-d-prio" ${canMove ? "" : "disabled"}>${prioOptions(w.priority)}</select>
+          </label>
+          <label class="fld"><span>Due</span>
+            <input type="date" id="wo-d-due" value="${esc((w.due_at || "").slice(0, 10))}" ${canMove ? "" : "disabled"}>
+          </label>
+          <label class="fld"><span>Equipment</span>
+            <select id="wo-d-eq" ${canMove ? "" : "disabled"}>${eqOptions(global.Logbook.getState(), w.equipment_id)}</select>
+          </label>
+          <label class="fld"><span>Assignee</span>
+            <select id="wo-d-assignee" ${can("workorders.assign") ? "" : "disabled"}>${userOptions(w.assignee_id)}</select>
+          </label>
+        </div>
+        <label class="fld"><span>Description</span>
+          <textarea id="wo-d-desc" rows="3" ${canMove ? "" : "disabled"}>${esc(w.description || "")}</textarea>
+        </label>
+        ${canMove ? '<button class="btn btn-primary" data-act="wo-save">Save changes</button>' : ""}
+        <p class="tiny" style="margin-top:.6rem">Linked reading ${esc(w.linked_reading_id || "—")} · punch ${esc(w.linked_punch_id || "—")} · labour ${esc(String(w.labour_minutes || 0))} min</p>
+      </div>
+      <div class="split-2">
+        <div class="card">
+          <h3>Comments</h3>
+          <ul class="plain-list">${comments}</ul>
+          ${canMove ? '<label class="fld"><span>Add comment</span><textarea id="wo-c-body" rows="2"></textarea></label><button class="btn" data-act="wo-comment">Add comment</button>' : ""}
+        </div>
+        <div class="card">
+          <h3>Labour / time</h3>
+          <ul class="plain-list">${labour}</ul>
+          ${canMove ? '<div class="row"><label class="fld"><span>Minutes</span><input type="number" id="wo-l-min" min="0" step="15" value="30"></label><label class="fld" style="flex:1"><span>Note</span><input type="text" id="wo-l-note"></label></div><button class="btn" data-act="wo-labour">Add time</button>' : ""}
+          <h3 style="margin-top:1rem">Attachments</h3>
+          <ul class="plain-list">${atts}</ul>
+          ${canMove ? '<div class="row"><label class="fld" style="flex:1"><span>Filename (metadata)</span><input type="text" id="wo-a-name" placeholder="photo.jpg"></label></div><button class="btn" data-act="wo-attach">Add attachment metadata</button>' : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  function viewWorkOrderNew() {
+    const state = global.Logbook.getState();
+    return `
+      <div class="row spread">
+        <div>
+          <h2>New work order</h2>
+          <p class="page-lead">Describe the job, link it to equipment, and optionally set a due date and assignee.</p>
+        </div>
+        <button class="btn" data-act="goto" data-view="workorders">Cancel</button>
+      </div>
+      <div class="card">
+        <label class="fld"><span>Title</span><input type="text" id="wo-n-title" required></label>
+        <label class="fld"><span>Description</span><textarea id="wo-n-desc" rows="3"></textarea></label>
+        <div class="form-grid">
+          <label class="fld"><span>Priority</span><select id="wo-n-prio">${prioOptions("medium")}</select></label>
+          <label class="fld"><span>Due</span><input type="date" id="wo-n-due"></label>
+          <label class="fld"><span>Equipment</span><select id="wo-n-eq">${eqOptions(state, "")}</select></label>
+          <label class="fld"><span>Assignee</span><select id="wo-n-assignee">${userOptions("")}</select></label>
+        </div>
+        <button class="btn btn-primary" data-act="wo-create">Create work order</button>
+      </div>
+    `;
+  }
+
+  function viewRules() {
+    const rules = cache.rules || [];
+    const state = global.Logbook.getState();
+    return `
+      <div class="row spread">
+        <div>
+          <h2>Auto-create rules</h2>
+          <p class="page-lead">Optionally open a work order when a reading is out of range. Rules are off by default.</p>
+        </div>
+        <button class="btn" data-act="goto" data-view="workorders">← Work orders</button>
+      </div>
+      <div class="card">
+        <div class="form-grid">
+          <label class="fld"><span>Equipment (blank = any)</span><select id="wor-eq">${eqOptions(state, "")}</select></label>
+          <label class="fld"><span>Parameter key (blank = any)</span><input type="text" id="wor-param" placeholder="vibration"></label>
+          <label class="fld"><span>Priority</span><select id="wor-prio">${prioOptions("high")}</select></label>
+          <label class="fld"><span>Cooldown (minutes)</span><input type="number" id="wor-cd" value="1440"></label>
+        </div>
+        <label class="fld"><span>Title template</span><input type="text" id="wor-title" value="Out of range: {tag} {parameter} = {value}"></label>
+        <label class="check"><input type="checkbox" id="wor-on"> Enable this rule</label>
+        <button class="btn btn-primary" data-act="wor-create">Add rule</button>
+      </div>
+      <div class="card">
+        <table class="sheet">
+          <thead><tr><th>Equipment</th><th>Parameter</th><th>Priority</th><th>Enabled</th><th>Cooldown</th><th></th></tr></thead>
+          <tbody>
+            ${rules.length ? rules.map((r) =>
+              "<tr><td>" + esc(r.equipment_id || "any") + "</td><td>" + esc(r.parameter_key || "any") +
+              "</td><td>" + esc(r.priority) + "</td><td>" + (r.enabled ? "yes" : "no") +
+              "</td><td>" + esc(String(r.cooldown_minutes)) + "</td>" +
+              "<td><button class='btn btn-sm' data-act='wor-toggle' data-id='" + esc(r.id) + "' data-on='" + (r.enabled ? "0" : "1") + "'>" +
+              (r.enabled ? "Disable" : "Enable") + "</button> " +
+              "<button class='btn btn-sm btn-danger' data-act='wor-del' data-id='" + esc(r.id) + "'>Delete</button></td></tr>"
+            ).join("") : '<tr><td colspan="6"><p class="empty">No rules.</p></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  /* ---------- users / roles ---------- */
+  function viewUsers() {
+    const users = cache.users || [];
+    const roles = cache.roles || [];
+    const perms = (cache.permissions || []).slice();
+    return `
+      <div class="row spread">
+        <div>
+          <h2>Users and roles</h2>
+          <p class="page-lead">Built-in roles: admin, supervisor, technician, viewer. You can also create a custom role from the permission list and optionally scope a user to a site or area.</p>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Users</h3>
+        <div class="table-wrap">
+          <table class="sheet">
+            <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Site</th><th>Active</th><th></th></tr></thead>
+            <tbody>
+              ${users.map((u) =>
+                "<tr><td>" + esc(u.username) + "</td><td>" + esc(u.display_name) + "</td><td>" + esc(u.role || "") +
+                "</td><td>" + esc(u.site_id || "—") + "</td><td>" + (u.is_active ? "yes" : "no") +
+                "</td><td class='no-print'><button class='btn btn-sm' data-act='usr-key' data-id='" + esc(u.id) + "'>API key</button> " +
+                "<button class='btn btn-sm btn-danger' data-act='usr-del' data-id='" + esc(u.id) + "'>Delete</button></td></tr>"
+              ).join("") || '<tr><td colspan="6"><p class="empty">No users in the directory. In single-user mode the app works without accounts.</p></td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <h3 style="margin-top:1rem">Add user</h3>
+        <div class="form-grid">
+          <label class="fld"><span>Username</span><input type="text" id="usr-name"></label>
+          <label class="fld"><span>Display name</span><input type="text" id="usr-disp"></label>
+          <label class="fld"><span>Password</span><input type="password" id="usr-pass" minlength="8"></label>
+          <label class="fld"><span>Role</span>
+            <select id="usr-role">${roles.map((r) => "<option value=\"" + esc(r.name) + "\">" + esc(r.name) + "</option>").join("")}</select>
+          </label>
+        </div>
+        <button class="btn btn-primary" data-act="usr-create">Create user</button>
+      </div>
+      <div class="card">
+        <h3>Roles</h3>
+        ${roles.map((r) =>
+          "<div class='role-block'><strong>" + esc(r.name) + "</strong> " +
+          (r.built_in ? "<span class='kind-pill'>built-in</span>" : "<span class='kind-pill'>custom</span>") +
+          "<p class='tiny'>" + esc(r.description || "") + "</p>" +
+          "<p class='tiny'>" + esc((r.permissions || []).join(", ")) + "</p></div>"
+        ).join("")}
+        <h3 style="margin-top:1rem">Custom role</h3>
+        <label class="fld"><span>Name</span><input type="text" id="role-name" placeholder="planner"></label>
+        <div class="perm-grid">
+          ${perms.map((p) => "<label class='check'><input type='checkbox' data-perm='" + esc(p) + "'> " + esc(p) + "</label>").join("")}
+        </div>
+        <button class="btn" data-act="role-create">Create role</button>
+      </div>
+    `;
+  }
+
+  async function refreshUsers() {
+    const api = global.LogbookAPI;
+    const jobs = [];
+    jobs.push(api.listUsers().then((r) => { cache.users = Array.isArray(r) ? r : (r.items || []); }).catch(() => { cache.users = []; }));
+    if (can("users.manage")) {
+      jobs.push(api.listRoles().then((r) => { cache.roles = r; }).catch(() => { cache.roles = []; }));
+      jobs.push(api.listPermissions().then((r) => { cache.permissions = r.permissions || []; }).catch(() => {}));
+    }
+    await Promise.all(jobs);
+  }
+
+  /* ---------- actions ---------- */
+  function toast(msg) {
+    if (global.Logbook && global.Logbook._toast) return global.Logbook._toast(msg);
+    console.log(msg);
+  }
+
+  async function handleAction(act, el, ev) {
+    const api = global.LogbookAPI;
+    const L = global.Logbook;
+    const ui = L._ui || (L._ui = {});
+    try {
+      if (act === "wo-new") { ui.view = "woNew"; if (cache.users.length === 0) await refreshUsers(); L.render(); return true; }
+      if (act === "wo-open") {
+        cache.detail = await api.getWorkOrder(el.dataset.id);
+        if (cache.users.length === 0) await refreshUsers();
+        ui.view = "woDetail";
+        L.render();
+        return true;
+      }
+      if (act === "wo-page") {
+        ui.woPage = Number(el.dataset.page || 1);
+        await loadWorkOrderList(ui);
+        L.render();
+        return true;
+      }
+      if (act === "wo-create") {
+        const body = {
+          title: document.getElementById("wo-n-title").value,
+          description: document.getElementById("wo-n-desc").value,
+          priority: document.getElementById("wo-n-prio").value,
+          due_at: document.getElementById("wo-n-due").value || null,
+          equipment_id: document.getElementById("wo-n-eq").value || null,
+          assignee_id: document.getElementById("wo-n-assignee").value || null,
+        };
+        const created = await api.createWorkOrder(body);
+        cache.detail = created;
+        ui.view = "woDetail";
+        L.render();
+        return true;
+      }
+      if (act === "wo-save") {
+        const w = cache.detail;
+        const body = {
+          title: w.title,
+          description: document.getElementById("wo-d-desc").value,
+          priority: document.getElementById("wo-d-prio").value,
+          due_at: document.getElementById("wo-d-due").value || null,
+          equipment_id: document.getElementById("wo-d-eq").value || null,
+          status: document.getElementById("wo-d-status").value,
+        };
+        cache.detail = await api.patchWorkOrder(w.id, body);
+        const assignee = document.getElementById("wo-d-assignee").value || null;
+        if (can("workorders.assign") && assignee !== (w.assignee_id || null)) {
+          cache.detail = await api.assignWorkOrder(w.id, assignee);
+        }
+        L.render();
+        return true;
+      }
+      if (act === "wo-comment") {
+        const body = document.getElementById("wo-c-body").value;
+        await api.commentWorkOrder(cache.detail.id, body);
+        cache.detail = await api.getWorkOrder(cache.detail.id);
+        L.render();
+        return true;
+      }
+      if (act === "wo-labour") {
+        await api.labourWorkOrder(cache.detail.id, {
+          minutes: Number(document.getElementById("wo-l-min").value || 0),
+          note: document.getElementById("wo-l-note").value,
+        });
+        cache.detail = await api.getWorkOrder(cache.detail.id);
+        L.render();
+        return true;
+      }
+      if (act === "wo-attach") {
+        const filename = document.getElementById("wo-a-name").value;
+        await api.attachWorkOrderMeta(cache.detail.id, { filename });
+        cache.detail = await api.getWorkOrder(cache.detail.id);
+        L.render();
+        return true;
+      }
+      if (act === "wo-rules") {
+        cache.rules = await api.listRules();
+        ui.view = "woRules";
+        L.render();
+        return true;
+      }
+      if (act === "wor-create") {
+        await api.createRule({
+          equipment_id: document.getElementById("wor-eq").value || null,
+          parameter_key: document.getElementById("wor-param").value || null,
+          priority: document.getElementById("wor-prio").value,
+          cooldown_minutes: Number(document.getElementById("wor-cd").value || 1440),
+          title_template: document.getElementById("wor-title").value,
+          enabled: document.getElementById("wor-on").checked,
+        });
+        cache.rules = await api.listRules();
+        L.render();
+        return true;
+      }
+      if (act === "wor-toggle") {
+        await api.patchRule(el.dataset.id, { enabled: el.dataset.on === "1" });
+        cache.rules = await api.listRules();
+        L.render();
+        return true;
+      }
+      if (act === "wor-del") {
+        await api.deleteRule(el.dataset.id);
+        cache.rules = await api.listRules();
+        L.render();
+        return true;
+      }
+      if (act === "usr-create") {
+        await api.createUser({
+          username: document.getElementById("usr-name").value,
+          display_name: document.getElementById("usr-disp").value,
+          password: document.getElementById("usr-pass").value,
+          role: document.getElementById("usr-role").value,
+        });
+        await refreshUsers();
+        L.render();
+        return true;
+      }
+      if (act === "usr-del") {
+        if (!confirm("Delete this user?")) return true;
+        await api.deleteUser(el.dataset.id);
+        await refreshUsers();
+        L.render();
+        return true;
+      }
+      if (act === "usr-key") {
+        const created = await api.createApiKey(el.dataset.id, { name: "UI key" });
+        alert("API key (shown only once):\n\n" + created.key);
+        return true;
+      }
+      if (act === "role-create") {
+        const permissions = Array.from(document.querySelectorAll("[data-perm]:checked")).map((i) => i.getAttribute("data-perm"));
+        await api.createRole({ name: document.getElementById("role-name").value, permissions });
+        await refreshUsers();
+        L.render();
+        return true;
+      }
+    } catch (e) {
+      alert(e.message || String(e));
+      return true;
+    }
+    return false;
+  }
+
+  function bindFilters() {
+    const q = document.getElementById("wo-q");
+    const st = document.getElementById("wo-status");
+    const pr = document.getElementById("wo-prio");
+    const L = global.Logbook;
+    if (!q && !st) return;
+    const run = async () => {
+      const ui = L._ui;
+      ui.woQ = q ? q.value : "";
+      ui.woStatus = st ? st.value : "";
+      ui.woPrio = pr ? pr.value : "";
+      ui.woPage = 1;
+      await loadWorkOrderList(ui);
+      L.render();
+    };
+    if (q && !q._bound) { q._bound = true; q.addEventListener("change", run); q.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); }); }
+    if (st && !st._bound) { st._bound = true; st.addEventListener("change", run); }
+    if (pr && !pr._bound) { pr._bound = true; pr.addEventListener("change", run); }
+  }
+
+  const views = {
+    workorders: viewWorkOrders,
+    woDetail: viewWorkOrderDetail,
+    woNew: viewWorkOrderNew,
+    woRules: viewRules,
+    users: viewUsers,
+  };
+
+  async function beforeView(name, ui) {
+    if (name === "workorders") {
+      if (cache.users.length === 0) refreshUsers();
+      await loadWorkOrderList(ui);
+    }
+    if (name === "users") {
+      await refreshUsers();
+    }
+  }
+
+  global.LogbookV4 = {
+    can, applyChrome, showLogin, hideLogin, maybeRequireLogin, bindLogin,
+    views, handleAction, beforeView, bindFilters, refreshUsers, cache,
+    product,
+  };
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bindLogin);
+  else bindLogin();
+})(typeof window !== "undefined" ? window : globalThis);
 
   </script>
 </body>

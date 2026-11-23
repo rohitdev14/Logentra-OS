@@ -35,6 +35,12 @@ class Settings(BaseModel):
     open_browser: bool = True
     database_url: str = "sqlite:///data/logbook.db"
     api_key: str = ""
+    # open = single-user / standalone (no login). users = require login or a user-bound API key.
+    auth_mode: str = "open"
+    session_days: int = 7
+    bootstrap_admin_username: str = ""
+    bootstrap_admin_password: str = ""
+    bootstrap_equipment_cap: int = 1500
     mqtt: MqttConfig = Field(default_factory=MqttConfig)
     outbound_webhooks: list[OutboundWebhookConfig] = Field(default_factory=list)
 
@@ -57,15 +63,23 @@ def _from_env(data: dict[str, Any]) -> dict[str, Any]:
         "LOGBOOK_OPEN_BROWSER": "open_browser",
         "LOGBOOK_DATABASE_URL": "database_url",
         "LOGBOOK_API_KEY": "api_key",
+        "LOGBOOK_AUTH_MODE": "auth_mode",
+        "LOGBOOK_SESSION_DAYS": "session_days",
+        "LOGBOOK_BOOTSTRAP_ADMIN_USER": "bootstrap_admin_username",
+        "LOGBOOK_BOOTSTRAP_ADMIN_PASSWORD": "bootstrap_admin_password",
+        "LOGBOOK_BOOTSTRAP_EQUIPMENT_CAP": "bootstrap_equipment_cap",
     }
     out = dict(data)
     for env, key in env_map.items():
         if env in os.environ and os.environ[env] != "":
             val = os.environ[env]
-            if key == "port":
+            if key == "port" or key == "session_days" or key == "bootstrap_equipment_cap":
                 out[key] = int(val)
             elif key == "open_browser":
                 out[key] = val.lower() in ("1", "true", "yes", "on")
+            elif key == "auth_mode":
+                mode = val.lower().strip()
+                out[key] = "users" if mode in ("users", "user", "on", "1", "true") else "open"
             else:
                 out[key] = val
     if os.environ.get("LOGBOOK_MQTT_ENABLED"):

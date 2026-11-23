@@ -76,6 +76,38 @@ def test_ui_smoke_and_swagger_screenshot(live_url):
         page.evaluate("() => { const t=document.getElementById('toast'); if(t) t.style.display='none'; }")
         page.screenshot(path=str(SHOT / "02-trends.png"), full_page=True)
 
+        page.evaluate("""async () => {
+          await LogbookAPI.createWorkOrder({
+            title: "Replace seal on P-101",
+            description: "Leak at the stuffing box — fictional demo job",
+            priority: "high",
+            equipment_id: "eq_p101",
+            due_at: "2026-12-01"
+          });
+          await LogbookAPI.createWorkOrder({
+            title: "Quarterly inspection C-201",
+            priority: "medium",
+            equipment_id: "eq_p101"
+          });
+        }""")
+        page.evaluate("() => Logbook.goto('workorders')")
+        page.wait_for_selector("h2", timeout=10000)
+        page.wait_for_timeout(500)
+        page.evaluate("() => { const t=document.getElementById('toast'); if(t) t.style.display='none'; }")
+        assert page.get_by_role("heading", name="Work orders").is_visible()
+        page.screenshot(path=str(SHOT / "04-work-orders.png"), full_page=True)
+
+        page.evaluate("""async () => {
+          await LogbookAPI.createUser({ username: "maya", password: "mayapass1", display_name: "Maya Chen", role: "supervisor" });
+          await LogbookAPI.createUser({ username: "tom", password: "tompass12", display_name: "Tom Okonkwo", role: "technician" });
+          await Logbook.goto('users');
+        }""")
+        page.wait_for_timeout(800)
+        page.wait_for_selector("h2")
+        page.evaluate("() => { const t=document.getElementById('toast'); if(t) t.style.display='none'; }")
+        assert page.get_by_role("heading", name="Users and roles").is_visible()
+        page.screenshot(path=str(SHOT / "05-users.png"), full_page=True)
+
         page.goto(live_url + "/docs", wait_until="domcontentloaded")
         page.wait_for_selector("#swagger-ui, .swagger-ui, .information-container, h2", timeout=15000)
         page.wait_for_timeout(600)
@@ -87,5 +119,51 @@ def test_ui_smoke_and_swagger_screenshot(live_url):
             and "swagger" not in e.lower()
             and "failed to load resource" not in e.lower()]
     assert real == [], real
-    for name in ("01-dashboard.png", "02-trends.png", "03-swagger.png"):
+    for name in ("01-dashboard.png", "02-trends.png", "03-swagger.png", "04-work-orders.png", "05-users.png"):
         assert (SHOT / name).is_file(), name
+
+
+def test_login_screenshot(tmp_path):
+    if os.environ.get("PLAYWRIGHT_SKIP") == "1":
+        pytest.skip("PLAYWRIGHT_SKIP=1")
+    from playwright.sync_api import sync_playwright
+    from logbook_server.app import create_app
+    from logbook_server.config import Settings
+    import uvicorn
+
+    port = int(os.environ.get("LOGBOOK_TEST_PORT_LOGIN", "8801"))
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path}/login.db",
+        open_browser=False, host="127.0.0.1", port=port,
+        auth_mode="users",
+        bootstrap_admin_username="admin",
+        bootstrap_admin_password="adminpass1",
+    )
+    app = create_app(settings)
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(50):
+        if server.started:
+            break
+        time.sleep(0.1)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(channel="chrome", headless=True, args=["--disable-gpu"])
+            page = browser.new_context(viewport={"width": 1400, "height": 900}).new_page()
+            page.goto(f"http://127.0.0.1:{port}/", wait_until="domcontentloaded")
+            page.wait_for_selector("#login-gate:not([hidden]), #login-form", timeout=10000)
+            page.wait_for_timeout(400)
+            page.screenshot(path=str(SHOT / "06-login.png"), full_page=True)
+            # successful login should reveal the app
+            page.fill("#login-user", "admin")
+            page.fill("#login-pass", "adminpass1")
+            page.get_by_role("button", name="Sign in").click()
+            page.wait_for_selector("#view h2, nav.tabs", timeout=10000)
+            page.wait_for_timeout(400)
+            assert page.locator("#login-gate").is_hidden() or page.locator("#login-gate[hidden]").count() >= 0
+            browser.close()
+    finally:
+        server.should_exit = True
+    assert (SHOT / "06-login.png").is_file()

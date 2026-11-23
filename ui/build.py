@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from logbook_server.branding import APP_VERSION, PRODUCT_NAME, PRODUCT_TAGLINE, RELEASE_LABEL
+
 SRC = ROOT / "ui" / "src"
 OUT = ROOT / "ui" / "Logbook.html"
 OUT2 = ROOT / "ui" / "index.html"
@@ -19,13 +25,19 @@ def main() -> None:
     xlsx = (SRC / "xlsx.js").read_text(encoding="utf-8")
     api = (SRC / "api.js").read_text(encoding="utf-8")
     js = (SRC / "app.js").read_text(encoding="utf-8")
+    v4 = (SRC / "v4.js").read_text(encoding="utf-8")
     shell = (SRC / "shell.html").read_text(encoding="utf-8")
     html = (
-        shell.replace("__CSS__", css)
+        shell.replace("__PRODUCT_NAME__", PRODUCT_NAME)
+        .replace("__PRODUCT_TAGLINE__", PRODUCT_TAGLINE)
+        .replace("__APP_VERSION__", APP_VERSION)
+        .replace("__RELEASE_LABEL__", RELEASE_LABEL)
+        .replace("__CSS__", css)
         .replace("__XLSX__", xlsx)
         .replace("__PACKS__", packs_js)
         .replace("__API__", api)
         .replace("__JS__", js)
+        .replace("__V4__", v4)
     )
     OUT.write_text(html, encoding="utf-8")
     OUT2.write_text(html, encoding="utf-8")

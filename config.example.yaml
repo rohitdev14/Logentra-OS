@@ -11,9 +11,19 @@ database_url: sqlite:///data/logbook.db
 #   pip install "psycopg[binary]"
 # database_url: postgresql+psycopg://logbook:logbook@127.0.0.1:5432/logbook
 
-# Optional API key. When set, every /api route except /api/health requires
-# the header  X-API-Key: <key>  or  Authorization: Bearer <key>.
-# Leave empty for a trusted local machine.
+# Auth mode:
+#   open  — single-user / standalone (default). No login. Optional api_key still works.
+#   users — require a session token (POST /api/auth/login) or a user-bound API key.
+auth_mode: open
+session_days: 7
+# First admin, used only when auth_mode is users and the users table is empty:
+# bootstrap_admin_username: admin
+# bootstrap_admin_password: "choose-a-strong-password"
+# Or run:  python run.py create-admin --username admin --password '...'
+
+# Optional legacy / global API key. When set in open mode, every /api route except
+# /api/health requires  X-API-Key: <key>  or  Authorization: Bearer <key>.
+# In users mode it is also accepted as an admin credential.
 api_key: ""
 
 # Optional MQTT subscriber. Leave enabled: false if you have no broker.
@@ -23,7 +33,7 @@ mqtt:
   port: 1883
   username: ""
   password: ""
-  client_id: logbook-v3
+  client_id: logbook
   topics:
     - logbook/readings
     - logbook/+/+

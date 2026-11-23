@@ -33,3 +33,8 @@ screenshots/
 *.log
 .DS_Store
 Thumbs.db
+
+data/*.db
+data/attachments/
+loadtest-results.json
+*.pyc

@@ -23,4 +23,4 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
       - name: Run API, ingest, and event tests
-        run: python -m pytest tests/test_api.py tests/test_ingest.py tests/test_oor.py -q
+        run: python -m pytest tests/test_api.py tests/test_ingest.py tests/test_oor.py tests/test_auth.py tests/test_workorders.py tests/test_pagination.py tests/test_migrations.py -q

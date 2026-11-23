@@ -400,3 +400,42 @@ table.sheet tr:hover td { background: #fbfcfd; }
 }
 .api-badge.ok { background: #1f6a4a; color: #e8fff4; }
 .api-badge.err { background: #8b2e2e; color: #ffe8e8; }
+
+/* v0.4 — login, work orders, users */
+.login-gate {
+  position: fixed; inset: 0; z-index: 80;
+  background: linear-gradient(160deg, #132845, #1b365d 40%, #0c5670);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+.login-gate[hidden] { display: none !important; }
+body.login-open .app-header, body.login-open main, body.login-open .app-footer { display: none; }
+.login-card { width: min(26rem, 100%); padding: 1.5rem 1.4rem 1.3rem; }
+.login-card .brand { display: flex; gap: 0.75rem; align-items: center; color: var(--ink); }
+.login-card .brand .sub { color: var(--muted); font-size: 0.85rem; }
+.login-card .fld { display: block; margin: 0.55rem 0; }
+.login-card .fld span { display: block; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.2rem; }
+.login-card input { width: 100%; padding: 0.45rem 0.55rem; border: 1px solid var(--line); border-radius: 8px; }
+.form-error { color: var(--fail); font-size: 0.85rem; margin: 0.4rem 0 0; }
+.user-chip {
+  font-size: 0.75rem; font-weight: 600; background: rgba(255,255,255,0.12);
+  border-radius: 999px; padding: 0.15rem 0.65rem; color: #e8eef4;
+}
+.header-logout { background: transparent; color: #d7e6ef; border-color: rgba(255,255,255,0.25); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.7rem; margin: 0.6rem 0; }
+.split-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 900px) { .split-2 { grid-template-columns: 1fr; } }
+.plain-list { margin: 0 0 0.7rem; padding-left: 1.1rem; }
+.plain-list li { margin: 0.25rem 0; }
+.linkish { background: none; border: 0; color: var(--teal); font-weight: 600; cursor: pointer; padding: 0; text-align: left; }
+.pager { display: flex; gap: 0.6rem; align-items: center; margin-top: 0.7rem; }
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.2rem 0.8rem; margin: 0.6rem 0 0.8rem; }
+.role-block { padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
+.check { font-size: 0.85rem; display: flex; align-items: center; gap: 0.35rem; }
+.kind-pill.st-open { background: #e8f1ff; color: #1b365d; }
+.kind-pill.st-in_progress { background: #e8f6ee; color: #18794e; }
+.kind-pill.st-on_hold { background: #fff4d6; color: #9a6700; }
+.kind-pill.st-done { background: #e8f6ee; color: #18794e; }
+.kind-pill.st-closed { background: #edf0f4; color: #5c6778; }
+
+[hidden] { display: none !important; }

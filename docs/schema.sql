@@ -1,6 +1,8 @@
--- Logbook v0.3 schema
+-- Logbook v0.4 schema
 -- Portable SQL for SQLite (default) and PostgreSQL.
--- Application code also creates these tables via SQLAlchemy metadata.
+-- Preferred apply path: `python run.py` runs Alembic (migrations/versions).
+-- This file is the human-readable schema. On a new database Alembic creates
+-- sites/users first; the CREATE TABLE order here is documentary.
 -- Types chosen for portability: TEXT, INTEGER, REAL, timestamps as ISO-8601 TEXT (UTC).
 -- JSON payloads are stored as TEXT.
 
@@ -25,11 +27,15 @@ CREATE UNIQUE INDEX uq_field_definitions_key ON field_definitions(key);
 CREATE TABLE equipment (
     id          TEXT PRIMARY KEY,
     tag         TEXT NOT NULL,                 -- denormalized from the Tag field for joins
+    site_id     TEXT,                          -- FK to sites(id); created in v0.4
+    area_id     TEXT,                          -- FK to areas(id); created in v0.4
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
 
 CREATE UNIQUE INDEX uq_equipment_tag ON equipment(tag);
+CREATE INDEX ix_equipment_site_id ON equipment(site_id);
+CREATE INDEX ix_equipment_area_id ON equipment(area_id);
 
 CREATE TABLE equipment_field_values (
     equipment_id TEXT NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
@@ -194,6 +200,7 @@ CREATE TABLE readings (
     source         TEXT NOT NULL DEFAULT 'manual', -- manual | import | mqtt | webhook | api | demo
     limit_min      REAL,                       -- snapshot of limits at ingest (nullable)
     limit_max      REAL,
+    out_of_range   INTEGER NOT NULL DEFAULT 0, -- denormalised flag for indexed event queries
     created_at     TEXT NOT NULL
 );
 
@@ -201,6 +208,7 @@ CREATE INDEX ix_readings_eq_param_ts ON readings(equipment_id, parameter_key, ts
 CREATE INDEX ix_readings_ts ON readings(ts);
 CREATE INDEX ix_readings_entry ON readings(entry_id);
 CREATE INDEX ix_readings_source ON readings(source);
+CREATE INDEX ix_readings_oor_ts ON readings(out_of_range, ts);
 
 CREATE TABLE annotations (
     id            TEXT PRIMARY KEY,
@@ -242,7 +250,8 @@ CREATE TABLE audit_log (
     id           TEXT PRIMARY KEY,
     ts           TEXT NOT NULL,
     actor        TEXT,
-    action       TEXT NOT NULL,                -- create | update | delete | ingest | signoff | annotate | migrate | demo | clear
+    user_id      TEXT,                         -- FK to users(id); created in v0.4
+    action       TEXT NOT NULL,                -- create | update | delete | ingest | signoff | annotate | migrate | demo | clear | login
     entity_type  TEXT,
     entity_id    TEXT,
     detail       TEXT                          -- JSON
@@ -250,9 +259,171 @@ CREATE TABLE audit_log (
 
 CREATE INDEX ix_audit_ts ON audit_log(ts);
 CREATE INDEX ix_audit_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX ix_audit_log_user_id ON audit_log(user_id);
 
 CREATE TABLE settings (
     key         TEXT PRIMARY KEY,
     value       TEXT,
     updated_at  TEXT NOT NULL
 );
+
+
+-- ---------------------------------------------------------------------------
+-- v0.4 — sites, users, roles, sessions, API keys, work orders
+-- Alembic migrations/versions/0002_v04.py is the supported way to apply this
+-- to an existing v0.3 database. On a fresh install, run `alembic upgrade head`
+-- (python run.py does this automatically).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE sites (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    code        TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX uq_sites_code ON sites(code);
+
+CREATE TABLE areas (
+    id          TEXT PRIMARY KEY,
+    site_id     TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    code        TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX ix_areas_site_id ON areas(site_id);
+
+CREATE TABLE roles (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT,
+    built_in    INTEGER NOT NULL DEFAULT 0,
+    permissions TEXT NOT NULL DEFAULT '[]',    -- JSON list of permission strings
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX uq_roles_name ON roles(name);
+
+CREATE TABLE users (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL,
+    display_name  TEXT,
+    email         TEXT,
+    password_hash TEXT NOT NULL,               -- pbkdf2_sha256$iterations$salt$hash
+    role_id       TEXT NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
+    site_id       TEXT REFERENCES sites(id) ON DELETE SET NULL,
+    area_id       TEXT REFERENCES areas(id) ON DELETE SET NULL,
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    last_login_at TEXT
+);
+CREATE UNIQUE INDEX uq_users_username ON users(username);
+CREATE INDEX ix_users_role_id ON users(role_id);
+CREATE INDEX ix_users_site_id ON users(site_id);
+
+CREATE TABLE session_tokens (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash   TEXT NOT NULL,                -- sha256 of the opaque token
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    last_used_at TEXT
+);
+CREATE UNIQUE INDEX uq_session_tokens_hash ON session_tokens(token_hash);
+CREATE INDEX ix_session_tokens_user_id ON session_tokens(user_id);
+CREATE INDEX ix_session_tokens_expires_at ON session_tokens(expires_at);
+
+CREATE TABLE api_keys (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT REFERENCES users(id) ON DELETE CASCADE,
+    role_id      TEXT REFERENCES roles(id) ON DELETE SET NULL,
+    name         TEXT NOT NULL DEFAULT 'API key',
+    key_hash     TEXT NOT NULL,
+    prefix       TEXT,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked      INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX uq_api_keys_hash ON api_keys(key_hash);
+CREATE INDEX ix_api_keys_user_id ON api_keys(user_id);
+
+CREATE TABLE work_orders (
+    id                    TEXT PRIMARY KEY,
+    title                 TEXT NOT NULL,
+    description           TEXT,
+    status                TEXT NOT NULL DEFAULT 'open',     -- open | in_progress | on_hold | done | closed
+    priority              TEXT NOT NULL DEFAULT 'medium',   -- low | medium | high | urgent
+    equipment_id          TEXT REFERENCES equipment(id) ON DELETE SET NULL,
+    site_id               TEXT REFERENCES sites(id) ON DELETE SET NULL,
+    area_id               TEXT REFERENCES areas(id) ON DELETE SET NULL,
+    assignee_id           TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_by_id         TEXT REFERENCES users(id) ON DELETE SET NULL,
+    due_at                TEXT,
+    started_at            TEXT,
+    completed_at          TEXT,
+    closed_at             TEXT,
+    linked_reading_id     TEXT REFERENCES readings(id) ON DELETE SET NULL,
+    linked_annotation_id  TEXT REFERENCES annotations(id) ON DELETE SET NULL,
+    linked_punch_id       TEXT REFERENCES punches(id) ON DELETE SET NULL,
+    linked_record_id      TEXT REFERENCES records(id) ON DELETE SET NULL,
+    parameter_key         TEXT,
+    labour_minutes        INTEGER,
+    labour_notes          TEXT,
+    source                TEXT NOT NULL DEFAULT 'manual',   -- manual | api | auto_oor
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+CREATE INDEX ix_work_orders_status ON work_orders(status);
+CREATE INDEX ix_work_orders_status_due ON work_orders(status, due_at);
+CREATE INDEX ix_work_orders_equipment ON work_orders(equipment_id);
+CREATE INDEX ix_work_orders_assignee ON work_orders(assignee_id);
+CREATE INDEX ix_work_orders_created ON work_orders(created_at);
+
+CREATE TABLE work_order_comments (
+    id            TEXT PRIMARY KEY,
+    work_order_id TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+    user_id       TEXT REFERENCES users(id) ON DELETE SET NULL,
+    author        TEXT,
+    body          TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX ix_work_order_comments_wo ON work_order_comments(work_order_id);
+
+CREATE TABLE work_order_attachments (
+    id            TEXT PRIMARY KEY,
+    work_order_id TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+    filename      TEXT NOT NULL,
+    content_type  TEXT,
+    size          INTEGER,
+    storage_path  TEXT,
+    uploaded_by   TEXT,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX ix_work_order_attachments_wo ON work_order_attachments(work_order_id);
+
+CREATE TABLE work_order_labour (
+    id            TEXT PRIMARY KEY,
+    work_order_id TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+    user_id       TEXT REFERENCES users(id) ON DELETE SET NULL,
+    author        TEXT,
+    minutes       INTEGER NOT NULL DEFAULT 0,
+    note          TEXT,
+    worked_on     TEXT,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX ix_work_order_labour_wo ON work_order_labour(work_order_id);
+
+CREATE TABLE auto_work_order_rules (
+    id                    TEXT PRIMARY KEY,
+    equipment_id          TEXT REFERENCES equipment(id) ON DELETE CASCADE,
+    parameter_key         TEXT,
+    enabled               INTEGER NOT NULL DEFAULT 0,      -- off by default
+    priority              TEXT NOT NULL DEFAULT 'medium',
+    title_template        TEXT,
+    description_template  TEXT,
+    assignee_id           TEXT REFERENCES users(id) ON DELETE SET NULL,
+    cooldown_minutes      INTEGER NOT NULL DEFAULT 1440,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+CREATE INDEX ix_auto_wo_rules_eq ON auto_work_order_rules(equipment_id);

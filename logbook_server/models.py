@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, Integer, Text, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from logbook_server.database import Base
@@ -24,6 +24,8 @@ class Equipment(Base):
     __tablename__ = "equipment"
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     tag: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    site_id: Mapped[str | None] = mapped_column(Text, ForeignKey("sites.id", ondelete="SET NULL"), index=True)
+    area_id: Mapped[str | None] = mapped_column(Text, ForeignKey("areas.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
     values: Mapped[list[EquipmentFieldValue]] = relationship(
@@ -219,6 +221,11 @@ class Punch(Base):
 
 class Reading(Base):
     __tablename__ = "readings"
+    __table_args__ = (
+        Index("ix_readings_eq_param_ts", "equipment_id", "parameter_key", "ts"),
+        Index("ix_readings_source", "source"),
+        Index("ix_readings_oor_ts", "out_of_range", "ts"),
+    )
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     entry_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     equipment_id: Mapped[str] = mapped_column(
@@ -232,6 +239,7 @@ class Reading(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False, default="manual")
     limit_min: Mapped[float | None] = mapped_column(Float)
     limit_max: Mapped[float | None] = mapped_column(Float)
+    out_of_range: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     equipment: Mapped[Equipment] = relationship(back_populates="readings")
     annotation: Mapped[Annotation | None] = relationship(
@@ -284,6 +292,7 @@ class AuditLog(Base):
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     ts: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     actor: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"), index=True)
     action: Mapped[str] = mapped_column(Text, nullable=False)
     entity_type: Mapped[str | None] = mapped_column(Text)
     entity_id: Mapped[str | None] = mapped_column(Text)
@@ -294,4 +303,183 @@ class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     value: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# v0.4 — sites, users, roles, work orders
+# ---------------------------------------------------------------------------
+
+
+class Site(Base):
+    __tablename__ = "sites"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    code: Mapped[str | None] = mapped_column(Text, unique=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    areas: Mapped[list[Area]] = relationship(back_populates="site", cascade="all, delete-orphan")
+
+
+class Area(Base):
+    __tablename__ = "areas"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    site_id: Mapped[str] = mapped_column(Text, ForeignKey("sites.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    code: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    site: Mapped[Site] = relationship(back_populates="areas")
+
+
+class Role(Base):
+    __tablename__ = "roles"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    built_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    permissions: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    users: Mapped[list[User]] = relationship(back_populates="role")
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    username: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(Text)
+    email: Mapped[str | None] = mapped_column(Text)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    role_id: Mapped[str] = mapped_column(Text, ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False, index=True)
+    site_id: Mapped[str | None] = mapped_column(Text, ForeignKey("sites.id", ondelete="SET NULL"), index=True)
+    area_id: Mapped[str | None] = mapped_column(Text, ForeignKey("areas.id", ondelete="SET NULL"), index=True)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    last_login_at: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[Role] = relationship(back_populates="users")
+    site: Mapped[Site | None] = relationship()
+    area: Mapped[Area | None] = relationship()
+
+
+class SessionToken(Base):
+    __tablename__ = "session_tokens"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    last_used_at: Mapped[str | None] = mapped_column(Text)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role_id: Mapped[str | None] = mapped_column(Text, ForeignKey("roles.id", ondelete="SET NULL"), index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="API key")
+    key_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    prefix: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    last_used_at: Mapped[str | None] = mapped_column(Text)
+    revoked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class WorkOrder(Base):
+    __tablename__ = "work_orders"
+    __table_args__ = (
+        Index("ix_work_orders_status_due", "status", "due_at"),
+        Index("ix_work_orders_equipment", "equipment_id"),
+        Index("ix_work_orders_assignee", "assignee_id"),
+        Index("ix_work_orders_created", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="open", index=True)
+    priority: Mapped[str] = mapped_column(Text, nullable=False, default="medium")
+    equipment_id: Mapped[str | None] = mapped_column(Text, ForeignKey("equipment.id", ondelete="SET NULL"))
+    site_id: Mapped[str | None] = mapped_column(Text, ForeignKey("sites.id", ondelete="SET NULL"))
+    area_id: Mapped[str | None] = mapped_column(Text, ForeignKey("areas.id", ondelete="SET NULL"))
+    assignee_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    created_by_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    due_at: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[str | None] = mapped_column(Text)
+    closed_at: Mapped[str | None] = mapped_column(Text)
+    linked_reading_id: Mapped[str | None] = mapped_column(Text, ForeignKey("readings.id", ondelete="SET NULL"))
+    linked_annotation_id: Mapped[str | None] = mapped_column(Text, ForeignKey("annotations.id", ondelete="SET NULL"))
+    linked_punch_id: Mapped[str | None] = mapped_column(Text, ForeignKey("punches.id", ondelete="SET NULL"))
+    linked_record_id: Mapped[str | None] = mapped_column(Text, ForeignKey("records.id", ondelete="SET NULL"))
+    parameter_key: Mapped[str | None] = mapped_column(Text)
+    labour_minutes: Mapped[int | None] = mapped_column(Integer)
+    labour_notes: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="manual")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    comments: Mapped[list[WorkOrderComment]] = relationship(
+        back_populates="work_order", cascade="all, delete-orphan", order_by="WorkOrderComment.created_at"
+    )
+    attachments: Mapped[list[WorkOrderAttachment]] = relationship(
+        back_populates="work_order", cascade="all, delete-orphan"
+    )
+    labour_entries: Mapped[list[WorkOrderLabour]] = relationship(
+        back_populates="work_order", cascade="all, delete-orphan", order_by="WorkOrderLabour.created_at"
+    )
+
+
+class WorkOrderComment(Base):
+    __tablename__ = "work_order_comments"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    work_order_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("work_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    author: Mapped[str | None] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    work_order: Mapped[WorkOrder] = relationship(back_populates="comments")
+
+
+class WorkOrderAttachment(Base):
+    __tablename__ = "work_order_attachments"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    work_order_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("work_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(Text)
+    size: Mapped[int | None] = mapped_column(Integer)
+    storage_path: Mapped[str | None] = mapped_column(Text)
+    uploaded_by: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    work_order: Mapped[WorkOrder] = relationship(back_populates="attachments")
+
+
+class WorkOrderLabour(Base):
+    __tablename__ = "work_order_labour"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    work_order_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("work_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    author: Mapped[str | None] = mapped_column(Text)
+    minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    note: Mapped[str | None] = mapped_column(Text)
+    worked_on: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    work_order: Mapped[WorkOrder] = relationship(back_populates="labour_entries")
+
+
+class AutoWorkOrderRule(Base):
+    __tablename__ = "auto_work_order_rules"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    equipment_id: Mapped[str | None] = mapped_column(Text, ForeignKey("equipment.id", ondelete="CASCADE"), index=True)
+    parameter_key: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    priority: Mapped[str] = mapped_column(Text, nullable=False, default="medium")
+    title_template: Mapped[str | None] = mapped_column(Text)
+    description_template: Mapped[str | None] = mapped_column(Text)
+    assignee_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    cooldown_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=1440)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)

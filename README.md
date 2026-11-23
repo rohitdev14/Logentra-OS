@@ -1,8 +1,8 @@
 # Logbook
 
-**v0.3 – early release.** An open-source equipment and records logbook with a local database and REST API.
+**v0.4 – early release.** An open-source, on-prem equipment, records, and work-order logbook with a local database and REST API.
 
-Logbook is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out.
+Logbook is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, and work orders are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app.
 
 It runs on your machine. There is no hosted account.
 
@@ -14,13 +14,18 @@ It runs on your machine. There is no hosted account.
 - **Record templates** you design yourself (commissioning, inspection, maintenance, or anything else): custom rows and result columns, instantiate per asset, punches, sign-off, print
 - **Log book and trends** with optional min/max limits, annotations (cause, action, initials, time), and unacknowledged out-of-range flags
 - **Local database** — SQLite by default (a single file, zero setup); PostgreSQL via a connection string
-- **REST API** with OpenAPI / Swagger docs, optional API key, bulk ingest, time-range queries, and CSV/JSON export
+- **Work orders** with a status workflow (open → in progress → on hold → done → closed), assignment, due dates, comments, labour notes, attachment metadata, and optional auto-create from out-of-range readings
+- **Users, roles, and permissions** — built-in admin / supervisor / technician / viewer roles, custom roles from a permission list, optional site/area scope, session login, and API keys bound to a user. A dev / single-user mode (the default) still runs with no login.
+- **REST API** with OpenAPI / Swagger docs, optional API key or user tokens, bulk ingest, time-range queries, server-side pagination, and CSV/JSON export
 - **Inputs:** the UI, CSV/Excel import, a simple IoT webhook, and an optional MQTT subscriber
-- **Outputs:** REST and CSV, direct SQL (for Grafana), and outbound webhooks on out-of-range events
+- **Outputs:** REST and CSV, direct SQL (for Grafana), and outbound webhooks on out-of-range events and work-order changes
+- **Scales to 5,000+ equipment** with indexes, pagination, Alembic migrations, and a load-test script (see [docs/postgres.md](docs/postgres.md) and [docs/load-test-results.json](docs/load-test-results.json))
 - **Optional starter packs** (generic plant equipment, plus a generic semiconductor-utilities pack) — not loaded unless you choose them
-- **v0.2 offline app** included at [`standalone/Logbook.html`](standalone/Logbook.html) for a no-server, browser-only workflow; a v0.2 JSON backup can be imported into v0.3
+- **v0.2 offline app** included at [`standalone/Logbook.html`](standalone/Logbook.html) for a no-server, browser-only workflow; a v0.2 JSON backup can be imported into the database-backed app
 
 ![Trends](docs/images/trends.png)
+
+![Work orders](docs/images/work-orders.png)
 
 ## Quick start
 
@@ -45,7 +50,19 @@ export LOGBOOK_DATABASE_URL="postgresql+psycopg://logbook:logbook@127.0.0.1:5432
 python run.py
 ```
 
-Copy `config.example.yaml` to `config.yaml` to set host, port, an optional API key, MQTT, or startup webhooks. `LOGBOOK_*` environment variables override the file. `config.yaml` is gitignored so secrets stay local.
+Copy `config.example.yaml` to `config.yaml` to set host, port, auth mode, an optional API key, MQTT, or startup webhooks. `LOGBOOK_*` environment variables override the file. `config.yaml` is gitignored so secrets stay local.
+
+The default is single-user / open mode (no login). To require accounts:
+
+```bash
+export LOGBOOK_AUTH_MODE=users
+export LOGBOOK_BOOTSTRAP_ADMIN_USER=admin
+export LOGBOOK_BOOTSTRAP_ADMIN_PASSWORD='choose-a-strong-password'
+python run.py
+# or, after start: python run.py create-admin --username admin --password '...'
+```
+
+The product name is a placeholder and lives in one place — [`logbook_server/branding.py`](logbook_server/branding.py) — so renaming later is a one-line change.
 
 The offline single-file app needs no install: open `standalone/Logbook.html` in a browser.
 
@@ -86,6 +103,16 @@ erDiagram
     RECORDS ||--o| SIGNOFFS : signed
     RECORDS ||--o{ PUNCHES : lists
     READINGS ||--o| ANNOTATIONS : explained_by
+    EQUIPMENT ||--o{ WORK_ORDERS : subject_of
+    USERS ||--o{ WORK_ORDERS : assigned
+    ROLES ||--o{ USERS : grants
+    USERS ||--o{ SESSION_TOKENS : has
+    USERS ||--o{ API_KEYS : has
+    WORK_ORDERS ||--o{ WORK_ORDER_COMMENTS : has
+    WORK_ORDERS ||--o{ WORK_ORDER_LABOUR : has
+    WORK_ORDERS ||--o{ WORK_ORDER_ATTACHMENTS : has
+    SITES ||--o{ AREAS : has
+    SITES ||--o{ EQUIPMENT : locates
     OUTBOUND_WEBHOOKS ||--o{ WEBHOOK_DELIVERIES : logs
     PARAM_PRESETS }o--o{ EQUIPMENT : "defaults by category"
 
@@ -124,7 +151,17 @@ curl -s "http://127.0.0.1:8787/api/events/out-of-range?unacknowledged=true"
 curl -s -X POST http://127.0.0.1:8787/api/ingest/readings \
   -H 'Content-Type: application/json' \
   -d '{"tag":"P-101","parameter":"flow","value":52.1,"ts":"2026-11-23T08:30:00"}'
+
+# Work orders (also in docs/integrations.md)
+curl -s -X POST http://127.0.0.1:8787/api/work-orders \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Replace seal","equipment_id":"eq_p101","priority":"high"}'
+curl -s "http://127.0.0.1:8787/api/work-orders?status=open&page=1&page_size=50"
 ```
+
+![Login](docs/images/login.png)
+
+![Users and roles](docs/images/users.png)
 
 Demo tags such as P-101 and the “Northbrook Works” sample plant are fictional.
 
@@ -137,7 +174,7 @@ Desktop packaging notes (PyInstaller, Tauri sidecar, Docker): **[docs/packaging.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/test_api.py tests/test_ingest.py tests/test_oor.py -q
+python -m pytest tests/test_api.py tests/test_ingest.py tests/test_oor.py tests/test_auth.py tests/test_workorders.py tests/test_pagination.py tests/test_migrations.py -q
 ```
 
 The optional Playwright UI smoke test (`tests/test_ui.py`) needs a local Chrome/Chromium and is not run in the default GitHub Actions workflow.
@@ -151,9 +188,10 @@ Useful next steps, drawn from current limits:
 - **MQTT store-and-forward** if the broker is down
 - **Richer Excel ingest** (formulas, merged cells)
 - **Desktop installer** — PyInstaller first, then an optional Tauri (or similar) window around the same sidecar
-- **Stronger multi-user access** than a single optional API key (PostgreSQL is already a better fit than SQLite when several writers share one server)
+- **Attachment file storage backends** beyond the local `data/attachments/` folder (the API already stores metadata)
+- **SSO / LDAP** in front of the built-in username+password login
 
-Logbook is not a certified process historian or a multi-user CMMS. Do not store passwords or confidential site data in it.
+This is an on-prem operations notebook and lightweight CMMS, not a certified process historian or a safety-rated control system. Hash user passwords; do not store other secrets or confidential site data in equipment records.
 
 ## Contributing
 

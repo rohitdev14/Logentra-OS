@@ -1,0 +1,244 @@
+"""Work-order REST API."""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from sqlalchemy.orm import Session
+
+from logbook_server import service, workorders as wo
+from logbook_server.auth import Principal
+from logbook_server.models import AutoWorkOrderRule, WorkOrder
+from logbook_server.utils import uid
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+ATTACH_DIR = ROOT / "data" / "attachments"
+
+
+def build_router(get_db, get_principal, settings) -> APIRouter:
+    router = APIRouter()
+
+    def current(principal: Principal = Depends(get_principal)) -> Principal:
+        return principal
+
+    def _get(db: Session, wid: str, principal: Principal) -> WorkOrder:
+        row = wo.get_work_order(db, wid)
+        if not row:
+            raise HTTPException(404, "Work order not found")
+        if principal.site_id and row.site_id and row.site_id != principal.site_id:
+            raise HTTPException(404, "Work order not found")
+        return row
+
+    @router.get("/api/work-orders", tags=["work-orders"])
+    def list_work_orders(
+        db: Session = Depends(get_db),
+        principal: Principal = Depends(current),
+        status: str | None = None,
+        priority: str | None = None,
+        assignee_id: str | None = None,
+        equipment_id: str | None = None,
+        q: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ):
+        principal.require("workorders.read")
+        try:
+            return wo.list_work_orders(
+                db, status=status, priority=priority, assignee_id=assignee_id,
+                equipment_id=equipment_id, q=q, page=page, page_size=page_size, principal=principal,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.post("/api/work-orders", tags=["work-orders"], status_code=201)
+    def create_work_order(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require("workorders.create")
+        if principal.site_id and not body.get("site_id"):
+            body = dict(body)
+            body["site_id"] = principal.site_id
+            if principal.area_id and not body.get("area_id"):
+                body["area_id"] = principal.area_id
+        try:
+            row = wo.create_work_order(db, body, actor=principal.actor, user_id=principal.user_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return wo.to_dict(wo.get_work_order(db, row.id) or row, db, detail=True)
+
+    @router.get("/api/work-orders/{wid}", tags=["work-orders"])
+    def get_work_order(wid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require("workorders.read")
+        return wo.to_dict(_get(db, wid, principal), db, detail=True)
+
+    @router.patch("/api/work-orders/{wid}", tags=["work-orders"])
+    def patch_work_order(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        row = _get(db, wid, principal)
+        if "assignee_id" in body or "assigneeId" in body:
+            principal.require("workorders.assign")
+        if "status" in body and body.get("status"):
+            target = str(body.get("status")).lower()
+            if target == "closed":
+                principal.require("workorders.close")
+            else:
+                # moving along the workflow is allowed for anyone who can create or assign
+                if not (principal.can("workorders.create") or principal.can("workorders.assign") or principal.can("workorders.close")):
+                    principal.require("workorders.create")
+        elif not ("assignee_id" in body or "assigneeId" in body):
+            if not (principal.can("workorders.create") or principal.can("workorders.assign")):
+                principal.require("workorders.create")
+        try:
+            row = wo.update_work_order(
+                db, row, body, actor=principal.actor, user_id=principal.user_id,
+                force_status=principal.can("users.manage"),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return wo.to_dict(row, db, detail=True)
+
+    @router.post("/api/work-orders/{wid}/transition", tags=["work-orders"])
+    def transition(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        row = _get(db, wid, principal)
+        status = body.get("status")
+        if not status:
+            raise HTTPException(400, "status is required")
+        if str(status).lower() in ("closed", "close"):
+            principal.require("workorders.close")
+        elif not (principal.can("workorders.create") or principal.can("workorders.assign") or principal.can("workorders.close")):
+            principal.require("workorders.create")
+        try:
+            row = wo.update_work_order(
+                db, row, {"status": status}, actor=principal.actor, user_id=principal.user_id,
+                force_status=principal.can("users.manage"),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return wo.to_dict(row, db, detail=True)
+
+    @router.post("/api/work-orders/{wid}/assign", tags=["work-orders"])
+    def assign(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require("workorders.assign")
+        row = _get(db, wid, principal)
+        assignee = body.get("assignee_id") or body.get("assigneeId")
+        row = wo.update_work_order(
+            db, row, {"assignee_id": assignee}, actor=principal.actor, user_id=principal.user_id,
+        )
+        return wo.to_dict(row, db, detail=True)
+
+    @router.post("/api/work-orders/{wid}/comments", tags=["work-orders"], status_code=201)
+    def add_comment(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        if not (principal.can("workorders.create") or principal.can("workorders.assign") or principal.can("workorders.close")):
+            principal.require("workorders.create")
+        row = _get(db, wid, principal)
+        try:
+            c = wo.add_comment(db, row, body.get("body") or "", author=principal.username, user_id=principal.user_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"id": c.id, "user_id": c.user_id, "author": c.author, "body": c.body, "created_at": c.created_at}
+
+    @router.post("/api/work-orders/{wid}/labour", tags=["work-orders"], status_code=201)
+    def add_labour(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        if not (principal.can("workorders.create") or principal.can("workorders.assign")):
+            principal.require("workorders.create")
+        row = _get(db, wid, principal)
+        try:
+            e = wo.add_labour(
+                db, row, int(body.get("minutes") or 0),
+                note=body.get("note") or "", author=principal.username,
+                user_id=principal.user_id, worked_on=body.get("worked_on") or body.get("workedOn"),
+            )
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"id": e.id, "minutes": e.minutes, "note": e.note, "worked_on": e.worked_on, "author": e.author, "created_at": e.created_at}
+
+    @router.post("/api/work-orders/{wid}/attachments", tags=["work-orders"], status_code=201)
+    async def add_attachment(
+        wid: str,
+        request: Request,
+        db: Session = Depends(get_db),
+        principal: Principal = Depends(current),
+        file: UploadFile | None = File(default=None),
+    ):
+        if not (principal.can("workorders.create") or principal.can("workorders.assign")):
+            principal.require("workorders.create")
+        row = _get(db, wid, principal)
+        storage_path = None
+        filename = None
+        content_type = None
+        size = None
+        if file is not None and file.filename:
+            filename = file.filename
+            content_type = file.content_type
+            data = await file.read()
+            size = len(data)
+            dest_dir = ATTACH_DIR / row.id
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            stored = dest_dir / f"{uid('att')}_{filename}"
+            stored.write_bytes(data)
+            storage_path = str(stored.relative_to(ROOT))
+        else:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            filename = body.get("filename")
+            content_type = body.get("content_type")
+            size = body.get("size")
+            storage_path = body.get("storage_path")
+        try:
+            att = wo.add_attachment(
+                db, row, filename=filename or "", content_type=content_type,
+                size=size, storage_path=storage_path, uploaded_by=principal.username,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "id": att.id, "filename": att.filename, "content_type": att.content_type,
+            "size": att.size, "storage_path": att.storage_path, "uploaded_by": att.uploaded_by,
+            "created_at": att.created_at,
+        }
+
+    @router.delete("/api/work-orders/{wid}", tags=["work-orders"])
+    def delete_work_order(wid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        row = _get(db, wid, principal)
+        if not (principal.can("users.manage") or (principal.can("workorders.create") and row.status == "open" and row.created_by_id == principal.user_id)):
+            principal.require("users.manage")
+        service.audit(db, "delete", actor=principal.actor, user_id=principal.user_id, entity_type="work_order", entity_id=wid)
+        db.delete(row)
+        db.commit()
+        return {"ok": True}
+
+    # ---------- auto-create rules ----------
+    @router.get("/api/work-order-rules", tags=["work-orders"])
+    def list_rules(db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require("workorders.read")
+        rows = db.query(AutoWorkOrderRule).order_by(AutoWorkOrderRule.created_at.desc()).all()
+        return [wo.rule_to_dict(r) for r in rows]
+
+    @router.post("/api/work-order-rules", tags=["work-orders"], status_code=201)
+    def create_rule(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require("workorders.assign")
+        row = wo.upsert_rule(db, body)
+        return wo.rule_to_dict(row)
+
+    @router.patch("/api/work-order-rules/{rid}", tags=["work-orders"])
+    def patch_rule(rid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require("workorders.assign")
+        row = db.get(AutoWorkOrderRule, rid)
+        if not row:
+            raise HTTPException(404, "Rule not found")
+        row = wo.upsert_rule(db, body, rule=row)
+        return wo.rule_to_dict(row)
+
+    @router.delete("/api/work-order-rules/{rid}", tags=["work-orders"])
+    def delete_rule(rid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require("workorders.assign")
+        row = db.get(AutoWorkOrderRule, rid)
+        if not row:
+            raise HTTPException(404, "Rule not found")
+        db.delete(row)
+        db.commit()
+        return {"ok": True}
+
+    return router

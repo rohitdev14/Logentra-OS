@@ -11,10 +11,13 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from logbook_server.auth import Principal, make_auth_dependency
+from logbook_server.branding import PRODUCT_NAME, RELEASE_LABEL
 from logbook_server.schemas import AnnotationIn, BulkReadingsIn, ReadingIn, SyncBody, WebhookIn
 from sqlalchemy.orm import Session
 
-from logbook_server import __version__, demo, events, importers, migrate, mqtt_worker, service
+from logbook_server import __version__, demo, events, importers, migrate, mqtt_worker, seed, service
+from logbook_server.routers import auth_users, work_orders
 from logbook_server.config import Settings, load_settings
 from logbook_server.database import init_db, make_engine, make_session_factory
 from logbook_server.models import (
@@ -49,9 +52,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine = make_engine(settings.sqlalchemy_url)
     SessionLocal = make_session_factory(engine)
     init_db(engine)
-    # seed startup webhooks from config if the table is empty
+    # seed roles, optional first admin, default fields, startup webhooks
     with SessionLocal() as db:
         service.ensure_default_fields(db)
+        seed.ensure_builtin_roles(db)
+        seed.maybe_bootstrap_admin(db, settings)
         if settings.outbound_webhooks and db.query(OutboundWebhook).count() == 0:
             for wh in settings.outbound_webhooks:
                 db.add(OutboundWebhook(
@@ -67,12 +72,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
 
     app = FastAPI(
-        title="Logbook API",
+        title=f"{PRODUCT_NAME} API",
         version=__version__,
         description=(
-            "Local open-source backend for Logbook v0.3 — equipment, record templates, "
-            "and time-series readings. v0.3 – early release. "
-            "SQLite by default; set LOGBOOK_DATABASE_URL to a PostgreSQL connection string to switch."
+            f"On-prem open-source backend for {PRODUCT_NAME} {RELEASE_LABEL} — equipment, "
+            "record templates, time-series readings, users/roles, and work orders. "
+            "SQLite by default; set LOGBOOK_DATABASE_URL to a PostgreSQL connection string to switch. "
+            "Set LOGBOOK_AUTH_MODE=users to require login."
         ),
         lifespan=lifespan,
         docs_url="/docs",
@@ -97,31 +103,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             db.close()
 
-    def require_key(
-        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-        authorization: str | None = Header(default=None),
-    ) -> None:
-        expected = settings.api_key
-        if not expected:
-            return
-        provided = x_api_key or ""
-        if authorization and authorization.lower().startswith("bearer "):
-            provided = provided or authorization[7:].strip()
-        if provided != expected:
-            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    get_principal = make_auth_dependency(settings, SessionLocal)
+
+    def perm(*names: str):
+        def _dep(principal: Principal = Depends(get_principal)) -> Principal:
+            principal.require(*names)
+            return principal
+        return [Depends(_dep)]
 
     def actor_name(request: Request) -> str:
+        p = getattr(request.state, "principal", None)
+        if p is not None:
+            return p.actor
         return request.headers.get("X-Logbook-Actor") or "api"
+
+    def actor_user_id(request: Request) -> str | None:
+        p = getattr(request.state, "principal", None)
+        return p.user_id if p is not None else None
 
     # -------------- public / UI --------------
     @app.get("/api/health", tags=["system"], summary="Liveness and backend info")
     def health():
+        auth_label = (settings.auth_mode or "open").lower()
+        if auth_label == "open" and settings.api_key:
+            auth_label = "api_key"
         return {
             "ok": True,
             "version": __version__,
+            "product": PRODUCT_NAME,
             "backend": _backend_name(settings.database_url),
             "mqtt": bool(settings.mqtt.enabled),
-            "auth": "api_key" if settings.api_key else "open",
+            "auth": auth_label,
+            "auth_mode": (settings.auth_mode or "open").lower(),
         }
 
     @app.get("/favicon.ico", include_in_schema=False)
@@ -137,30 +150,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if (UI_DIR / "static").is_dir():
         app.mount("/static", StaticFiles(directory=UI_DIR / "static"), name="static")
 
-    # All remaining /api routes optionally require a key
-    api_dep = [Depends(require_key)]
+    # Authenticated API routes (open mode still grants every permission)
+    api_dep = perm()  # auth only
+    read_eq = perm("equipment.read")
+    write_eq = perm("equipment.write")
+    read_rec = perm("records.read")
+    write_rec = perm("records.write")
+    write_tpl = perm("templates.write")
+    read_tpl = perm("templates.read")
+    read_rd = perm("readings.read")
+    write_rd = perm("readings.write")
+    write_ann = perm("annotations.write")
+    manage_settings = perm("settings.manage")
+    manage_hooks = perm("webhooks.manage")
+    read_audit = perm("audit.read")
+
+    app.include_router(auth_users.build_router(get_db, get_principal, settings))
+    app.include_router(work_orders.build_router(get_db, get_principal, settings))
 
     # -------------- bootstrap / catalog --------------
-    @app.get("/api/bootstrap", tags=["catalog"], summary="Full app state (UI-compatible)", dependencies=api_dep)
-    def get_bootstrap(db: Session = Depends(get_db)):
-        return service.bootstrap(db, backend=_backend_name(settings.database_url))
+    @app.get("/api/bootstrap", tags=["catalog"], summary="Full app state (UI-compatible)", dependencies=read_eq)
+    def get_bootstrap(request: Request, db: Session = Depends(get_db)):
+        state = service.bootstrap(
+            db,
+            backend=_backend_name(settings.database_url),
+            equipment_cap=settings.bootstrap_equipment_cap,
+            principal=getattr(request.state, "principal", None),
+        )
+        p = getattr(request.state, "principal", None)
+        state["me"] = p.to_public() if p is not None else None
+        state["auth_mode"] = (settings.auth_mode or "open").lower()
+        return state
 
 
 
-    @app.put("/api/sync", tags=["catalog"], summary="Upsert catalog (fields, equipment, templates, records). Does not delete readings.", dependencies=api_dep)
+    @app.put("/api/sync", tags=["catalog"], summary="Upsert catalog (fields, equipment, templates, records). Does not delete readings.", dependencies=write_eq)
     def put_sync(body: SyncBody, request: Request, db: Session = Depends(get_db)):
         return service.sync_catalog(db, body.model_dump(exclude_none=True), actor=actor_name(request))
 
-    @app.post("/api/demo", tags=["catalog"], summary="Replace catalog+readings with the fictional generic-plant demo", dependencies=api_dep)
+    @app.post("/api/demo", tags=["catalog"], summary="Replace catalog+readings with the fictional generic-plant demo", dependencies=manage_settings)
     def post_demo(request: Request, db: Session = Depends(get_db)):
         return demo.load_demo(db, actor=actor_name(request))
 
-    @app.delete("/api/data", tags=["catalog"], summary="Clear all user data (keeps empty default columns)", dependencies=api_dep)
+    @app.delete("/api/data", tags=["catalog"], summary="Clear all user data (keeps empty default columns, users, and roles)", dependencies=manage_settings)
     def delete_data(request: Request, db: Session = Depends(get_db)):
         service.clear_all(db, actor=actor_name(request))
         return {"ok": True}
 
-    @app.post("/api/migrate/v2", tags=["catalog"], summary="Import a v0.2 JSON backup (JSON body) into the database", dependencies=api_dep)
+    @app.post("/api/migrate/v2", tags=["catalog"], summary="Import a v0.2 JSON backup (JSON body) into the database", dependencies=manage_settings)
     async def post_migrate_v2(
         request: Request,
         db: Session = Depends(get_db),
@@ -172,7 +209,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
-    @app.post("/api/migrate/v2/file", tags=["catalog"], summary="Import a v0.2 JSON backup from an uploaded file", dependencies=api_dep)
+    @app.post("/api/migrate/v2/file", tags=["catalog"], summary="Import a v0.2 JSON backup from an uploaded file", dependencies=manage_settings)
     async def post_migrate_v2_file(
         request: Request,
         db: Session = Depends(get_db),
@@ -187,29 +224,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
 
     # -------------- equipment & fields --------------
-    @app.get("/api/fields", tags=["equipment"], dependencies=api_dep)
+    @app.get("/api/fields", tags=["equipment"], dependencies=read_eq)
     def list_fields(db: Session = Depends(get_db)):
         return [service.field_to_ui(f) for f in db.query(FieldDefinition).order_by(FieldDefinition.sort_order).all()]
 
-    @app.get("/api/equipment", tags=["equipment"], dependencies=api_dep)
-    def list_equipment(db: Session = Depends(get_db)):
-        return [service.equipment_to_ui(e) for e in db.query(Equipment).all()]
+    @app.get("/api/equipment", tags=["equipment"], dependencies=read_eq)
+    def list_equipment(
+        request: Request,
+        db: Session = Depends(get_db),
+        q: str | None = None,
+        site_id: str | None = None,
+        area_id: str | None = None,
+        category: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ):
+        return service.list_equipment(
+            db, q=q, site_id=site_id, area_id=area_id, category=category,
+            page=page, page_size=page_size,
+            principal=getattr(request.state, "principal", None),
+            paginate=page is not None,
+        )
 
-    @app.get("/api/equipment/{eid}", tags=["equipment"], dependencies=api_dep)
+    @app.post("/api/equipment/bulk", tags=["equipment"], dependencies=write_eq, status_code=201)
+    def bulk_equipment(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
+        items = body.get("equipment") if isinstance(body, dict) and "equipment" in body else body.get("items") if isinstance(body, dict) else body
+        if items is None:
+            items = body if isinstance(body, list) else []
+        if isinstance(items, dict):
+            items = [items]
+        rows = service.upsert_equipment_list(db, items)
+        service.audit(db, "create", actor=actor_name(request), user_id=actor_user_id(request), entity_type="equipment", detail={"count": len(rows)})
+        db.commit()
+        return {"added": len(rows), "ids": [r.id for r in rows], "items": [service.equipment_to_ui(r) for r in rows]}
+
+    @app.get("/api/equipment/{eid}", tags=["equipment"], dependencies=read_eq)
     def get_equipment(eid: str, db: Session = Depends(get_db)):
         eq = service.get_equipment(db, equipment_id=eid, tag=eid)
         if not eq:
             raise HTTPException(404, "Equipment not found")
         return service.equipment_to_ui(eq)
 
-    @app.post("/api/equipment", tags=["equipment"], dependencies=api_dep, status_code=201)
+    @app.post("/api/equipment", tags=["equipment"], dependencies=write_eq, status_code=201)
     def create_equipment(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         rows = service.upsert_equipment_list(db, [body])
         service.audit(db, "create", actor=actor_name(request), entity_type="equipment", entity_id=rows[0].id)
         db.commit()
         return service.equipment_to_ui(rows[0])
 
-    @app.patch("/api/equipment/{eid}", tags=["equipment"], dependencies=api_dep)
+    @app.patch("/api/equipment/{eid}", tags=["equipment"], dependencies=write_eq)
     def patch_equipment(eid: str, body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         eq = db.get(Equipment, eid)
         if not eq:
@@ -221,7 +284,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return service.equipment_to_ui(db.get(Equipment, eid))
 
-    @app.delete("/api/equipment/{eid}", tags=["equipment"], dependencies=api_dep)
+    @app.delete("/api/equipment/{eid}", tags=["equipment"], dependencies=write_eq)
     def delete_equipment(eid: str, request: Request, db: Session = Depends(get_db)):
         eq = db.get(Equipment, eid) or service.get_equipment(db, tag=eid)
         if not eq:
@@ -232,11 +295,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True}
 
     # -------------- templates & records --------------
-    @app.get("/api/templates", tags=["records"], dependencies=api_dep)
-    def list_templates(db: Session = Depends(get_db)):
-        return [service.template_to_ui(t) for t in db.query(Template).all()]
+    @app.get("/api/templates", tags=["records"], dependencies=read_tpl)
+    def list_templates(
+        db: Session = Depends(get_db),
+        q: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ):
+        return service.list_templates(db, q=q, page=page, page_size=page_size, paginate=page is not None)
 
-    @app.post("/api/templates", tags=["records"], dependencies=api_dep, status_code=201)
+    @app.post("/api/templates", tags=["records"], dependencies=write_tpl, status_code=201)
     def create_template(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         service.upsert_templates(db, [body])
         tid = body.get("id")
@@ -245,7 +313,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return service.template_to_ui(t)
 
-    @app.delete("/api/templates/{tid}", tags=["records"], dependencies=api_dep)
+    @app.delete("/api/templates/{tid}", tags=["records"], dependencies=write_tpl)
     def delete_template(tid: str, request: Request, db: Session = Depends(get_db)):
         t = db.get(Template, tid)
         if not t:
@@ -255,11 +323,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return {"ok": True}
 
-    @app.get("/api/records", tags=["records"], dependencies=api_dep)
-    def list_records(db: Session = Depends(get_db)):
-        return [service.record_to_ui(r) for r in db.query(Record).all()]
+    @app.get("/api/records", tags=["records"], dependencies=read_rec)
+    def list_records(
+        request: Request,
+        db: Session = Depends(get_db),
+        q: str | None = None,
+        equipment_id: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ):
+        return service.list_records(
+            db, q=q, equipment_id=equipment_id, page=page, page_size=page_size,
+            paginate=page is not None, principal=getattr(request.state, "principal", None),
+        )
 
-    @app.post("/api/records", tags=["records"], dependencies=api_dep, status_code=201)
+    @app.post("/api/records", tags=["records"], dependencies=write_rec, status_code=201)
     def create_record(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         service.upsert_records(db, [body])
         rid = body.get("id")
@@ -268,7 +346,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return service.record_to_ui(r)
 
-    @app.delete("/api/records/{rid}", tags=["records"], dependencies=api_dep)
+    @app.delete("/api/records/{rid}", tags=["records"], dependencies=write_rec)
     def delete_record(rid: str, request: Request, db: Session = Depends(get_db)):
         r = db.get(Record, rid)
         if not r:
@@ -283,7 +361,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 
-    @app.get("/api/readings", tags=["readings"], summary="Query time-series readings", dependencies=api_dep)
+    @app.get("/api/readings", tags=["readings"], summary="Query time-series readings", dependencies=read_rd)
     def get_readings(
         db: Session = Depends(get_db),
         equipment_id: str | None = None,
@@ -301,7 +379,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return {"count": len(rows), "readings": rows}
 
-    @app.post("/api/readings", tags=["readings"], summary="Insert one reading", dependencies=api_dep, status_code=201)
+    @app.post("/api/readings", tags=["readings"], summary="Insert one reading", dependencies=write_rd, status_code=201)
     def post_reading(body: ReadingIn, request: Request, db: Session = Depends(get_db)):
         result = service.ingest_readings(
             db, [body.model_dump(exclude_none=True)], source=body.source or "api",
@@ -311,7 +389,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(400, result)
         return result
 
-    @app.post("/api/readings/bulk", tags=["readings"], summary="Insert many readings in one transaction", dependencies=api_dep)
+    @app.post("/api/readings/bulk", tags=["readings"], summary="Insert many readings in one transaction", dependencies=write_rd)
     def post_readings_bulk(body: BulkReadingsIn, request: Request, db: Session = Depends(get_db)):
         items = [r.model_dump(exclude_none=True) for r in body.readings]
         return service.ingest_readings(
@@ -319,7 +397,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             create_missing_equipment=body.create_missing_equipment, fire_webhooks=True,
         )
 
-    @app.delete("/api/readings/{rid}", tags=["readings"], dependencies=api_dep)
+    @app.delete("/api/readings/{rid}", tags=["readings"], dependencies=write_rd)
     def delete_reading(rid: str, request: Request, db: Session = Depends(get_db)):
         r = db.get(Reading, rid)
         if not r:
@@ -336,7 +414,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 
-    @app.put("/api/readings/{rid}/annotation", tags=["readings"], summary="Add or edit an annotation", dependencies=api_dep)
+    @app.put("/api/readings/{rid}/annotation", tags=["readings"], summary="Add or edit an annotation", dependencies=write_ann)
     def put_annotation(rid: str, body: AnnotationIn, request: Request, db: Session = Depends(get_db)):
         try:
             an = service.upsert_annotation(db, rid, body.model_dump(), actor=actor_name(request))
@@ -345,7 +423,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"id": an.id, "cause": an.cause, "action": an.action, "by": an.annotated_by, "at": an.annotated_at}
 
     @app.put("/api/logs/{entry_id}/annotations/{parameter}", tags=["readings"],
-             summary="Add or edit an annotation on a grouped log entry + parameter", dependencies=api_dep)
+             summary="Add or edit an annotation on a grouped log entry + parameter", dependencies=write_ann)
     def put_log_annotation(entry_id: str, parameter: str, body: AnnotationIn, request: Request, db: Session = Depends(get_db)):
         r = db.query(Reading).filter_by(entry_id=entry_id, parameter_key=parameter).order_by(Reading.ts.desc()).first()
         if not r:
@@ -353,7 +431,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         an = service.upsert_annotation(db, r.id, body.model_dump(), actor=actor_name(request))
         return {"id": an.id, "reading_id": r.id, "cause": an.cause, "action": an.action, "by": an.annotated_by, "at": an.annotated_at}
 
-    @app.delete("/api/logs/{entry_id}/annotations/{parameter}", tags=["readings"], dependencies=api_dep)
+    @app.delete("/api/logs/{entry_id}/annotations/{parameter}", tags=["readings"], dependencies=write_ann)
     def delete_log_annotation(entry_id: str, parameter: str, request: Request, db: Session = Depends(get_db)):
         r = db.query(Reading).filter_by(entry_id=entry_id, parameter_key=parameter).first()
         if not r or not r.annotation:
@@ -364,7 +442,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return {"ok": True}
 
-    @app.delete("/api/annotations/{aid}", tags=["readings"], dependencies=api_dep)
+    @app.delete("/api/annotations/{aid}", tags=["readings"], dependencies=write_ann)
     def delete_annotation(aid: str, request: Request, db: Session = Depends(get_db)):
         an = db.get(Annotation, aid)
         if not an:
@@ -374,11 +452,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return {"ok": True}
 
+
+    @app.get("/api/logs", tags=["readings"], summary="Paginated grouped log-book lines", dependencies=read_rd)
+    def list_logs(
+        request: Request,
+        db: Session = Depends(get_db),
+        equipment_id: str | None = None,
+        q: str | None = None,
+        ts_from: str | None = Query(default=None, alias="from"),
+        ts_to: str | None = Query(default=None, alias="to"),
+        page: int = 1,
+        page_size: int = 50,
+    ):
+        return service.list_logs(
+            db, equipment_id=equipment_id, q=q, ts_from=ts_from, ts_to=ts_to,
+            page=page, page_size=page_size, principal=getattr(request.state, "principal", None),
+        )
+
     @app.get(
         "/api/events/out-of-range",
         tags=["readings"],
         summary="Out-of-range readings, optionally only unacknowledged (no annotation yet)",
-        dependencies=api_dep,
+        dependencies=read_rd,
     )
     def get_oor_events(
         db: Session = Depends(get_db),
@@ -400,7 +495,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "/api/ingest/readings",
         tags=["ingest"],
         summary="IoT / gateway webhook. Accepts one reading, a list, or {readings: [...]}.",
-        dependencies=api_dep,
+        dependencies=write_rd,
     )
     async def ingest_webhook(
         request: Request,
@@ -422,7 +517,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             create_missing_equipment=create_missing_equipment, fire_webhooks=True,
         )
 
-    @app.post("/api/ingest/file", tags=["ingest"], summary="Upload a CSV or Excel table of equipment or readings", dependencies=api_dep)
+    @app.post("/api/ingest/file", tags=["ingest"], summary="Upload a CSV or Excel table of equipment or readings", dependencies=write_rd)
     async def ingest_file(
         request: Request,
         db: Session = Depends(get_db),
@@ -513,15 +608,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     # -------------- export --------------
-    @app.get("/api/export/json", tags=["export"], summary="Full JSON backup (v0.3, v0.2-compatible shape)", dependencies=api_dep)
+    @app.get("/api/export/json", tags=["export"], summary="Full JSON backup (v0.2-compatible shape)", dependencies=read_rd)
     def export_json(db: Session = Depends(get_db)):
-        state = service.bootstrap(db, backend=_backend_name(settings.database_url))
+        state = service.bootstrap(db, backend=_backend_name(settings.database_url), equipment_cap=10**9)
         return JSONResponse(
             state,
             headers={"Content-Disposition": "attachment; filename=logbook-backup.json"},
         )
 
-    @app.get("/api/export/readings.csv", tags=["export"], dependencies=api_dep)
+    @app.get("/api/export/readings.csv", tags=["export"], dependencies=read_rd)
     def export_readings_csv(
         db: Session = Depends(get_db),
         tag: str | None = None,
@@ -550,9 +645,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Content-Disposition": "attachment; filename=logbook-readings.csv"},
         )
 
-    @app.get("/api/export/equipment.csv", tags=["export"], dependencies=api_dep)
+    @app.get("/api/export/equipment.csv", tags=["export"], dependencies=read_eq)
     def export_equipment_csv(db: Session = Depends(get_db)):
-        state = service.bootstrap(db)
+        state = service.bootstrap(db, equipment_cap=10**9)
         fields = state["equipmentFields"]
         buf = io.StringIO()
         w = csv.writer(buf)
@@ -568,14 +663,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # -------------- outbound webhooks & audit --------------
 
 
-    @app.get("/api/webhooks", tags=["integrations"], dependencies=api_dep)
+    @app.get("/api/webhooks", tags=["integrations"], dependencies=manage_hooks)
     def list_webhooks(db: Session = Depends(get_db)):
         return [
             {"id": w.id, "url": w.url, "events": loads(w.events, []), "enabled": bool(w.enabled), "created_at": w.created_at}
             for w in db.query(OutboundWebhook).all()
         ]
 
-    @app.post("/api/webhooks", tags=["integrations"], dependencies=api_dep, status_code=201)
+    @app.post("/api/webhooks", tags=["integrations"], dependencies=manage_hooks, status_code=201)
     def create_webhook(body: WebhookIn, request: Request, db: Session = Depends(get_db)):
         w = OutboundWebhook(
             id=uid("wh"), url=body.url, secret=body.secret or "",
@@ -586,7 +681,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return {"id": w.id, "url": w.url, "events": body.events, "enabled": body.enabled}
 
-    @app.delete("/api/webhooks/{wid}", tags=["integrations"], dependencies=api_dep)
+    @app.delete("/api/webhooks/{wid}", tags=["integrations"], dependencies=manage_hooks)
     def delete_webhook(wid: str, request: Request, db: Session = Depends(get_db)):
         w = db.get(OutboundWebhook, wid)
         if not w:
@@ -596,7 +691,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return {"ok": True}
 
-    @app.get("/api/webhooks/deliveries", tags=["integrations"], dependencies=api_dep)
+    @app.get("/api/webhooks/deliveries", tags=["integrations"], dependencies=manage_hooks)
     def list_deliveries(db: Session = Depends(get_db), limit: int = 50):
         rows = db.query(WebhookDelivery).order_by(WebhookDelivery.created_at.desc()).limit(limit).all()
         return [
@@ -605,14 +700,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for d in rows
         ]
 
-    @app.get("/api/audit", tags=["system"], dependencies=api_dep)
-    def list_audit(db: Session = Depends(get_db), limit: int = 100, entity_type: str | None = None):
+    @app.get("/api/audit", tags=["system"], dependencies=read_audit)
+    def list_audit(
+        db: Session = Depends(get_db),
+        limit: int = 100,
+        entity_type: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ):
         q = db.query(AuditLog).order_by(AuditLog.ts.desc())
         if entity_type:
             q = q.filter(AuditLog.entity_type == entity_type)
+        if page is not None:
+            from logbook_server.pagination import clamp_page, page_result
+            page, page_size = clamp_page(page, page_size)
+            total = q.count()
+            rows = q.offset((page - 1) * page_size).limit(page_size).all()
+            items = [
+                {"id": a.id, "ts": a.ts, "actor": a.actor, "user_id": a.user_id, "action": a.action,
+                 "entity_type": a.entity_type, "entity_id": a.entity_id, "detail": loads(a.detail)}
+                for a in rows
+            ]
+            return page_result(items, total, page, page_size)
         rows = q.limit(limit).all()
         return [
-            {"id": a.id, "ts": a.ts, "actor": a.actor, "action": a.action,
+            {"id": a.id, "ts": a.ts, "actor": a.actor, "user_id": a.user_id, "action": a.action,
              "entity_type": a.entity_type, "entity_id": a.entity_id, "detail": loads(a.detail)}
             for a in rows
         ]
