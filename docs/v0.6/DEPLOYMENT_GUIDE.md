@@ -1,6 +1,6 @@
 # Deployment guide
 
-This branch is a local release candidate. Review the release report before choosing a target environment.
+This branch packages Logentra OS 0.6.0. Review the release report before choosing a target environment.
 
 ## Python
 
@@ -11,7 +11,7 @@ This branch is a local release candidate. Review the release report before choos
 
 The default serves SQLite on 127.0.0.1:8787. Open standalone access requires a loopback bind and client. The offline single-file HTML remains available.
 
-For production, set LOGENTRA_PROFILE=production and run python run.py create-admin --username admin, entering the password at the prompt. Production defaults to a one-day session and requires user authentication. Deploy behind trusted HTTPS ingress and keep one application process while qualifying the release. Rate-limit by client at the ingress. Provide a specific browser origin list when access is cross-origin.
+For production, set LOGENTRA_PROFILE=production and run python run.py create-admin --username admin, entering the password at the prompt. Production defaults to a one-day session and requires user authentication. Deploy behind trusted HTTPS ingress. The production PostgreSQL overlay defaults to two application workers; set `LOGENTRA_WORKERS=1` to fall back to a single process. Rate-limit by client at the ingress. Provide a specific browser origin list when access is cross-origin.
 
 For PostgreSQL, install requirements-postgres.txt and supply the postgresql+psycopg connection URL through LOGENTRA_DATABASE_URL. Keep PostgreSQL on a private network. Enable MQTT TLS when required by your broker.
 
@@ -33,7 +33,7 @@ The application image is built from `python:3.12.16-slim-trixie` and runs `apt-g
 
 1. Stop application and ingestion writers. Create a paired backup according to the recovery guide.
 2. Rehearse the upgrade against a restore. Apply migrations with one process via python -m alembic upgrade head or normal startup.
-3. Verify migration head 0006_qualification and check equipment, readings, records, document downloads and work orders.
+3. Verify migration head 0007_performance and check equipment, readings, records, document downloads and work orders.
 4. Reissue API keys without expiry when moving to production. Verify webhook and broker configuration.
 5. Resume ingestion after verification. For rollback, use the paired pre-upgrade backup and v0.5 checkpoint.
 

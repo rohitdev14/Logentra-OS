@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Logentra OS v0.5 – early release — Open-source logbook, engineering records & traceability for industrial plants</title>
+  <title>Logentra OS v0.6.0 — Open-source logbook, engineering records & traceability for industrial plants</title>
   <script>
     (function () {
       try {
@@ -1094,7 +1094,7 @@ body.login-open .app { display: none; }
         <p id="login-error" class="form-error" hidden></p>
         <button type="submit" class="btn btn-primary" style="width:100%;margin-top:.6rem">Sign in</button>
       </form>
-      <p class="tiny" style="margin-top:1rem">On-prem v0.5 – early release. Create the first admin with <code>python run.py create-admin</code>.</p>
+      <p class="tiny" style="margin-top:1rem">On-prem v0.6.0. Create the first admin with <code>python run.py create-admin</code>.</p>
     </div>
   </div>
   <div class="app" id="app-shell">
@@ -1103,7 +1103,7 @@ body.login-open .app { display: none; }
         <div class="brand-mark" aria-hidden="true"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v14H5z"/><path d="M5 10h14M10 5v14"/></svg></div>
         <div>
           <h1 data-product-name>Logentra OS</h1>
-          <div class="sub">v0.5 – early release</div>
+          <div class="sub">v0.6.0</div>
         </div>
       </div>
       <div class="nav-label">Operations</div>
@@ -1155,7 +1155,7 @@ body.login-open .app { display: none; }
     </div>
   </div>
   <script>
-window.LOGENTRA_PRODUCT = { name: "Logentra OS", short: "Logentra", initials: "LO", version: "0.5.0", label: "v0.5 – early release", tagline: "Open-source logbook, engineering records & traceability for industrial plants" };
+window.LOGENTRA_PRODUCT = { name: "Logentra OS", short: "Logentra", initials: "LO", version: "0.6.0", label: "v0.6.0", tagline: "Open-source logbook, engineering records & traceability for industrial plants" };
 window.LOGBOOK_PRODUCT = window.LOGENTRA_PRODUCT;
 /* Light / dark theme: localStorage wins, otherwise prefers-color-scheme. */
 (function (global) {
@@ -1709,9 +1709,9 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
   const _prod = window.LOGENTRA_PRODUCT || window.LOGBOOK_PRODUCT || {};
-  const APP_VERSION = _prod.version || "0.5.0";
+  const APP_VERSION = _prod.version || "0.6.0";
   const PRODUCT_NAME = _prod.name || "Logentra OS";
-  const RELEASE_LABEL = _prod.label || "v0.5 – early release";
+  const RELEASE_LABEL = _prod.label || "v0.6.0";
 
   const FIELD_TYPES = [
     { id: "text", label: "Text" },

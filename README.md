@@ -3,7 +3,7 @@
 [![Tests](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml/badge.svg)](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**v0.5 – early release.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
+**v0.6.0.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
 
 **Logentra OS** is **Log**book + **Eng**ineering + **Tra**ceability. It is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
 
@@ -75,9 +75,9 @@ The display name lives in [`logentra_server/branding.py`](logentra_server/brandi
 
 The offline single-file app needs no install: open `standalone/Logbook.html` in a browser.
 
-## v0.6 hardening branch
+## v0.6.0
 
-The development branch adds configuration profiles, engineering write protections, queued integrations and native recovery tooling. The application reports v0.5.0 until the release gates are met.
+This release adds configuration profiles, engineering write protections, queued integrations, native recovery tooling, PostgreSQL performance indexes, and pinned production container images. The application reports v0.6.0.
 
 - [Deployment and upgrade guide](docs/v0.6/DEPLOYMENT_GUIDE.md)
 - [Backup and recovery guide](docs/v0.6/RECOVERY_GUIDE.md)

@@ -14,4 +14,4 @@
 | Database migration compatibility verified | PASS | SQLite and PostgreSQL upgraded from the v0.5 schema and restored native backups. |
 | Release documentation completed | PASS | Measurement reports, security and recovery evidence and blocked gates are documented. |
 
-**Decision:** Retain release candidate status and version 0.5.0. A v0.6.0 tag is not authorized by these results.
+**Decision (earlier candidate):** Those measurements retained release-candidate status at 0.5.0. The product version is now 0.6.0; a git tag is still reserved until requalification of the 0.6.0 fixes is accepted.

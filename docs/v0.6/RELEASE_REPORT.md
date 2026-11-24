@@ -2,7 +2,7 @@
 
 ## Executive summary
 
-The hardening implementation is committed locally on release/v0.6-production-hardening. The recoverable v0.5 checkpoint is 111d2c2, referenced by checkpoint/v0.5-before-production-hardening. This is a release candidate. Production acceptance remains open and the application version stays at 0.5.0.
+The product version is 0.6.0. This update packages the production-hardening work with restore ownership, PostgreSQL list/search/ingest indexes and pooling, document location inheritance, pinned patched container images, and Compose operational fixes. A git tag is not created by this change; tag only after the requalification gates are accepted. The recoverable v0.5 checkpoint remains 111d2c2, referenced by checkpoint/v0.5-before-production-hardening.
 
 ## Implementation and architecture
 
@@ -48,4 +48,4 @@ Final qualification adds scoped operational workflows, protective audit triggers
 
 ## Release completion update
 
-The release completion checks retain the 0.5.0 version. See [the final qualification report](FINAL_QUALIFICATION_REPORT.md) for current measurements and blocked criteria.
+The application version is 0.6.0. See [the final qualification report](FINAL_QUALIFICATION_REPORT.md) for the earlier candidate measurements and [CHANGELOG](../../CHANGELOG.md) for the 0.6.0 contents.

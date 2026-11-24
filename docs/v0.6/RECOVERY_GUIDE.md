@@ -8,7 +8,7 @@ Set LOGENTRA_DATABASE_URL explicitly to the source. Run from the repository root
 
     python scripts/recovery.py backup /path/to/new-bundle --attachments data/attachments
 
-SQLite uses its backup API and integrity check. PostgreSQL uses pg_dump in custom format. Run with compatible PostgreSQL client tools. Pick a destination outside the attachment tree. The bundle includes a database backup, attachments and a SHA-256 manifest.
+SQLite uses its backup API and integrity check. PostgreSQL uses pg_dump in custom format. The application image includes postgresql-client, so Compose one-off jobs can run pg_dump and pg_restore without a second image; stand-alone hosts still need compatible PostgreSQL client tools. Pick a destination outside the attachment tree. The bundle includes a database backup, attachments and a SHA-256 manifest.
 
 ## Restore and verify
 

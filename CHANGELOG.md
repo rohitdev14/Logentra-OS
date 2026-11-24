@@ -2,14 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased v0.6 hardening
+## 0.6.0 – production hardening
 
-- Added production profiles, loopback standalone limits, CORS configuration, login throttling, API key expiry and scoped data guards.
-- Added catalog generations, record and document concurrency checks, checksum verification and signed evidence protections.
-- Added queued webhook delivery, retry and dead-letter states, MQTT reconnect and integration health.
-- Added non-root deployment definitions, native recovery, regression coverage and browser save-conflict feedback.
+Production Compose overlay, scoped authorization, recovery tooling, and performance and operations fixes for a first 0.6 stable candidate. This commit does not create a git tag.
 
-See the [release report](docs/v0.6/RELEASE_REPORT.md) for compatibility changes and outstanding gates.
+- Production profiles, loopback standalone limits, CORS configuration, login throttling, API key expiry and scoped data guards.
+- Catalog generations, record and document concurrency checks, checksum verification and signed evidence protections.
+- Queued webhook delivery, retry and dead-letter states, MQTT reconnect and integration health.
+- Non-root containers, native backup/restore, regression coverage and browser save-conflict feedback.
+- Restored attachment trees are chowned to UID 10001 (or `--owner` / `LOGENTRA_ATTACHMENTS_OWNER`) and left readable by the application user.
+- Alembic 0007 adds PostgreSQL `pg_trgm` and btree indexes, cheaper list counts, exact-match search predicates, connection pooling and two production workers. Operators can profile with `pg_stat_statements` and `scripts/explain_hot_paths.sql`.
+- Documents inherit `site_id` and `area_id` from linked equipment when those fields are omitted.
+- Container bases are pinned to `python:3.12.16-slim-trixie`, `postgres:17.12-alpine3.24` and `nginx:1.30.8-alpine3.24`, with `apt-get upgrade` during the app image build.
+- Health checks have a `start_period`, the app image includes `postgresql-client`, and the deployment guide documents iptables-legacy versus nft FORWARD issues.
+
+See the [release report](docs/v0.6/RELEASE_REPORT.md) and [deployment guide](docs/v0.6/DEPLOYMENT_GUIDE.md).
 
 ## 0.5.0 – early release
 
