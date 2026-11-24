@@ -66,3 +66,25 @@ jobs:
           resolved/bin/pip freeze > resolved.txt
           pip install pip-audit==2.10.1
           pip-audit --no-deps --disable-pip -r resolved.txt
+  containers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify SQLite image startup and non-root UID
+        run: |
+          docker compose build app
+          docker compose up -d --wait app
+          test "$(docker compose exec -T app id -u)" = 10001
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/bootstrap)" = 401
+      - name: Verify PostgreSQL profile startup
+        env:
+          LOGENTRA_POSTGRES_PASSWORD: ci-test-only
+          LOGENTRA_DATABASE_URL: postgresql+psycopg://logentra:ci-test-only@postgres:5432/logentra
+        run: |
+          docker compose stop app
+          docker compose --profile postgres up -d --wait postgres
+          docker compose up -d --wait app
+          curl --fail http://127.0.0.1:8787/api/ready
+      - name: Shut down test containers
+        if: always()
+        run: docker compose --profile postgres down -v

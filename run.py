@@ -49,12 +49,13 @@ def _create_admin(argv: list[str]) -> int:
                 db, username=args.username, password=args.password,
                 display_name=args.display_name or args.username, email=args.email or None,
             )
+            username, user_id = user.username, user.id
             db.commit()
         except ValueError as exc:
             db.rollback()
             print(str(exc), file=sys.stderr)
             return 1
-    print(f"Created admin user {user.username!r} ({user.id})")
+    print(f"Created admin user {username!r} ({user_id})")
     print(f"Log in at the UI or POST /api/auth/login  (auth_mode={settings.auth_mode})")
     return 0
 

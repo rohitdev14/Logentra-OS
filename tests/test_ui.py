@@ -239,7 +239,6 @@ def test_login_screenshot(tmp_path):
             page.wait_for_timeout(400)
             login_png = SHOT / "06-login.png"
             page.screenshot(path=str(login_png), full_page=True)
-            (ROOT / "docs" / "images").mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(SHOT / "login.png"), full_page=True)
             # successful login should reveal the app
             page.fill("#login-user", "admin")
@@ -247,8 +246,34 @@ def test_login_screenshot(tmp_path):
             page.get_by_role("button", name="Sign in").click()
             page.wait_for_selector("#view h2, nav.nav, #app-shell", timeout=10000)
             page.wait_for_timeout(400)
-            assert page.locator("#login-gate").is_hidden() or page.locator("#login-gate[hidden]").count() >= 0
+            page.locator("#login-gate").wait_for(state="hidden", timeout=10000)
             browser.close()
     finally:
         server.should_exit = True
     assert (SHOT / "06-login.png").is_file()
+
+
+def test_browser_retains_catalog_edit_on_conflict(live_url):
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(channel=os.getenv("LOGENTRA_TEST_BROWSER_CHANNEL"), headless=True)
+        page = browser.new_page()
+        seeded = page.request.post(live_url + "/api/records", data={"id": "browser-conflict", "notes": "original"})
+        assert seeded.ok
+        original = seeded.json()
+        page.goto(live_url)
+        page.wait_for_function("() => window.Logbook && Logbook.getState().records.some(r => r.id === 'browser-conflict')")
+        edit = page.request.post(live_url + "/api/records", data={
+            "id": original["id"], "revision": original["revision"], "notes": "committed elsewhere",
+        })
+        assert edit.ok
+        page.evaluate("""() => {
+            Logbook.getState().records.find(r => r.id === 'browser-conflict').notes = 'local draft';
+            Logbook.persist();
+        }""")
+        page.get_by_role("status").get_by_text("Save conflict · changes unsaved").wait_for()
+        assert page.evaluate("Logbook.getState().records.find(r => r.id === 'browser-conflict').notes") == "local draft"
+        rows = page.request.get(live_url + "/api/records").json()
+        assert next(record for record in rows if record["id"] == original["id"])["notes"] == "committed elsewhere"
+        browser.close()

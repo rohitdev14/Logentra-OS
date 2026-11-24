@@ -338,3 +338,18 @@ def test_live_mqtt_reconnect(db_url, tmp_path):
                 }), hostname="127.0.0.1", port=port, qos=1)
                 eventually(lambda: client.get("/api/readings", params={"tag": "MQTT-ASSET"}).json()["count"] == index)
             eventually(lambda: not connected())
+
+
+def test_fresh_production_admin_cli(db_url):
+    import subprocess
+    import sys
+
+    env = {**os.environ, "LOGENTRA_PROFILE": "production", "LOGENTRA_DATABASE_URL": db_url,
+           "LOGENTRA_BOOTSTRAP_ADMIN_PASSWORD": "synthetic-cli-test-password"}
+    subprocess.run([sys.executable, "run.py", "create-admin", "--username", "cli-admin"],
+                   env=env, check=True, capture_output=True, text=True)
+    with make_client(Settings(database_url=db_url, profile="production")) as client:
+        assert client.get("/api/bootstrap").status_code == 401
+        login = client.post("/api/auth/login", json={"username": "cli-admin", "password": env["LOGENTRA_BOOTSTRAP_ADMIN_PASSWORD"]})
+        assert login.status_code == 200
+        assert client.get("/api/bootstrap", headers={"Authorization": "Bearer " + login.json()["token"]}).status_code == 200
