@@ -80,6 +80,8 @@
     health: () => req("GET", "/health"),
     bootstrap: () => req("GET", "/bootstrap"),
     sync: (payload, revision) => req("PUT", "/sync", payload, { headers: revision ? { "If-Match": revision } : {} }),
+    deleteCatalog: (kind, id, revision) => req("DELETE", "/" + kind + "/" + encodeURIComponent(id), undefined,
+      { headers: revision ? { "If-Match": revision } : {} }),
     loadDemo: () => req("POST", "/demo"),
     clear: () => req("DELETE", "/data"),
     migrateV2: (data) => req("POST", "/migrate/v2", data),

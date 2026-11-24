@@ -1612,6 +1612,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     health: () => req("GET", "/health"),
     bootstrap: () => req("GET", "/bootstrap"),
     sync: (payload, revision) => req("PUT", "/sync", payload, { headers: revision ? { "If-Match": revision } : {} }),
+    deleteCatalog: (kind, id, revision) => req("DELETE", "/" + kind + "/" + encodeURIComponent(id), undefined,
+      { headers: revision ? { "If-Match": revision } : {} }),
     loadDemo: () => req("POST", "/demo"),
     clear: () => req("DELETE", "/data"),
     migrateV2: (data) => req("POST", "/migrate/v2", data),
@@ -1863,6 +1865,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const el = document.getElementById("api-badge");
     if (!el) return;
     el.textContent = text || (ok ? "Database connected" : "API offline");
+    el.setAttribute("role", "status");
     el.classList.toggle("ok", !!ok);
     el.classList.toggle("err", !ok);
   }
@@ -1928,6 +1931,25 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         toast("Could not save to the database: " + err.message);
       }
     });
+  }
+
+  async function deleteCatalog(kind, id, after) {
+    await saveQueue;
+    if (dirtyCatalog) {
+      toast("Resolve unsaved changes before deleting.");
+      return;
+    }
+    try {
+      setApiBadge(true, "Deleting…");
+      await window.LogbookAPI.deleteCatalog(kind, id, state.meta.catalogRevision);
+      await loadStore();
+      if (after) after();
+      render();
+      toast("Deleted.");
+    } catch (err) {
+      setApiBadge(false, "Delete failed");
+      toast("Could not delete: " + err.message);
+    }
   }
 
   function migrateV1(raw) {
@@ -3789,7 +3811,10 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     }
     if (act === "eq-del") {
       const eq = eqById(btn.dataset.id);
-      if (!eq || !confirm("Delete " + (eqTag(eq) || "this row") + " and its logs and records?")) return;
+      const api = window.LogbookAPI;
+      const consequence = api ? " and its logs? Records are kept." : " and its logs and records?";
+      if (!eq || !confirm("Delete " + (eqTag(eq) || "this row") + consequence)) return;
+      if (api) { deleteCatalog("equipment", eq.id); return; }
       state.logs = state.logs.filter((l) => l.equipmentId !== eq.id);
       state.records = state.records.filter((r) => r.equipmentId !== eq.id);
       state.equipment = state.equipment.filter((x) => x.id !== eq.id);
@@ -3850,6 +3875,10 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     if (act === "tpl-del") {
       const tpl = state.templates.find((t) => t.id === ui.templateId);
       if (tpl && confirm("Delete template “" + tpl.name + "”? Existing records are kept.")) {
+        if (window.LogbookAPI) {
+          deleteCatalog("templates", tpl.id, () => { ui.templateId = (state.templates[0] || {}).id || ""; });
+          return;
+        }
         state.templates = state.templates.filter((t) => t.id !== tpl.id);
         ui.templateId = (state.templates[0] && state.templates[0].id) || "";
         persist(); render();
@@ -3865,10 +3894,11 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     if (act === "rec-open") { ui.recordId = btn.dataset.id; ui.view = "recordEdit"; render(); return; }
     if (act === "rec-del") {
       if (!confirm("Delete this record?")) return;
+      if (window.LogbookAPI) { deleteCatalog("records", btn.dataset.id); return; }
       state.records = state.records.filter((r) => r.id !== btn.dataset.id);
       persist(); render(); return;
     }
-    if (act === "rec-save") { collectRecordEdits(); persist(); render(); toast("Record saved."); return; }
+    if (act === "rec-save") { collectRecordEdits(); persist(); render(); return; }
     if (act === "rec-print") { collectRecordEdits(); persist(); window.print(); return; }
     if (act === "punch-add") { const rec = state.records.find((r) => r.id === ui.recordId); if (rec) { collectRecordEdits(); modalPunch(rec, null); } return; }
     if (act === "punch-edit") { const rec = state.records.find((r) => r.id === ui.recordId); if (rec) { collectRecordEdits(); modalPunch(rec, Number(btn.dataset.i)); } return; }

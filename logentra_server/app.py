@@ -360,8 +360,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.equipment_to_ui(db.get(Equipment, eid))
 
     @app.delete("/api/equipment/{eid}", tags=["equipment"], dependencies=write_eq)
-    def delete_equipment(eid: str, request: Request, db: Session = Depends(get_db)):
-        service.advance_catalog(db)
+    def delete_equipment(eid: str, request: Request, db: Session = Depends(get_db),
+                         catalog_revision: str | None = Header(None, alias="If-Match")):
+        service.advance_catalog(db, catalog_revision)
         eq = db.get(Equipment, eid) or service.get_equipment(db, tag=eid)
         if not eq:
             raise HTTPException(404, "Equipment not found")
@@ -394,8 +395,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.template_to_ui(t)
 
     @app.delete("/api/templates/{tid}", tags=["records"], dependencies=write_tpl)
-    def delete_template(tid: str, request: Request, db: Session = Depends(get_db)):
-        service.advance_catalog(db)
+    def delete_template(tid: str, request: Request, db: Session = Depends(get_db),
+                         catalog_revision: str | None = Header(None, alias="If-Match")):
+        service.advance_catalog(db, catalog_revision)
         t = db.get(Template, tid)
         if not t:
             raise HTTPException(404, "Template not found")
@@ -432,8 +434,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.record_to_ui(r)
 
     @app.delete("/api/records/{rid}", tags=["records"], dependencies=write_rec)
-    def delete_record(rid: str, request: Request, db: Session = Depends(get_db)):
-        service.advance_catalog(db)
+    def delete_record(rid: str, request: Request, db: Session = Depends(get_db),
+                         catalog_revision: str | None = Header(None, alias="If-Match")):
+        service.advance_catalog(db, catalog_revision)
         r = db.get(Record, rid)
         if not r:
             raise HTTPException(404, "Record not found")
@@ -441,7 +444,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, "Signed records cannot be deleted")
         service.protect_document_links(db, Document.record_id, r.id)
         db.delete(r)
-        service.audit(db, "delete", actor=actor_name(request), entity_type="record", entity_id=rid)
+        service.audit(db, "delete", actor=actor_name(request), entity_type="record", entity_id=rid, detail=service.record_to_ui(r))
         db.commit()
         return {"ok": True}
 
