@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
 from logentra_server import events, service
