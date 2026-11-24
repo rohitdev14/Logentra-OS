@@ -46,3 +46,17 @@ The example in deployment/nginx.conf terminates TLS 1.2 or 1.3, adds HSTS, throt
 ## Release completion update
 
 For the nginx, app and PostgreSQL topology use compose.production.yaml together with compose.yaml and the postgres profile. Docker CLI and Compose are installed, but runtime verification still depends on authorized daemon access. See [container qualification](CONTAINER_QUALIFICATION.md).
+
+## Host firewall and container networking
+
+Docker publishes rules in the nftables (iptables-nft) FORWARD chain. Some Debian and Ubuntu hosts still use iptables-legacy as the default `iptables` command, often with a FORWARD policy of DROP. When the two backends disagree, containers cannot open TCP connections on user-defined bridges: the application stays in SYN_SENT to PostgreSQL and Compose never becomes healthy.
+
+If `docker compose up --wait` hangs on the app while `docker logs` shows no database errors, check both backends:
+
+    iptables-nft -L FORWARD -n -v
+    iptables-legacy -L FORWARD -n -v
+    nft list ruleset | sed -n '/hook forward/,/^}/p'
+
+The nft/Docker rules should accept traffic for the Compose bridge. If the legacy table is the policy that is actually dropping packets, set `iptables-legacy -P FORWARD ACCEPT` on that host (or add matching ACCEPT rules for the Docker bridges) and confirm with `update-alternatives --display iptables` whether the host should be switched fully to nft. This is a host-firewall issue; do not add NET_ADMIN or extra capabilities to the application container.
+
+The application image includes `postgresql-client` so backup and restore can run `pg_dump` and `pg_restore` without a second image. A restore helper still needs to join the same Compose networks as PostgreSQL (the production `database` network is internal and has no published port).

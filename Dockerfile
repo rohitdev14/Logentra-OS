@@ -4,6 +4,7 @@ WORKDIR /app
 # Pick up Debian security updates on every image build, then install the app.
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt requirements-postgres.txt ./
 RUN pip install -r requirements-postgres.txt && groupadd -g 10001 logentra \
