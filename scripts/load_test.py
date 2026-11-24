@@ -216,13 +216,35 @@ def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: 
     # init / migrate first so we can seed with a raw connection
     engine = make_engine(settings.sqlalchemy_url)
     init_db(engine)
-    raw_path = settings.sqlalchemy_url.replace("sqlite:///", "")
     import sqlite3
-    conn = sqlite3.connect(raw_path)
+
+    class SeedConnection:
+        def __init__(self, connection):
+            self.connection = connection
+            self.cursor = connection.cursor()
+
+        def execute(self, sql, parameters=()):
+            return self.cursor.execute(sql.replace("?", "%s"), parameters)
+
+        def executemany(self, sql, parameters):
+            return self.cursor.executemany(sql.replace("?", "%s"), parameters)
+
+        def commit(self):
+            self.connection.commit()
+
+    postgres = backend_label == "postgresql"
+    connection = engine.raw_connection() if postgres else sqlite3.connect(engine.url.database)
+    conn = SeedConnection(connection) if postgres else connection
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        if conn.execute("SELECT COUNT(*) FROM equipment").fetchone()[0]:
+            raise ValueError("Benchmark requires an empty database")
+        if not postgres:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
         seed(conn, n_eq, n_rd, n_wo)
+        if postgres:
+            conn.execute("ANALYZE")
+            conn.commit()
         query = "SELECT * FROM readings WHERE equipment_id = ? AND parameter_key = ? ORDER BY ts LIMIT 200"
         parameters = (f"eq_lt_{n_eq // 2:05d}", "vibration")
         samples = []
@@ -230,12 +252,14 @@ def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: 
             started = time.perf_counter()
             conn.execute(query, parameters).fetchall()
             samples.append((time.perf_counter() - started) * 1000)
+        explain = "EXPLAIN (ANALYZE, BUFFERS) " if postgres else "EXPLAIN QUERY PLAN "
         query_result = {
-            "sqlite_version": sqlite3.sqlite_version, "p95_ms": round(_pct(samples, 0.95), 3),
-            "plan": [row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + query, parameters)],
+            "version": conn.execute("SHOW server_version").fetchone()[0] if postgres else sqlite3.sqlite_version,
+            "p95_ms": round(_pct(samples, 0.95), 3),
+            "plan": [row[0 if postgres else 3] for row in conn.execute(explain + query, parameters)],
         }
     finally:
-        conn.close()
+        connection.close()
 
     app = create_app(settings)
     results = []
@@ -278,11 +302,12 @@ def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Logentra OS synthetic SQLite load test")
+    parser = argparse.ArgumentParser(description="Logentra OS synthetic database load test")
     parser.add_argument("--equipment", type=int, default=5000)
     parser.add_argument("--readings-per", type=int, default=100)
     parser.add_argument("--work-orders", type=int, default=2000)
     parser.add_argument("--repeats", type=int, default=30)
+    parser.add_argument("--postgres", action="store_true", help="Read dedicated PostgreSQL URL from LOGENTRA_BENCH_POSTGRES")
     parser.add_argument("--db", default=str(ROOT / "data" / "loadtest.db"))
     parser.add_argument("--concurrency", default="", help="Comma-separated client concurrency levels")
     parser.add_argument("--out", default=str(ROOT / "docs" / "load-test-results.json"))
@@ -291,11 +316,18 @@ def main() -> int:
     levels = [int(level) for level in args.concurrency.split(",") if level]
     if min([args.equipment, args.repeats, *levels]) < 1:
         parser.error("Asset count, samples and concurrency levels must be positive")
-    db_path = Path(args.db).resolve()
-    if db_path.exists():
-        parser.error("Benchmark requires a fresh SQLite file")
-    sqlite_url = "sqlite:///" + str(db_path)
-    reports = [run(sqlite_url, args.equipment, args.readings_per, args.work_orders, args.repeats, "sqlite", levels)]
+    if args.postgres:
+        url = os.getenv("LOGENTRA_BENCH_POSTGRES", "")
+        if not url.startswith("postgresql+psycopg://"):
+            parser.error("Set LOGENTRA_BENCH_POSTGRES to a dedicated empty PostgreSQL database")
+        backend = "postgresql"
+    else:
+        db_path = Path(args.db).resolve()
+        if db_path.exists():
+            parser.error("Benchmark requires a fresh SQLite file")
+        url = "sqlite:///" + str(db_path)
+        backend = "sqlite"
+    reports = [run(url, args.equipment, args.readings_per, args.work_orders, args.repeats, backend, levels)]
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(reports, indent=2), encoding="utf-8")

@@ -81,4 +81,4 @@ def test_alembic_stamp_legacy_v03_file(tmp_path):
         tag = conn.execute(text("SELECT tag FROM equipment WHERE id='eq_1'")).scalar()
         assert tag == "LEG-1"
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0005_outbox"
+        assert version == "0006_qualification"

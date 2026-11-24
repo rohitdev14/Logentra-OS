@@ -9,6 +9,7 @@ from alembic import command
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from logentra_server import documents, events
 from logentra_server.app import create_app
@@ -85,7 +86,10 @@ def test_scoped_access_and_expired_key(db_url):
             assert client.get("/api/equipment/" + asset, headers=scoped).status_code == 404
         state = client.get("/api/bootstrap", headers=scoped).json()
         assert [asset["id"] for asset in state["equipmentIndex"]] == ["asset-a"]
-        assert client.get("/api/export/equipment.csv", headers=scoped).status_code == 403
+        exported = client.get("/api/export/equipment.csv", headers=scoped)
+        assert exported.status_code == 200
+        assert "asset-a" in exported.text and "asset-b" not in exported.text and "asset-c" not in exported.text
+        assert client.get("/api/export/json", headers=scoped).status_code == 403
         key = client.post(f"/api/users/{user['id']}/api-keys", headers=admin, json={}).json()
         assert key["expires_at"]
         with client.app.state.SessionLocal.begin() as db:
@@ -193,6 +197,13 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend):
     with make_client(Settings(database_url=source)) as client:
         assert client.get("/api/equipment/old_asset").json()["id"] == "old_asset"
         assert client.post("/api/records", json={"id": "new_record", "notes": "preserve"}).status_code == 201
+    for statement in ("UPDATE audit_log SET detail = 'tampered'", "DELETE FROM audit_log"):
+        with pytest.raises(DBAPIError), engine.begin() as conn:
+            conn.execute(text(statement))
+    if backend == "postgresql":
+        with pytest.raises(DBAPIError), engine.begin() as conn:
+            conn.execute(text("TRUNCATE audit_log"))
+    engine.dispose()
     attachments = tmp_path / "attachments"
     attachments.mkdir()
     (attachments / "evidence.txt").write_text("document evidence", encoding="utf-8")

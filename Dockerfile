@@ -8,7 +8,7 @@ COPY run.py alembic.ini ./
 COPY logentra_server/ logentra_server/
 COPY migrations/ migrations/
 COPY ui/Logentra.html ui/Logentra.html
-COPY scripts/recovery.py scripts/recovery.py
+COPY scripts/recovery.py scripts/verify_evidence.py scripts/
 USER 10001:10001
 EXPOSE 8787
 ENV LOGENTRA_PROFILE=production LOGENTRA_HOST=0.0.0.0
