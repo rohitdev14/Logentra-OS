@@ -9,7 +9,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
 from logentra_server import events, service
@@ -26,7 +25,7 @@ from logentra_server.models import (
     User,
     WorkOrder,
 )
-from logentra_server.pagination import clamp_page, page_meta
+from logentra_server.pagination import clamp_page, count_rows, page_meta
 from logentra_server.utils import uid, utcnow_iso
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -385,9 +384,8 @@ def list_documents(
     if document_type:
         query = query.filter(Document.document_type == document_type)
     if q:
-        like = f"%{q.strip()}%"
-        query = query.filter(or_(Document.title.ilike(like), Document.document_type.ilike(like), Document.id.ilike(like)))
-    total = query.count()
+        query = query.filter(service.substring_match(q, Document.title, Document.document_type, Document.id))
+    total = count_rows(query, Document.id)
     page, page_size = clamp_page(page, page_size)
     rows = query.order_by(Document.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     # load collections for pending_step

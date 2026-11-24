@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, exists, func, literal_column, or_
+from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -35,7 +35,7 @@ from logentra_server.models import (
     WorkOrder,
 )
 from logentra_server.branding import APP_VERSION, PRODUCT_NAME
-from logentra_server.pagination import clamp_page, page_result
+from logentra_server.pagination import clamp_page, count_rows, page_result
 from logentra_server.utils import as_float, dumps, loads, out_of_range, parse_ts, split_ts, uid, utcnow_iso
 
 
@@ -56,7 +56,7 @@ def default_fields(now: str | None = None) -> list[dict[str, Any]]:
 
 
 def ensure_default_fields(db: Session) -> None:
-    if db.query(FieldDefinition).count():
+    if db.query(FieldDefinition.id).limit(1).first():
         return
     now = utcnow_iso()
     for i, f in enumerate(default_fields(now)):
@@ -142,6 +142,20 @@ def apply_evidence_scope(db, query, model, principal):
                         permits(Document.work_order_id, orders))
 
 
+
+def substring_match(term: str, *columns, extra=None):
+    """Match an exact value or a case-insensitive substring (btree + pg_trgm)."""
+    term = (term or "").strip()
+    like = f"%{term}%"
+    clauses = []
+    for column in columns:
+        clauses.append(column == term)
+        clauses.append(column.ilike(like))
+    if extra is not None:
+        clauses.append(extra)
+    return or_(*clauses)
+
+
 def list_equipment(
     db: Session,
     *,
@@ -161,12 +175,13 @@ def list_equipment(
     if area_id:
         query = query.filter(Equipment.area_id == area_id)
     if q:
-        like = f"%{q.strip()}%"
+        term = q.strip()
+        like = f"%{term}%"
         val_exists = exists().where(
             EquipmentFieldValue.equipment_id == Equipment.id,
-            EquipmentFieldValue.value.ilike(like),
+            or_(EquipmentFieldValue.value == term, EquipmentFieldValue.value.ilike(like)),
         )
-        query = query.filter(or_(Equipment.tag.ilike(like), Equipment.id.ilike(like), val_exists))
+        query = query.filter(substring_match(term, Equipment.tag, Equipment.id, extra=val_exists))
     if category:
         # category lives in the EAV bag — join field_definitions.key == 'category'
         from logentra_server.models import FieldDefinition
@@ -181,7 +196,7 @@ def list_equipment(
     if not paginate and page is None:
         return [equipment_to_ui(e) for e in query.all()]
     page, page_size = clamp_page(page, page_size)
-    total = query.order_by(None).count()
+    total = count_rows(query, Equipment.id)
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
     return page_result([equipment_to_ui(e) for e in rows], total, page, page_size)
 
@@ -189,13 +204,12 @@ def list_equipment(
 def list_templates(db: Session, *, q: str | None = None, page: int | None = None, page_size: int | None = None, paginate: bool = False):
     query = db.query(Template).options(selectinload(Template.columns), selectinload(Template.items))
     if q:
-        like = f"%{q.strip()}%"
-        query = query.filter(or_(Template.name.ilike(like), Template.kind.ilike(like)))
+        query = query.filter(substring_match(q, Template.name, Template.kind))
     query = query.order_by(Template.name, Template.id)
     if not paginate and page is None:
         return [template_to_ui(t) for t in query.all()]
     page, page_size = clamp_page(page, page_size)
-    total = query.count()
+    total = count_rows(query, Template.id)
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
     return page_result([template_to_ui(t) for t in rows], total, page, page_size)
 
@@ -222,13 +236,12 @@ def list_records(
         scoped_equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
         query = query.filter(Record.equipment_id.in_(scoped_equipment.statement))
     if q:
-        like = f"%{q.strip()}%"
-        query = query.filter(or_(Record.template_name.ilike(like), Record.id.ilike(like), Record.notes.ilike(like)))
+        query = query.filter(substring_match(q, Record.template_name, Record.id, Record.notes))
     query = query.order_by(Record.created_at.desc(), Record.id.desc())
     if not paginate and page is None:
         return [record_to_ui(r) for r in query.all()]
     page, page_size = clamp_page(page, page_size)
-    total = query.count()
+    total = count_rows(query, Record.id)
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
     return page_result([record_to_ui(r) for r in rows], total, page, page_size)
 
@@ -263,10 +276,9 @@ def list_logs(
         end = ts_to if ("T" in ts_to or len(ts_to) > 10) else (ts_to + "T23:59:59")
         entry_q = entry_q.filter(Reading.ts <= end)
     if q:
-        like = f"%{q.strip()}%"
-        entry_q = entry_q.filter(or_(Reading.entry_id.ilike(like), Reading.parameter_key.ilike(like), Reading.remarks.ilike(like)))
+        entry_q = entry_q.filter(substring_match(q, Reading.entry_id, Reading.parameter_key, Reading.remarks))
     entry_q = entry_q.group_by(Reading.entry_id)
-    total = entry_q.count()
+    total = int(entry_q.order_by(None).enable_eagerloads(False).count() or 0)
     page_ids = (
         entry_q.order_by(func.min(Reading.ts).desc(), Reading.entry_id.desc())
         .offset((page - 1) * page_size)
@@ -913,8 +925,10 @@ def ingest_readings(
             continue
         # allow label match
         param = (
-            db.query(Parameter).filter_by(equipment_id=eq.id, key=key_raw).one_or_none()
-            or db.query(Parameter).filter(Parameter.equipment_id == eq.id, Parameter.label == key_raw).one_or_none()
+            db.query(Parameter)
+            .filter(Parameter.equipment_id == eq.id, or_(Parameter.key == key_raw, Parameter.label == key_raw))
+            .order_by((Parameter.key == key_raw).desc())
+            .first()
         )
         key = param.key if param else key_raw
         if not param:
@@ -1066,7 +1080,8 @@ def query_readings(
             return []
         q = q.filter(Reading.equipment_id == eq.id)
     if parameter:
-        q = q.filter(or_(Reading.parameter_key == parameter, Reading.parameter_key == parameter.lower()))
+        keys = {parameter, parameter.lower()}
+        q = q.filter(Reading.parameter_key.in_(list(keys)))
     if ts_from:
         start = parse_ts(ts=ts_from) if ("T" in ts_from or len(ts_from) > 10) else (ts_from + "T00:00:00")
         q = q.filter(Reading.ts >= start)
@@ -1095,13 +1110,8 @@ def query_events(
     if principal and principal.scoped:
         equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
         q = q.filter(Reading.equipment_id.in_(equipment.statement))
-    # Prefer the denormalised flag (indexed); also accept legacy rows if any slipped through.
-    oor = or_(
-        Reading.out_of_range == literal_column("1"),
-        and_(Reading.limit_min.isnot(None), Reading.value < Reading.limit_min),
-        and_(Reading.limit_max.isnot(None), Reading.value > Reading.limit_max),
-    )
-    q = q.filter(oor)
+    # Use the denormalised flag so ix_readings_oor_ts can satisfy recent-event lists.
+    q = q.filter(Reading.out_of_range == 1)
     if equipment_id:
         q = q.filter(Reading.equipment_id == equipment_id)
     if tag:

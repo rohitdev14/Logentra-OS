@@ -54,7 +54,12 @@ def _backend_name(url: str) -> str:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
-    engine = make_engine(settings.sqlalchemy_url)
+    engine = make_engine(
+        settings.sqlalchemy_url,
+        pool_size=None if settings.sqlalchemy_url.startswith("sqlite") else settings.db_pool_size,
+        max_overflow=None if settings.sqlalchemy_url.startswith("sqlite") else settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+    )
     SessionLocal = make_session_factory(engine)
     init_db(engine)
     # seed roles, optional first admin, default fields, startup webhooks
@@ -83,6 +88,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.delivery_worker = delivery
         app.state.mqtt_connected = mqtt_connected
         delivery.start()
+        try:
+            import anyio
+            anyio.to_thread.current_default_thread_limiter().total_tokens = settings.threadpool_size
+        except (ImportError, AttributeError):
+            pass
         try:
             yield
         finally:

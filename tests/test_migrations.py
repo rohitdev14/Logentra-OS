@@ -40,6 +40,13 @@ def test_alembic_upgrade_from_empty(tmp_path):
     assert "site_id" in cols and "area_id" in cols
     cols = {c["name"] for c in inspect(engine).get_columns("audit_log")}
     assert "user_id" in cols
+    wo_indexes = {ix["name"] for ix in inspect(engine).get_indexes("work_orders")}
+    assert "ix_work_orders_site_area" in wo_indexes
+    reading_indexes = {ix["name"] for ix in inspect(engine).get_indexes("readings")}
+    assert "ix_readings_eq_ts" in reading_indexes
+    with engine.begin() as conn:
+        version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        assert version == "0007_performance"
 
 
 def test_alembic_upgrade_from_v03(tmp_path):
@@ -81,4 +88,4 @@ def test_alembic_stamp_legacy_v03_file(tmp_path):
         tag = conn.execute(text("SELECT tag FROM equipment WHERE id='eq_1'")).scalar()
         assert tag == "LEG-1"
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0006_qualification"
+        assert version == "0007_performance"

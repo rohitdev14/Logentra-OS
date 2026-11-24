@@ -12,12 +12,24 @@ class Base(DeclarativeBase):
     pass
 
 
-def make_engine(url: str):
+def make_engine(
+    url: str,
+    *,
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+    pool_timeout: int = 30,
+):
     kwargs = {"future": True, "hide_parameters": True}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
         kwargs["pool_pre_ping"] = True
+        kwargs["pool_recycle"] = 1800
+        kwargs["pool_timeout"] = pool_timeout
+        if pool_size is not None:
+            kwargs["pool_size"] = pool_size
+        if max_overflow is not None:
+            kwargs["max_overflow"] = max_overflow
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
 
@@ -64,18 +76,31 @@ def run_migrations(engine) -> None:
         # prefer the raw URL string we created the engine with
         url = str(engine.url)
 
-    insp = inspect(engine)
-    tables = set(insp.get_table_names())
-    cfg = alembic_config(url)
-    if "alembic_version" not in tables and "equipment" in tables:
+    lock_conn = None
+    if engine.dialect.name == "postgresql":
+        lock_conn = engine.connect()
+        lock_conn.execute(text("SELECT pg_advisory_lock(73920146)"))
+        lock_conn.commit()
+    try:
+        insp = inspect(engine)
+        tables = set(insp.get_table_names())
+        cfg = alembic_config(url)
+        if "alembic_version" not in tables and "equipment" in tables:
+            with engine.begin() as conn:
+                cfg.attributes["connection"] = conn
+                command.stamp(cfg, "0001_initial")
+
+        cfg = alembic_config(url)
         with engine.begin() as conn:
             cfg.attributes["connection"] = conn
-            command.stamp(cfg, "0001_initial")
-
-    cfg = alembic_config(url)
-    with engine.begin() as conn:
-        cfg.attributes["connection"] = conn
-        command.upgrade(cfg, "head")
+            command.upgrade(cfg, "head")
+    finally:
+        if lock_conn is not None:
+            try:
+                lock_conn.execute(text("SELECT pg_advisory_unlock(73920146)"))
+                lock_conn.commit()
+            finally:
+                lock_conn.close()
 
 
 def init_db(engine) -> None:

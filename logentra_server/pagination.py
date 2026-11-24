@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from sqlalchemy import func
+
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 500
 
@@ -20,3 +22,8 @@ def page_meta(total: int, page: int, page_size: int) -> dict[str, int]:
 
 def page_result(items: Sequence[Any], total: int, page: int, page_size: int) -> dict[str, Any]:
     return {"items": list(items), **page_meta(total, page, page_size)}
+
+
+def count_rows(query, pk) -> int:
+    """Count matching rows without ORDER BY or eager-load options."""
+    return int(query.order_by(None).enable_eagerloads(False).with_entities(func.count(pk)).scalar() or 0)

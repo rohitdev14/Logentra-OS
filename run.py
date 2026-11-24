@@ -91,11 +91,18 @@ def main() -> None:
 
     import uvicorn
 
+    workers = settings.workers
+    if workers <= 0:
+        workers = 2 if (settings.profile == "production" and not settings.sqlalchemy_url.startswith("sqlite")) else 1
+    common = {"host": args.host, "port": args.port, "proxy_headers": False, "access_log": False, "timeout_keep_alive": 30}
     if args.reload:
-        uvicorn.run("logentra_server.app:create_app", factory=True, host=args.host, port=args.port, reload=True, proxy_headers=False, access_log=False)
+        uvicorn.run("logentra_server.app:create_app", factory=True, reload=True, **common)
+    elif workers > 1:
+        print(f"Workers        {workers}")
+        uvicorn.run("logentra_server.app:create_app", factory=True, workers=workers, log_level="info", **common)
     else:
         app = create_app(settings)
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info", proxy_headers=False, access_log=False)
+        uvicorn.run(app, log_level="info", **common)
 
 
 if __name__ == "__main__":

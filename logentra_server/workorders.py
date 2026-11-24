@@ -17,7 +17,7 @@ from logentra_server.models import (
     WorkOrderComment,
     WorkOrderLabour,
 )
-from logentra_server.pagination import clamp_page, page_result
+from logentra_server.pagination import clamp_page, count_rows, page_result
 from logentra_server.utils import uid, utcnow_iso
 
 STATUSES = ("open", "in_progress", "on_hold", "done", "closed")
@@ -155,9 +155,8 @@ def list_work_orders(
     if equipment_id:
         query = query.filter(WorkOrder.equipment_id == equipment_id)
     if q:
-        like = f"%{q.strip()}%"
-        query = query.filter(or_(WorkOrder.title.ilike(like), WorkOrder.description.ilike(like), WorkOrder.id.ilike(like)))
-    total = query.count()
+        query = query.filter(service.substring_match(q, WorkOrder.title, WorkOrder.description, WorkOrder.id))
+    total = count_rows(query, WorkOrder.id)
     rows = (
         query.order_by(WorkOrder.created_at.desc(), WorkOrder.id.desc())
         .offset((page - 1) * page_size)

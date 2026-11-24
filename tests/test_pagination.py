@@ -25,6 +25,10 @@ def test_equipment_pagination_and_search(client: TestClient):
     found = client.get("/api/equipment?q=EQ-007&page=1&page_size=10").json()
     assert found["total"] == 1
     assert found["items"][0]["tag"] == "EQ-007"
+    # Substring search remains available for operators who do not type a full tag.
+    partial = client.get("/api/equipment?q=007&page=1&page_size=10").json()
+    assert partial["total"] >= 1
+    assert any(item["tag"] == "EQ-007" for item in partial["items"])
 
 
 def test_work_order_pagination(client: TestClient):

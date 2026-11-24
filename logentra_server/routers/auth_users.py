@@ -24,7 +24,7 @@ from logentra_server.auth import (
     verify_password,
 )
 from logentra_server.models import ApiKey, Area, Role, SessionToken, Site, User
-from logentra_server.pagination import clamp_page, page_result
+from logentra_server.pagination import clamp_page, page_result, count_rows
 from logentra_server.utils import dumps, loads, uid, utcnow_iso
 
 
@@ -237,7 +237,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         if page is None:
             return [_user_dict(u) for u in query.all()]
         page, page_size = clamp_page(page, page_size)
-        total = query.count()
+        total = count_rows(query, User.id)
         rows = query.offset((page - 1) * page_size).limit(page_size).all()
         return page_result([_user_dict(u) for u in rows], total, page, page_size)
 

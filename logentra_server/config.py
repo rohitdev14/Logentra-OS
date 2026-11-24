@@ -57,12 +57,25 @@ class Settings(BaseModel):
     bootstrap_equipment_cap: int = 1500
     mqtt: MqttConfig = Field(default_factory=MqttConfig)
     outbound_webhooks: list[OutboundWebhookConfig] = Field(default_factory=list)
+    db_pool_size: int = Field(5, ge=1, le=100)
+    db_max_overflow: int = Field(10, ge=0, le=100)
+    db_pool_timeout: int = Field(30, ge=1, le=120)
+    threadpool_size: int = Field(40, ge=4, le=200)
+    workers: int = Field(0, ge=0, le=16)
 
     @model_validator(mode="before")
     @classmethod
     def production_defaults(cls, values):
         if isinstance(values, dict) and values.get("profile") == "production":
-            values = {"auth_mode": "users", "session_days": 1, "open_browser": False, **values}
+            values = {
+                "auth_mode": "users",
+                "session_days": 1,
+                "open_browser": False,
+                "db_pool_size": 20,
+                "db_max_overflow": 20,
+                "threadpool_size": 64,
+                **values,
+            }
         return values
 
     @model_validator(mode="after")
@@ -111,6 +124,11 @@ _ENV_FIELDS: list[tuple[str, tuple[str, ...], str]] = [
     ), "str"),
     ("bootstrap_admin_password", ("LOGENTRA_BOOTSTRAP_ADMIN_PASSWORD", "LOGBOOK_BOOTSTRAP_ADMIN_PASSWORD"), "str"),
     ("bootstrap_equipment_cap", ("LOGENTRA_BOOTSTRAP_EQUIPMENT_CAP", "LOGBOOK_BOOTSTRAP_EQUIPMENT_CAP"), "int"),
+    ("db_pool_size", ("LOGENTRA_DB_POOL_SIZE",), "int"),
+    ("db_max_overflow", ("LOGENTRA_DB_MAX_OVERFLOW",), "int"),
+    ("db_pool_timeout", ("LOGENTRA_DB_POOL_TIMEOUT",), "int"),
+    ("threadpool_size", ("LOGENTRA_THREADPOOL_SIZE",), "int"),
+    ("workers", ("LOGENTRA_WORKERS",), "int"),
 ]
 
 
