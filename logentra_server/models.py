@@ -124,6 +124,8 @@ class TemplateItem(Base):
 
 class Record(Base):
     __tablename__ = "records"
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    __mapper_args__ = {"version_id_col": revision}
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     template_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("templates.id", ondelete="SET NULL")
@@ -284,6 +286,10 @@ class WebhookDelivery(Base):
     ok: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, default="historical")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[float | None] = mapped_column(Float)
+    claim_token: Mapped[str | None] = mapped_column(Text)
     webhook: Mapped[OutboundWebhook | None] = relationship(back_populates="deliveries")
 
 
@@ -381,6 +387,7 @@ class ApiKey(Base):
     prefix: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     last_used_at: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[str | None] = mapped_column(Text)
     revoked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
@@ -521,6 +528,8 @@ class ApprovalRouteStep(Base):
 
 class Document(Base):
     __tablename__ = "documents"
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    __mapper_args__ = {"version_id_col": revision}
     __table_args__ = (
         Index("ix_documents_status", "status"),
         Index("ix_documents_equipment", "equipment_id"),

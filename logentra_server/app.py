@@ -8,25 +8,30 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from logentra_server.auth import Principal, make_auth_dependency
 from logentra_server.branding import PRODUCT_NAME, RELEASE_LABEL
-from logentra_server.schemas import AnnotationIn, BulkReadingsIn, ReadingIn, SyncBody, WebhookIn
+from logentra_server.schemas import SyncBody, WebhookIn
+from sqlalchemy import text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
+from logentra_server.http_security import HTTPSecurity, read_upload
 
-from logentra_server import __version__, demo, events, importers, migrate, mqtt_worker, seed, service
-from logentra_server.routers import auth_users, documents, work_orders
+from logentra_server import __version__, demo, events, migrate, mqtt_worker, seed, service
+from logentra_server.routers import auth_users, documents, readings, work_orders
 from logentra_server.config import Settings, load_settings
 from logentra_server.database import init_db, make_engine, make_session_factory
 from logentra_server.models import (
-    Annotation,
     AuditLog,
+    Document,
     Equipment,
+    Setting,
+    Signoff,
     FieldDefinition,
     OutboundWebhook,
-    Reading,
     Record,
     Template,
     WebhookDelivery,
@@ -55,9 +60,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # seed roles, optional first admin, default fields, startup webhooks
     with SessionLocal() as db:
         service.ensure_default_fields(db)
+        if not db.get(Setting, "catalog_revision"):
+            service.set_setting(db, "catalog_revision", uid("catalog"))
         seed.ensure_builtin_roles(db)
         seed.ensure_default_routes(db)
         seed.maybe_bootstrap_admin(db, settings)
+        for wh in settings.outbound_webhooks:
+            events.validate_destination(wh.url)
         if settings.outbound_webhooks and db.query(OutboundWebhook).count() == 0:
             for wh in settings.outbound_webhooks:
                 db.add(OutboundWebhook(
@@ -69,8 +78,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        mqtt_worker.start_mqtt(settings, SessionLocal)
-        yield
+        delivery = events.DeliveryWorker(SessionLocal, settings)
+        mqtt_client, mqtt_connected = mqtt_worker.start_mqtt(settings, SessionLocal)
+        app.state.delivery_worker = delivery
+        app.state.mqtt_connected = mqtt_connected
+        delivery.start()
+        try:
+            yield
+        finally:
+            if mqtt_client:
+                mqtt_client.disconnect()
+                mqtt_client.loop_stop()
+            delivery.stop()
+            engine.dispose()
 
     app = FastAPI(
         title=f"{PRODUCT_NAME} API",
@@ -86,13 +106,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
+    @app.exception_handler(RequestValidationError)
+    async def invalid_input(_request, error):
+        details = [{name: item[name] for name in ("loc", "msg", "type")} for item in error.errors()]
+        return JSONResponse({"detail": details}, status_code=422)
+
+    @app.exception_handler(StaleDataError)
+    async def stale_write(_request, _error):
+        return JSONResponse({"detail": "The record changed. Reload before saving."}, status_code=409)
+
     app.state.settings = settings
     app.state.engine = engine
     app.state.SessionLocal = SessionLocal
 
+    app.add_middleware(HTTPSecurity, settings=settings)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -106,8 +136,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     get_principal = make_auth_dependency(settings, SessionLocal)
 
-    def perm(*names: str):
+    def perm(*names: str, scoped: bool = False):
         def _dep(principal: Principal = Depends(get_principal)) -> Principal:
+            if not scoped:
+                principal.require_global()
             principal.require(*names)
             return principal
         return [Depends(_dep)]
@@ -138,6 +170,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "auth_mode": (settings.auth_mode or "open").lower(),
         }
 
+    @app.get("/api/ready", tags=["system"])
+    def readiness():
+        from sqlalchemy.exc import SQLAlchemyError
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+        except SQLAlchemyError:
+            raise HTTPException(503, "Database unavailable") from None
+        return {"ok": True}
+
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon():
         return PlainTextResponse("", status_code=204)
@@ -152,43 +194,71 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.mount("/static", StaticFiles(directory=UI_DIR / "static"), name="static")
 
     # Authenticated API routes (open mode still grants every permission)
-    api_dep = perm()  # auth only
     read_eq = perm("equipment.read")
     write_eq = perm("equipment.write")
-    read_rec = perm("records.read")
     write_rec = perm("records.write")
     write_tpl = perm("templates.write")
-    read_tpl = perm("templates.read")
     read_rd = perm("readings.read")
-    write_rd = perm("readings.write")
-    write_ann = perm("annotations.write")
     manage_settings = perm("settings.manage")
     manage_hooks = perm("webhooks.manage")
     read_audit = perm("audit.read")
 
     app.include_router(auth_users.build_router(get_db, get_principal, settings))
     app.include_router(work_orders.build_router(get_db, get_principal, settings))
+    app.include_router(readings.build_router(get_db, perm, settings, actor_name))
     app.include_router(documents.build_router(get_db, get_principal, settings))
 
+    def require_signoff_permission(db: Session, principal: Principal, record: dict) -> None:
+        if not record.get("signoffName") or not record.get("signoffDate"):
+            return
+        old = db.get(Record, record["id"]) if record.get("id") else None
+        if not old or not old.signoff or (
+            old.signoff.name != record["signoffName"] or old.signoff.signed_at[:10] != record["signoffDate"]
+        ):
+            principal.require("signoff")
+
     # -------------- bootstrap / catalog --------------
-    @app.get("/api/bootstrap", tags=["catalog"], summary="Full app state (UI-compatible)", dependencies=read_eq)
+    @app.get("/api/bootstrap", tags=["catalog"], summary="Full app state (UI-compatible)", dependencies=perm("equipment.read", scoped=True))
     def get_bootstrap(request: Request, db: Session = Depends(get_db)):
+        principal = request.state.principal
         state = service.bootstrap(
             db,
             backend=_backend_name(settings.database_url),
             equipment_cap=settings.bootstrap_equipment_cap,
             principal=getattr(request.state, "principal", None),
         )
-        p = getattr(request.state, "principal", None)
-        state["me"] = p.to_public() if p is not None else None
+        for permission, keys, total in (
+            ("templates.read", ("templates",), None),
+            ("records.read", ("records",), "recordTotal"),
+            ("readings.read", ("logs",), "readingsTotal"),
+        ):
+            if not principal.can(permission):
+                for key in keys:
+                    state[key] = []
+                if total:
+                    state["meta"][total] = 0
+        state["me"] = principal.to_public()
         state["auth_mode"] = (settings.auth_mode or "open").lower()
         return state
 
 
 
-    @app.put("/api/sync", tags=["catalog"], summary="Upsert catalog (fields, equipment, templates, records). Does not delete readings.", dependencies=write_eq)
-    def put_sync(body: SyncBody, request: Request, db: Session = Depends(get_db)):
-        return service.sync_catalog(db, body.model_dump(exclude_none=True), actor=actor_name(request))
+    @app.put("/api/sync", tags=["catalog"], summary="Upsert catalog (fields, equipment, templates, records). Does not delete readings.", dependencies=perm())
+    def put_sync(body: SyncBody, request: Request, db: Session = Depends(get_db),
+                 catalog_revision: str | None = Header(None, alias="If-Match")):
+        principal = request.state.principal
+        state = body.model_dump(exclude_none=True)
+        for key, permission in {
+            "equipment": "equipment.write", "templates": "templates.write", "records": "records.write",
+            "equipmentFields": "settings.manage", "paramPresets": "settings.manage",
+        }.items():
+            if key in state:
+                principal.require(permission)
+        if settings.profile == "production" and catalog_revision is None:
+            raise HTTPException(428, "If-Match catalog revision is required")
+        for record in state.get("records", []):
+            require_signoff_permission(db, principal, record)
+        return service.sync_catalog(db, state, actor=actor_name(request), expected=catalog_revision)
 
     @app.post("/api/demo", tags=["catalog"], summary="Replace catalog+readings with the fictional generic-plant demo", dependencies=manage_settings)
     def post_demo(request: Request, db: Session = Depends(get_db)):
@@ -205,8 +275,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db: Session = Depends(get_db),
         replace: bool = Query(True),
     ):
-        data = await request.json()
         try:
+            data = await request.json()
             return migrate.migrate_v2(db, data, replace=replace, actor=actor_name(request))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -219,18 +289,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         file: UploadFile = File(...),
     ):
         import json as _json
-        data = _json.loads((await file.read()).decode("utf-8-sig"))
         try:
+            data = _json.loads((await read_upload(file, settings.upload_limit_bytes)).decode("utf-8-sig"))
             return migrate.migrate_v2(db, data, replace=replace, actor=actor_name(request))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
     # -------------- equipment & fields --------------
-    @app.get("/api/fields", tags=["equipment"], dependencies=read_eq)
+    @app.get("/api/fields", tags=["equipment"], dependencies=perm("equipment.read", scoped=True))
     def list_fields(db: Session = Depends(get_db)):
         return [service.field_to_ui(f) for f in db.query(FieldDefinition).order_by(FieldDefinition.sort_order).all()]
 
-    @app.get("/api/equipment", tags=["equipment"], dependencies=read_eq)
+    @app.get("/api/equipment", tags=["equipment"], dependencies=perm("equipment.read", scoped=True))
     def list_equipment(
         request: Request,
         db: Session = Depends(get_db),
@@ -250,6 +320,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/equipment/bulk", tags=["equipment"], dependencies=write_eq, status_code=201)
     def bulk_equipment(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
+        service.advance_catalog(db)
         items = body.get("equipment") if isinstance(body, dict) and "equipment" in body else body.get("items") if isinstance(body, dict) else body
         if items is None:
             items = body if isinstance(body, list) else []
@@ -260,15 +331,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return {"added": len(rows), "ids": [r.id for r in rows], "items": [service.equipment_to_ui(r) for r in rows]}
 
-    @app.get("/api/equipment/{eid}", tags=["equipment"], dependencies=read_eq)
-    def get_equipment(eid: str, db: Session = Depends(get_db)):
+    @app.get("/api/equipment/{eid}", tags=["equipment"], dependencies=perm("equipment.read", scoped=True))
+    def get_equipment(eid: str, request: Request, db: Session = Depends(get_db)):
         eq = service.get_equipment(db, equipment_id=eid, tag=eid)
-        if not eq:
+        if not eq or not request.state.principal.allows_scope(eq.site_id, eq.area_id):
             raise HTTPException(404, "Equipment not found")
         return service.equipment_to_ui(eq)
 
     @app.post("/api/equipment", tags=["equipment"], dependencies=write_eq, status_code=201)
     def create_equipment(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
+        service.advance_catalog(db)
         rows = service.upsert_equipment_list(db, [body])
         service.audit(db, "create", actor=actor_name(request), entity_type="equipment", entity_id=rows[0].id)
         db.commit()
@@ -276,6 +348,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/equipment/{eid}", tags=["equipment"], dependencies=write_eq)
     def patch_equipment(eid: str, body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
+        service.advance_catalog(db)
         eq = db.get(Equipment, eid)
         if not eq:
             raise HTTPException(404, "Equipment not found")
@@ -288,16 +361,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete("/api/equipment/{eid}", tags=["equipment"], dependencies=write_eq)
     def delete_equipment(eid: str, request: Request, db: Session = Depends(get_db)):
+        service.advance_catalog(db)
         eq = db.get(Equipment, eid) or service.get_equipment(db, tag=eid)
         if not eq:
             raise HTTPException(404, "Equipment not found")
+        if db.query(Signoff).join(Record).filter(Record.equipment_id == eq.id).first():
+            raise HTTPException(409, "Equipment is linked to signed evidence")
+        service.protect_document_links(db, Document.equipment_id, eq.id)
         db.delete(eq)
         service.audit(db, "delete", actor=actor_name(request), entity_type="equipment", entity_id=eq.id)
         db.commit()
         return {"ok": True}
 
     # -------------- templates & records --------------
-    @app.get("/api/templates", tags=["records"], dependencies=read_tpl)
+    @app.get("/api/templates", tags=["records"], dependencies=perm("templates.read", scoped=True))
     def list_templates(
         db: Session = Depends(get_db),
         q: str | None = None,
@@ -308,6 +385,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/templates", tags=["records"], dependencies=write_tpl, status_code=201)
     def create_template(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
+        service.advance_catalog(db)
         service.upsert_templates(db, [body])
         tid = body.get("id")
         t = db.get(Template, tid) if tid else db.query(Template).order_by(Template.created_at.desc()).first()
@@ -317,15 +395,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete("/api/templates/{tid}", tags=["records"], dependencies=write_tpl)
     def delete_template(tid: str, request: Request, db: Session = Depends(get_db)):
+        service.advance_catalog(db)
         t = db.get(Template, tid)
         if not t:
             raise HTTPException(404, "Template not found")
+        if db.query(Signoff).join(Record).filter(Record.template_id == t.id).first():
+            raise HTTPException(409, "Template is linked to signed evidence")
         db.delete(t)
         service.audit(db, "delete", actor=actor_name(request), entity_type="template", entity_id=tid)
         db.commit()
         return {"ok": True}
 
-    @app.get("/api/records", tags=["records"], dependencies=read_rec)
+    @app.get("/api/records", tags=["records"], dependencies=perm("records.read", scoped=True))
     def list_records(
         request: Request,
         db: Session = Depends(get_db),
@@ -341,6 +422,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/records", tags=["records"], dependencies=write_rec, status_code=201)
     def create_record(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
+        require_signoff_permission(db, request.state.principal, body)
+        service.advance_catalog(db)
         service.upsert_records(db, [body])
         rid = body.get("id")
         r = db.get(Record, rid) if rid else db.query(Record).order_by(Record.created_at.desc()).first()
@@ -350,268 +433,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete("/api/records/{rid}", tags=["records"], dependencies=write_rec)
     def delete_record(rid: str, request: Request, db: Session = Depends(get_db)):
+        service.advance_catalog(db)
         r = db.get(Record, rid)
         if not r:
             raise HTTPException(404, "Record not found")
+        if r.signoff:
+            raise HTTPException(409, "Signed records cannot be deleted")
+        service.protect_document_links(db, Document.record_id, r.id)
         db.delete(r)
         service.audit(db, "delete", actor=actor_name(request), entity_type="record", entity_id=rid)
         db.commit()
         return {"ok": True}
 
-    # -------------- readings --------------
-
-
-
-
-    @app.get("/api/readings", tags=["readings"], summary="Query time-series readings", dependencies=read_rd)
-    def get_readings(
-        db: Session = Depends(get_db),
-        equipment_id: str | None = None,
-        tag: str | None = None,
-        parameter: str | None = None,
-        ts_from: str | None = Query(default=None, alias="from"),
-        ts_to: str | None = Query(default=None, alias="to"),
-        source: str | None = None,
-        limit: int = 1000,
-        offset: int = 0,
-    ):
-        rows = service.query_readings(
-            db, equipment_id=equipment_id, tag=tag, parameter=parameter,
-            ts_from=ts_from, ts_to=ts_to, source=source, limit=limit, offset=offset,
-        )
-        return {"count": len(rows), "readings": rows}
-
-    @app.post("/api/readings", tags=["readings"], summary="Insert one reading", dependencies=write_rd, status_code=201)
-    def post_reading(body: ReadingIn, request: Request, db: Session = Depends(get_db)):
-        result = service.ingest_readings(
-            db, [body.model_dump(exclude_none=True)], source=body.source or "api",
-            actor=actor_name(request), create_missing_equipment=False, fire_webhooks=True,
-        )
-        if result["added"] == 0:
-            raise HTTPException(400, result)
-        return result
-
-    @app.post("/api/readings/bulk", tags=["readings"], summary="Insert many readings in one transaction", dependencies=write_rd)
-    def post_readings_bulk(body: BulkReadingsIn, request: Request, db: Session = Depends(get_db)):
-        items = [r.model_dump(exclude_none=True) for r in body.readings]
-        return service.ingest_readings(
-            db, items, source="api", actor=actor_name(request),
-            create_missing_equipment=body.create_missing_equipment, fire_webhooks=True,
-        )
-
-    @app.delete("/api/readings/{rid}", tags=["readings"], dependencies=write_rd)
-    def delete_reading(rid: str, request: Request, db: Session = Depends(get_db)):
-        r = db.get(Reading, rid)
-        if not r:
-            # treat as entry_id so the UI can delete a whole log line
-            n = service.delete_entry(db, rid)
-            if not n:
-                raise HTTPException(404, "Reading not found")
-            service.audit(db, "delete", actor=actor_name(request), entity_type="entry", entity_id=rid)
-            return {"ok": True, "deleted": n}
-        db.delete(r)
-        service.audit(db, "delete", actor=actor_name(request), entity_type="reading", entity_id=rid)
-        db.commit()
-        return {"ok": True, "deleted": 1}
-
-
-
-    @app.put("/api/readings/{rid}/annotation", tags=["readings"], summary="Add or edit an annotation", dependencies=write_ann)
-    def put_annotation(rid: str, body: AnnotationIn, request: Request, db: Session = Depends(get_db)):
-        try:
-            an = service.upsert_annotation(db, rid, body.model_dump(), actor=actor_name(request))
-        except KeyError:
-            raise HTTPException(404, "Reading not found") from None
-        return {"id": an.id, "cause": an.cause, "action": an.action, "by": an.annotated_by, "at": an.annotated_at}
-
-    @app.put("/api/logs/{entry_id}/annotations/{parameter}", tags=["readings"],
-             summary="Add or edit an annotation on a grouped log entry + parameter", dependencies=write_ann)
-    def put_log_annotation(entry_id: str, parameter: str, body: AnnotationIn, request: Request, db: Session = Depends(get_db)):
-        r = db.query(Reading).filter_by(entry_id=entry_id, parameter_key=parameter).order_by(Reading.ts.desc()).first()
-        if not r:
-            raise HTTPException(404, "Reading not found for that log entry and parameter")
-        an = service.upsert_annotation(db, r.id, body.model_dump(), actor=actor_name(request))
-        return {"id": an.id, "reading_id": r.id, "cause": an.cause, "action": an.action, "by": an.annotated_by, "at": an.annotated_at}
-
-    @app.delete("/api/logs/{entry_id}/annotations/{parameter}", tags=["readings"], dependencies=write_ann)
-    def delete_log_annotation(entry_id: str, parameter: str, request: Request, db: Session = Depends(get_db)):
-        r = db.query(Reading).filter_by(entry_id=entry_id, parameter_key=parameter).first()
-        if not r or not r.annotation:
-            raise HTTPException(404, "Annotation not found")
-        aid = r.annotation.id
-        db.delete(r.annotation)
-        service.audit(db, "delete", actor=actor_name(request), entity_type="annotation", entity_id=aid)
-        db.commit()
-        return {"ok": True}
-
-    @app.delete("/api/annotations/{aid}", tags=["readings"], dependencies=write_ann)
-    def delete_annotation(aid: str, request: Request, db: Session = Depends(get_db)):
-        an = db.get(Annotation, aid)
-        if not an:
-            raise HTTPException(404, "Annotation not found")
-        db.delete(an)
-        service.audit(db, "delete", actor=actor_name(request), entity_type="annotation", entity_id=aid)
-        db.commit()
-        return {"ok": True}
-
-
-    @app.get("/api/logs", tags=["readings"], summary="Paginated grouped log-book lines", dependencies=read_rd)
-    def list_logs(
-        request: Request,
-        db: Session = Depends(get_db),
-        equipment_id: str | None = None,
-        q: str | None = None,
-        ts_from: str | None = Query(default=None, alias="from"),
-        ts_to: str | None = Query(default=None, alias="to"),
-        page: int = 1,
-        page_size: int = 50,
-    ):
-        return service.list_logs(
-            db, equipment_id=equipment_id, q=q, ts_from=ts_from, ts_to=ts_to,
-            page=page, page_size=page_size, principal=getattr(request.state, "principal", None),
-        )
-
-    @app.get(
-        "/api/events/out-of-range",
-        tags=["readings"],
-        summary="Out-of-range readings, optionally only unacknowledged (no annotation yet)",
-        dependencies=read_rd,
-    )
-    def get_oor_events(
-        db: Session = Depends(get_db),
-        unacknowledged: bool | None = None,
-        equipment_id: str | None = None,
-        tag: str | None = None,
-        ts_from: str | None = Query(default=None, alias="from"),
-        ts_to: str | None = Query(default=None, alias="to"),
-        limit: int = 500,
-    ):
-        rows = service.query_events(
-            db, unacknowledged=unacknowledged, equipment_id=equipment_id,
-            tag=tag, ts_from=ts_from, ts_to=ts_to, limit=limit,
-        )
-        return {"count": len(rows), "events": rows}
-
-    # -------------- IoT ingest (webhook) --------------
-    @app.post(
-        "/api/ingest/readings",
-        tags=["ingest"],
-        summary="IoT / gateway webhook. Accepts one reading, a list, or {readings: [...]}.",
-        dependencies=write_rd,
-    )
-    async def ingest_webhook(
-        request: Request,
-        db: Session = Depends(get_db),
-        create_missing_equipment: bool = Query(False),
-    ):
-        payload = await request.json()
-        if isinstance(payload, list):
-            items = payload
-        elif isinstance(payload, dict) and "readings" in payload:
-            items = payload["readings"]
-            create_missing_equipment = bool(payload.get("create_missing_equipment", create_missing_equipment))
-        elif isinstance(payload, dict):
-            items = [payload]
-        else:
-            raise HTTPException(400, "Expected a JSON object or array")
-        return service.ingest_readings(
-            db, items, source="webhook", actor=actor_name(request) or "webhook",
-            create_missing_equipment=create_missing_equipment, fire_webhooks=True,
-        )
-
-    @app.post("/api/ingest/file", tags=["ingest"], summary="Upload a CSV or Excel table of equipment or readings", dependencies=write_rd)
-    async def ingest_file(
-        request: Request,
-        db: Session = Depends(get_db),
-        file: UploadFile = File(...),
-        kind: str = Query("logs", description="equipment | logs"),
-        log_mode: str = Query("long", description="long (tag,date,parameter,value) or wide"),
-        create_missing_equipment: bool = Query(True),
-        mapping: str | None = Query(default=None, description="Optional JSON object header->field"),
-    ):
-        raw = await file.read()
-        name = file.filename or "upload"
-        if name.lower().endswith(".xlsx"):
-            _sheet, rows = importers.parse_xlsx_bytes(raw)
-        else:
-            rows = importers.parse_csv_bytes(raw)
-        map_obj = loads(mapping, None) if mapping else None
-        if kind == "equipment":
-            # default map headers to themselves; tag is required
-            dicts = importers.rows_to_dicts(rows, map_obj)
-            fields = {f.key: f for f in db.query(FieldDefinition).all()}
-            # ensure columns exist
-            items = []
-            for rec in dicts:
-                values = {}
-                # try common names
-                norm = {k.lower().replace(" ", "_"): v for k, v in rec.items()}
-                for key, field in fields.items():
-                    if key in rec:
-                        values[field.id] = rec[key]
-                    elif key in norm:
-                        values[field.id] = norm[key]
-                    elif field.label.lower() in {k.lower() for k in rec}:
-                        for k, v in rec.items():
-                            if k.lower() == field.label.lower():
-                                values[field.id] = v
-                # leftover headers become new text columns? keep simple: only known + Tag
-                if "tag" in norm and fields.get("tag"):
-                    values[fields["tag"].id] = values.get(fields["tag"].id) or norm["tag"]
-                items.append({"values": values, "params": []})
-            service.upsert_equipment_list(db, items)
-            service.audit(db, "ingest", actor=actor_name(request), entity_type="equipment", detail={"n": len(items), "file": name})
-            db.commit()
-            return {"ok": True, "kind": "equipment", "added": len(items)}
-        # logs — long mode uses header names tag, date, time, parameter, value
-        dicts = importers.rows_to_dicts(rows, map_obj)
-        if log_mode == "wide":
-            items = []
-            reserved = {"tag", "date", "time", "remarks", "entered_by", "enteredby", "equipment"}
-            for rec in dicts:
-                lower = {k.lower(): v for k, v in rec.items()}
-                shared = {
-                    "tag": lower.get("tag") or lower.get("equipment"),
-                    "date": lower.get("date"),
-                    "time": lower.get("time"),
-                    "remarks": lower.get("remarks"),
-                    "entered_by": lower.get("entered_by") or lower.get("enteredby"),
-                }
-                entry_id = uid("log")
-                for k, v in rec.items():
-                    if k.lower() in reserved:
-                        continue
-                    if v == "" or v is None:
-                        continue
-                    item = dict(shared)
-                    item.update({"parameter": k, "value": v, "entry_id": entry_id})
-                    items.append(item)
-        else:
-            items = []
-            for rec in dicts:
-                lower = {k.lower(): v for k, v in rec.items()}
-                items.append({
-                    "tag": lower.get("tag") or lower.get("equipment"),
-                    "date": lower.get("date"),
-                    "time": lower.get("time"),
-                    "parameter": lower.get("parameter") or lower.get("param") or lower.get("key"),
-                    "value": lower.get("value") or lower.get("reading"),
-                    "remarks": lower.get("remarks"),
-                    "entered_by": lower.get("entered_by") or lower.get("enteredby") or lower.get("by"),
-                    "unit": lower.get("unit"),
-                    "annot_cause": lower.get("annot_cause") or lower.get("cause"),
-                    "annot_action": lower.get("annot_action") or lower.get("action"),
-                    "annot_by": lower.get("annot_by"),
-                    "annot_at": lower.get("annot_at"),
-                })
-        return service.ingest_readings(
-            db, items, source="import", actor=actor_name(request),
-            create_missing_equipment=create_missing_equipment, fire_webhooks=True,
-        )
-
     # -------------- export --------------
     @app.get("/api/export/json", tags=["export"], summary="Full JSON backup (v0.2-compatible shape)", dependencies=read_rd)
-    def export_json(db: Session = Depends(get_db)):
+    def export_json(request: Request, db: Session = Depends(get_db)):
+        request.state.principal.require("equipment.read", "records.read", "templates.read")
         state = service.bootstrap(db, backend=_backend_name(settings.database_url), equipment_cap=10**9)
         return JSONResponse(
             state,
@@ -674,6 +511,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/webhooks", tags=["integrations"], dependencies=manage_hooks, status_code=201)
     def create_webhook(body: WebhookIn, request: Request, db: Session = Depends(get_db)):
+        try:
+            destination = events.validate_destination(body.url)
+            events.resolve_destination(destination, settings.webhook_private_destinations)
+        except (ValueError, OSError):
+            raise HTTPException(422, "Invalid or restricted webhook destination") from None
         w = OutboundWebhook(
             id=uid("wh"), url=body.url, secret=body.secret or "",
             events=dumps(body.events), enabled=1 if body.enabled else 0, created_at=utcnow_iso(),
@@ -694,13 +536,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True}
 
     @app.get("/api/webhooks/deliveries", tags=["integrations"], dependencies=manage_hooks)
-    def list_deliveries(db: Session = Depends(get_db), limit: int = 50):
+    def list_deliveries(db: Session = Depends(get_db), limit: int = Query(50, ge=1, le=500)):
         rows = db.query(WebhookDelivery).order_by(WebhookDelivery.created_at.desc()).limit(limit).all()
         return [
             {"id": d.id, "webhook_id": d.webhook_id, "event": d.event, "ok": bool(d.ok),
-             "status_code": d.status_code, "error": d.error, "created_at": d.created_at}
+             "status_code": d.status_code, "error": d.error, "created_at": d.created_at,
+             "state": d.state, "attempts": d.attempts}
             for d in rows
         ]
+
+    @app.get("/api/integrations/health", tags=["integrations"], dependencies=manage_hooks)
+    def integration_health(db: Session = Depends(get_db)):
+        from sqlalchemy import func
+        counts = dict(db.query(WebhookDelivery.state, func.count()).group_by(WebhookDelivery.state).all())
+        mqtt_connected = getattr(app.state, "mqtt_connected", None)
+        worker = getattr(app.state, "delivery_worker", None)
+        return {"mqtt_enabled": settings.mqtt.enabled, "mqtt_connected": bool(mqtt_connected and mqtt_connected.is_set()),
+                "delivery_worker": bool(worker and worker.thread.is_alive()), "deliveries": counts}
 
     @app.get("/api/audit", tags=["system"], dependencies=read_audit)
     def list_audit(

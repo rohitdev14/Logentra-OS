@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime, timedelta, timezone
+
+from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, selectinload
@@ -10,6 +13,7 @@ from logentra_server import seed, service
 from logentra_server.auth import (
     ALL_PERMISSIONS,
     PERMISSIONS,
+    PBKDF2_ITERATIONS,
     Principal,
     create_session,
     hash_password,
@@ -19,9 +23,15 @@ from logentra_server.auth import (
     revoke_session,
     verify_password,
 )
-from logentra_server.models import ApiKey, Area, Role, Site, User
+from logentra_server.models import ApiKey, Area, Role, SessionToken, Site, User
 from logentra_server.pagination import clamp_page, page_result
 from logentra_server.utils import dumps, loads, uid, utcnow_iso
+
+
+
+class LoginIn(BaseModel):
+    username: str = Field(max_length=256)
+    password: str = Field(max_length=1024)
 
 
 def _user_dict(u: User, *, include_role: bool = True) -> dict[str, Any]:
@@ -73,11 +83,13 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     def current(principal: Principal = Depends(get_principal)) -> Principal:
         return principal
 
+    dummy_hash = hash_password("invalid-login-placeholder")
+
     # ---------- auth (login is public; /me requires a principal) ----------
     @router.post("/api/auth/login", tags=["auth"], summary="Exchange username and password for a session token")
-    def login(body: dict[str, Any], db: Session = Depends(get_db)):
-        username = (body.get("username") or "").strip()
-        password = body.get("password") or ""
+    def login(body: LoginIn, db: Session = Depends(get_db)):
+        username = body.username.strip()
+        password = body.password
         if not username or not password:
             raise HTTPException(400, "username and password are required")
         user = (
@@ -86,8 +98,14 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             .filter(User.username == username)
             .one_or_none()
         )
-        if not user or not user.is_active or not verify_password(password, user.password_hash):
+        valid = verify_password(password, user.password_hash if user else dummy_hash)
+        if not user or not user.is_active or not valid:
             raise HTTPException(401, "Invalid username or password")
+        if int(user.password_hash.split("$")[1]) < PBKDF2_ITERATIONS:
+            user.password_hash = hash_password(password)
+        db.query(SessionToken).filter(
+            SessionToken.user_id == user.id, SessionToken.expires_at <= utcnow_iso()
+        ).delete()
         raw, expires = create_session(db, user.id, days=getattr(settings, "session_days", 7) or 7)
         user.last_login_at = utcnow_iso()
         service.audit(db, "login", actor=user.username, user_id=user.id, entity_type="user", entity_id=user.id)
@@ -118,7 +136,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.post("/api/auth/change-password", tags=["auth"])
     def change_password(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        if not principal.user_id:
+        if principal.mode != "user" or not principal.user_id:
             raise HTTPException(400, "Password change requires a user session")
         current_pw = body.get("current_password") or body.get("currentPassword") or ""
         new_pw = body.get("new_password") or body.get("newPassword") or ""
@@ -128,6 +146,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         if not user or not verify_password(current_pw, user.password_hash):
             raise HTTPException(401, "Current password is incorrect")
         user.password_hash = hash_password(new_pw)
+        db.query(SessionToken).filter_by(user_id=user.id).delete()
         user.updated_at = utcnow_iso()
         service.audit(db, "update", actor=principal.actor, user_id=principal.user_id, entity_type="user", entity_id=user.id, detail={"field": "password"})
         db.commit()
@@ -257,6 +276,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             created_at=now,
             updated_at=now,
         )
+        service.validate_location(db, user.site_id, user.area_id)
         db.add(user)
         service.audit(db, "create", actor=principal.actor, user_id=principal.user_id, entity_type="user", entity_id=user.id)
         db.commit()
@@ -297,6 +317,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             if len(body["password"]) < 8:
                 raise HTTPException(400, "Password must be at least 8 characters")
             user.password_hash = hash_password(body["password"])
+            db.query(SessionToken).filter_by(user_id=user.id).delete()
+        service.validate_location(db, user.site_id, user.area_id)
         user.updated_at = utcnow_iso()
         service.audit(db, "update", actor=principal.actor, user_id=principal.user_id, entity_type="user", entity_id=user.id)
         db.commit()
@@ -332,12 +354,13 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             key_hash=key_hash,
             prefix=prefix,
             created_at=utcnow_iso(),
+            expires_at=(datetime.now(timezone.utc) + timedelta(days=settings.api_key_days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             revoked=0,
         )
         db.add(row)
         service.audit(db, "create", actor=principal.actor, user_id=principal.user_id, entity_type="api_key", entity_id=row.id)
         db.commit()
-        return {"id": row.id, "name": row.name, "prefix": prefix, "key": raw, "created_at": row.created_at}
+        return {"id": row.id, "name": row.name, "prefix": prefix, "key": raw, "created_at": row.created_at, "expires_at": row.expires_at}
 
     @router.get("/api/users/{uid_}/api-keys", tags=["users"])
     def list_api_keys(uid_: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
@@ -346,7 +369,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         return [
             {
                 "id": k.id, "name": k.name, "prefix": k.prefix, "created_at": k.created_at,
-                "last_used_at": k.last_used_at, "revoked": bool(k.revoked),
+                "expires_at": k.expires_at, "last_used_at": k.last_used_at, "revoked": bool(k.revoked),
             }
             for k in rows
         ]
@@ -366,8 +389,15 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     def list_sites(db: Session = Depends(get_db), principal: Principal = Depends(current)):
         if not (principal.can("users.manage") or principal.can("equipment.read")):
             principal.require("equipment.read")
-        rows = db.query(Site).options(selectinload(Site.areas)).order_by(Site.name).all()
-        return [_site_dict(s) for s in rows]
+        query = db.query(Site).options(selectinload(Site.areas)).order_by(Site.name)
+        if principal.site_id:
+            query = query.filter(Site.id == principal.site_id)
+        result = [_site_dict(site) for site in query]
+        if principal.area_id:
+            for site in result:
+                site["areas"] = [area for area in site["areas"] if area["id"] == principal.area_id]
+            result = [site for site in result if site["areas"]]
+        return result
 
     @router.post("/api/sites", tags=["users"], status_code=201)
     def create_site(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
@@ -412,7 +442,13 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         site = db.get(Site, sid)
         if not site:
             raise HTTPException(404, "Site not found")
+        areas = db.query(Area.id).filter_by(site_id=sid)
+        if db.query(User.id).filter(User.site_id == sid).first() or db.query(User.id).filter(
+            User.area_id.in_(areas.statement)
+        ).first():
+            raise HTTPException(409, "Site is assigned to users")
         db.delete(site)
+        service.audit(db, "delete", actor=principal.actor, user_id=principal.user_id, entity_type="site", entity_id=sid)
         db.commit()
         return {"ok": True}
 

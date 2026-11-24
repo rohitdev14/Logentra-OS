@@ -72,6 +72,7 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser window")
     parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes (dev)")
     args = parser.parse_args()
+    settings.validate_bind(args.host)
 
     from logentra_server.config import env_value
     flag = env_value("LOGENTRA_OPEN_BROWSER", "LOGBOOK_OPEN_BROWSER", default="1")
@@ -80,7 +81,8 @@ def main() -> None:
     docs = f"http://{args.host}:{args.port}/docs"
     print(f"{PRODUCT_NAME} {RELEASE_LABEL}  {url}")
     print(f"API docs       {docs}")
-    print(f"Database       {settings.sqlalchemy_url}")
+    backend = settings.database_url.split(":", 1)[0]
+    print(f"Database       {backend}")
     print(f"Auth mode      {settings.auth_mode}")
 
     if open_browser:
@@ -89,10 +91,10 @@ def main() -> None:
     import uvicorn
 
     if args.reload:
-        uvicorn.run("logentra_server.app:create_app", factory=True, host=args.host, port=args.port, reload=True)
+        uvicorn.run("logentra_server.app:create_app", factory=True, host=args.host, port=args.port, reload=True, proxy_headers=False, access_log=False)
     else:
         app = create_app(settings)
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info", proxy_headers=False, access_log=False)
 
 
 if __name__ == "__main__":

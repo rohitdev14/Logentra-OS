@@ -23,7 +23,7 @@ def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor
         "records": state.get("records") or [],
         "paramPresets": state.get("paramPresets") or {},
     }
-    service.sync_catalog(db, catalog, actor=actor)
+    service.sync_catalog(db, catalog, actor=actor, commit=False)
 
     items = []
     for log in state.get("logs") or []:
@@ -54,7 +54,7 @@ def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor
             items.append(rec)
     result = {"added": 0, "skipped": 0}
     if items:
-        result = service.ingest_readings(db, items, source="import", actor=actor, fire_webhooks=False)
+        result = service.ingest_readings(db, items, source="import", actor=actor, fire_webhooks=False, commit=False)
     service.set_setting(db, "demo", "1" if (state.get("meta") or {}).get("demo") else "0")
     service.set_setting(db, "migrated_from", "v0.2")
     db.commit()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+from zipfile import BadZipFile, ZipFile
 from typing import Any
 
 from openpyxl import load_workbook
@@ -13,16 +14,25 @@ def parse_csv_bytes(data: bytes) -> list[list[str]]:
     return [ [str(c) if c is not None else "" for c in r] for r in rows if any(str(c).strip() for c in r) ]
 
 
-def parse_xlsx_bytes(data: bytes, sheet: str | None = None) -> tuple[str, list[list[str]]]:
+def parse_xlsx_bytes(data: bytes, sheet: str | None = None, *,
+                     max_expanded_bytes: int = 100 * 1024 * 1024) -> tuple[str, list[list[str]]]:
+    try:
+        with ZipFile(io.BytesIO(data)) as archive:
+            if sum(item.file_size for item in archive.infolist()) > max_expanded_bytes:
+                raise ValueError("Expanded workbook exceeds the size limit")
+    except BadZipFile as exc:
+        raise ValueError("Invalid workbook") from exc
     wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
-    name = sheet if sheet and sheet in wb.sheetnames else wb.sheetnames[0]
-    ws = wb[name]
-    rows = []
-    for row in ws.iter_rows(values_only=True):
-        vals = [("" if c is None else str(c)) for c in row]
-        if any(v.strip() for v in vals):
-            rows.append(vals)
-    return name, rows
+    try:
+        name = sheet if sheet and sheet in wb.sheetnames else wb.sheetnames[0]
+        rows = []
+        for row in wb[name].iter_rows(values_only=True):
+            vals = ["" if cell is None else str(cell) for cell in row]
+            if any(value.strip() for value in vals):
+                rows.append(vals)
+        return name, rows
+    finally:
+        wb.close()
 
 
 def auto_headers(rows: list[list[str]]) -> list[str]:

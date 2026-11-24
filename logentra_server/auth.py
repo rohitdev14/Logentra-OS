@@ -62,7 +62,7 @@ BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "viewer": ("Read-only access", _READ),
 }
 
-PBKDF2_ITERATIONS = 200_000
+PBKDF2_ITERATIONS = 600_000
 TOKEN_BYTES = 32
 API_KEY_PREFIX = "lbk_"
 
@@ -129,9 +129,25 @@ class Principal:
         return perm in self.permissions
 
     def require(self, *perms: str) -> None:
+        if set(perms) & {"users.manage", "settings.manage", "audit.read", "webhooks.manage", "templates.write"}:
+            self.require_global()
         missing = [p for p in perms if not self.can(p)]
         if missing:
             raise HTTPException(status_code=403, detail=f"Missing permission: {', '.join(missing)}")
+
+    @property
+    def scoped(self) -> bool:
+        return bool(self.site_id or self.area_id)
+
+    def allows_scope(self, site_id, area_id=None) -> bool:
+        return (
+            (not self.site_id or self.site_id == site_id)
+            and (not self.area_id or self.area_id == area_id)
+        )
+
+    def require_global(self) -> None:
+        if self.scoped:
+            raise HTTPException(403, "This operation requires unscoped access")
 
     def to_public(self) -> dict[str, Any]:
         return {
@@ -200,6 +216,10 @@ def authenticate(
     if raw:
         key_row = db.query(ApiKey).filter(ApiKey.key_hash == hash_token(raw), ApiKey.revoked == 0).one_or_none()
         if key_row:
+            if (key_row.expires_at and key_row.expires_at <= utcnow_iso()) or (
+                settings.profile == "production" and not key_row.expires_at
+            ):
+                raise HTTPException(401, "API key expired")
             user = db.get(User, key_row.user_id) if key_row.user_id else None
             if user and not user.is_active:
                 raise HTTPException(status_code=401, detail="User is disabled")
@@ -210,7 +230,7 @@ def authenticate(
                 # key bound only to a role
                 from logentra_server.models import Role
                 role = db.get(Role, key_row.role_id) if key_row.role_id else None
-                perms = _role_perms(role) if role else set(ALL_PERMISSIONS)
+                perms = _role_perms(role) if role else set()
                 p = Principal(
                     mode="api_key",
                     username=key_row.name or "api-key",
@@ -225,7 +245,7 @@ def authenticate(
         # Opaque session token
         tok = db.query(SessionToken).filter(SessionToken.token_hash == hash_token(raw)).one_or_none()
         if tok:
-            if tok.expires_at and tok.expires_at < utcnow_iso():
+            if tok.expires_at and tok.expires_at <= utcnow_iso():
                 raise HTTPException(status_code=401, detail="Session expired")
             user = db.get(User, tok.user_id)
             if not user or not user.is_active:

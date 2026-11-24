@@ -4,15 +4,21 @@ from typing import Any
 
 from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+from fastapi import HTTPException
 
 from logentra_server import events
 from logentra_server.models import (
     Annotation,
+    Area,
+    Document,
+    Site,
     AuditLog,
     Equipment,
     EquipmentFieldValue,
     FieldDefinition,
-    OutboundWebhook,
     ParamPreset,
     Parameter,
     Punch,
@@ -23,7 +29,6 @@ from logentra_server.models import (
     RecordValue,
     Setting,
     Signoff,
-    WebhookDelivery,
     Template,
     TemplateColumn,
     TemplateItem,
@@ -184,13 +189,9 @@ def list_records(
     )
     if equipment_id:
         query = query.filter(Record.equipment_id == equipment_id)
-    if principal and getattr(principal, "site_id", None):
-        query = query.filter(
-            or_(
-                Record.equipment_id.is_(None),
-                exists().where(Equipment.id == Record.equipment_id, Equipment.site_id == principal.site_id),
-            )
-        )
+    if principal and principal.scoped:
+        scoped_equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
+        query = query.filter(Record.equipment_id.in_(scoped_equipment.statement))
     if q:
         like = f"%{q.strip()}%"
         query = query.filter(or_(Record.template_name.ilike(like), Record.id.ilike(like), Record.notes.ilike(like)))
@@ -219,8 +220,13 @@ def list_logs(
     entry_q = db.query(Reading.entry_id, func.min(Reading.ts).label("ts"))
     if equipment_id:
         entry_q = entry_q.filter(Reading.equipment_id == equipment_id)
-    if principal and getattr(principal, "site_id", None):
-        entry_q = entry_q.join(Equipment, Equipment.id == Reading.equipment_id).filter(Equipment.site_id == principal.site_id)
+    def scoped_readings(query):
+        if principal and principal.scoped:
+            equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
+            query = query.filter(Reading.equipment_id.in_(equipment.statement))
+        return query
+
+    entry_q = scoped_readings(entry_q)
     if ts_from:
         start = parse_ts(ts=ts_from) if ("T" in ts_from or len(ts_from) > 10) else (ts_from + "T00:00:00")
         entry_q = entry_q.filter(Reading.ts >= start)
@@ -243,7 +249,7 @@ def list_logs(
         return page_result([], total, page, page_size)
     # Reuse logs_to_ui grouping on just this page of entries
     rows = (
-        db.query(Reading)
+        scoped_readings(db.query(Reading))
         .options(selectinload(Reading.annotation))
         .filter(Reading.entry_id.in_(ids))
         .order_by(Reading.ts, Reading.id)
@@ -306,7 +312,7 @@ def record_to_ui(r: Record) -> dict[str, Any]:
             "closed": p.closed_at or "",
         })
     return {
-        "id": r.id, "templateId": r.template_id or "", "templateName": r.template_name or "",
+        "id": r.id, "revision": r.revision, "templateId": r.template_id or "", "templateName": r.template_name or "",
         "kind": r.kind or "", "equipmentId": r.equipment_id or "", "createdAt": (r.created_at or "")[:10],
         "notes": r.notes or "", "columns": [{
             "id": c.id, "key": c.key, "label": c.label, "type": c.type,
@@ -362,10 +368,15 @@ def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500
     _seed.ensure_default_routes(db)
     db.commit()
     fields = db.query(FieldDefinition).order_by(FieldDefinition.sort_order, FieldDefinition.key).all()
+    revision = catalog_revision(db)
     eq_query = apply_scope(db.query(Equipment), Equipment, principal)
     eq_count = eq_query.count()
-    reading_count = db.query(func.count(Reading.id)).scalar() or 0
-    paginated = eq_count > equipment_cap or reading_count > 8000
+    readings = db.query(func.count(Reading.id))
+    scoped = principal and principal.scoped
+    if scoped:
+        readings = readings.filter(Reading.equipment_id.in_(eq_query.with_entities(Equipment.id).statement))
+    reading_count = readings.scalar() or 0
+    paginated = bool(scoped or eq_count > equipment_cap or reading_count > 8000)
     if paginated:
         equipment: list[dict[str, Any]] = []
         index_rows = apply_scope(db.query(Equipment), Equipment, principal).order_by(Equipment.tag).all()
@@ -397,12 +408,15 @@ def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500
         presets.setdefault(p.category, []).append(param_to_ui(p))
     demo_flag = db.get(Setting, "demo")
     updated = db.get(Setting, "updated_at")
+    if revision != catalog_revision(db):
+        raise HTTPException(409, "Catalog changed during loading. Retry the request.")
     return {
         "meta": {
             "version": 4,
             "app": APP_VERSION,
             "product": PRODUCT_NAME,
             "updatedAt": updated.value if updated else None,
+            "catalogRevision": revision,
             "demo": (demo_flag.value == "1") if demo_flag else False,
             "backend": backend,
             "store": "database",
@@ -429,6 +443,24 @@ def set_setting(db: Session, key: str, value: str) -> None:
         row.updated_at = now
     else:
         db.add(Setting(key=key, value=value, updated_at=now))
+
+
+def catalog_revision(db: Session) -> str | None:
+    return db.query(Setting.value).filter_by(key="catalog_revision").scalar()
+
+
+def advance_catalog(db: Session, expected: str | None = None) -> str:
+    revision = uid("catalog")
+    query = db.query(Setting).filter_by(key="catalog_revision")
+    if expected is not None:
+        query = query.filter_by(value=expected)
+    changed = query.update({"value": revision, "updated_at": utcnow_iso()}, synchronize_session=False)
+    if not changed:
+        if expected is not None:
+            raise HTTPException(409, "Catalog changed. Reload before saving.")
+        set_setting(db, "catalog_revision", revision)
+        db.flush()
+    return revision
 
 
 # ---------- catalog upsert (UI persist) ----------
@@ -505,6 +537,22 @@ def _upsert_params(db: Session, equipment_id: str, params: list[dict[str, Any]])
                 db.delete(row)
 
 
+def validate_location(db: Session, site_id, area_id) -> None:
+    if site_id and db.get(Site, site_id) is None:
+        raise HTTPException(400, "Site not found")
+    if area_id:
+        area = db.get(Area, area_id)
+        if not area or area.site_id != site_id:
+            raise HTTPException(400, "Area does not belong to the selected site")
+
+
+def protect_document_links(db: Session, column, identifier) -> None:
+    if db.query(Document.id).filter(column == identifier, or_(
+        Document.locked == 1, Document.status == "approved"
+    )).first():
+        raise HTTPException(409, "This object is linked to approved evidence")
+
+
 def upsert_equipment_list(db: Session, items: list[dict[str, Any]]) -> list[Equipment]:
     fields = db.query(FieldDefinition).all()
     now = utcnow_iso()
@@ -520,10 +568,15 @@ def upsert_equipment_list(db: Session, items: list[dict[str, Any]]) -> list[Equi
         tag = _set_eq_values(db, eq, e.get("values") or {}, fields)
         if not tag:
             tag = eq.tag or eid
-        # unique tag: if conflict with another row, suffix
+        if "site_id" in e or "area_id" in e:
+            site_id = e.get("site_id", eq.site_id) or None
+            area_id = e.get("area_id", eq.area_id) or None
+            validate_location(db, site_id, area_id)
+            eq.site_id, eq.area_id = site_id, area_id
+        # Equipment tags are a global identifier for legacy REST and MQTT clients.
         other = db.query(Equipment).filter(Equipment.tag == tag, Equipment.id != eq.id).one_or_none()
         if other:
-            tag = tag + "-" + eid[-4:]
+            raise HTTPException(409, "Equipment tag already exists")
         eq.tag = tag
         eq.updated_at = now
         if "params" in e:
@@ -583,11 +636,22 @@ def upsert_records(db: Session, items: list[dict[str, Any]]) -> None:
             db.add(row)
             db.flush()
         else:
+            previous = record_to_ui(row)
+            changed = any(rec[key] != previous[key] for key in previous.keys() & rec.keys() - {"revision"})
+            if not changed:
+                continue
+            if row.signoff:
+                raise HTTPException(409, "Signed records cannot be changed")
+            if rec.get("revision") != row.revision:
+                raise HTTPException(409, "Record changed. Reload before saving.")
+            audit(db, "revise", entity_type="record", entity_id=rid, detail=previous)
+            row.revision += 1
             row.template_name = rec.get("templateName", row.template_name)
             row.kind = rec.get("kind", row.kind)
             row.equipment_id = rec.get("equipmentId", row.equipment_id) or row.equipment_id
             row.notes = rec.get("notes", row.notes)
             row.updated_at = now
+            db.flush()
         if "columns" in rec or "items" in rec:
             col_ids = [c.id for c in db.query(RecordColumn).filter_by(record_id=rid).all()]
             item_ids = [i.id for i in db.query(RecordItem).filter_by(record_id=rid).all()]
@@ -669,7 +733,9 @@ def upsert_presets(db: Session, presets: dict[str, list]) -> None:
     db.flush()
 
 
-def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui") -> dict[str, Any]:
+def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui",
+                 expected: str | None = None, commit: bool = True) -> dict[str, Any]:
+    revision = advance_catalog(db, expected)
     ensure_default_fields(db)
     if "equipmentFields" in state:
         _upsert_fields(db, state["equipmentFields"])
@@ -683,8 +749,14 @@ def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui") -> di
         upsert_presets(db, state["paramPresets"])
     set_setting(db, "updated_at", utcnow_iso())
     audit(db, "sync", actor=actor, entity_type="catalog", detail={"keys": list(state.keys())})
-    db.commit()
-    return {"ok": True, "updatedAt": utcnow_iso()}
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return {"ok": True, "updatedAt": utcnow_iso(), "catalogRevision": revision,
+            "recordRevisions": {row.id: row.revision for row in db.query(Record).filter(Record.id.in_(
+                [record["id"] for record in state.get("records", []) if record.get("id")]
+            ))}}
 
 
 # ---------- readings ----------
@@ -727,6 +799,7 @@ def ingest_readings(
     actor: str = "api",
     create_missing_equipment: bool = False,
     fire_webhooks: bool = True,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Insert many readings. Each item: tag or equipment_id, parameter, value, optional ts/date/time, remarks, entered_by, entry_id, unit, label."""
     ensure_default_fields(db)
@@ -737,11 +810,13 @@ def ingest_readings(
     tag_field = next((f for f in fields if f.key == "tag"), None)
     now = utcnow_iso()
     for raw in items:
-        tag = (raw.get("tag") or raw.get("equipment") or "").strip()
+        tag = str(raw.get("tag") or raw.get("equipment") or "").strip()
+        reading_id = raw.get("id") or uid("rd")
         eid = raw.get("equipment_id") or raw.get("equipmentId")
         eq = get_equipment(db, equipment_id=eid, tag=tag or None)
         if not eq:
             if create_missing_equipment and tag:
+                advance_catalog(db)
                 eq = Equipment(id=uid("eq"), tag=tag, created_at=now, updated_at=now)
                 db.add(eq)
                 db.flush()
@@ -761,15 +836,20 @@ def ingest_readings(
         )
         key = param.key if param else key_raw
         if not param:
+            advance_catalog(db)
             param = ensure_parameter(db, eq.id, key, label=raw.get("label") or key_raw, unit=raw.get("unit"))
         value = as_float(raw.get("value") if "value" in raw else raw.get("reading"))
         if value is None:
             skipped.append({"reason": "invalid_value", "item": raw})
             continue
-        ts = parse_ts(raw.get("date"), raw.get("time"), raw.get("ts") or raw.get("timestamp"))
+        try:
+            ts = parse_ts(raw.get("date"), raw.get("time"), raw.get("ts") or raw.get("timestamp"))
+        except (ValueError, TypeError, AttributeError):
+            skipped.append({"reason": "invalid_timestamp"})
+            continue
         entry_id = raw.get("entry_id") or raw.get("entryId") or uid("log")
         reading = Reading(
-            id=raw.get("id") or uid("rd"),
+            id=reading_id,
             entry_id=entry_id,
             equipment_id=eq.id,
             parameter_key=param.key,
@@ -783,8 +863,25 @@ def ingest_readings(
             created_at=now,
         )
         reading.out_of_range = 1 if out_of_range(value, param.min_value, param.max_value) else 0
-        db.add(reading)
-        db.flush()
+        if raw.get("id"):
+            insert = sqlite_insert if db.get_bind().dialect.name == "sqlite" else postgres_insert
+            values = {column.name: getattr(reading, column.name) for column in Reading.__table__.columns}
+            inserted = db.execute(insert(Reading).values(**values).on_conflict_do_nothing(
+                index_elements=[Reading.id]
+            ).returning(Reading)).scalar_one_or_none()
+            if inserted is None:
+                existing = db.get(Reading, reading_id)
+                fields = ["equipment_id", "parameter_key", "ts", "value", "remarks", "entered_by", "source"]
+                if raw.get("entry_id") or raw.get("entryId"):
+                    fields.append("entry_id")
+                if any(getattr(existing, key) != getattr(reading, key) for key in fields):
+                    raise HTTPException(409, "Reading ID already belongs to different data")
+                skipped.append({"reason": "duplicate", "id": reading_id})
+                continue
+            reading = inserted
+        else:
+            db.add(reading)
+            db.flush()
         # optional annotation in the same payload
         cause = raw.get("annot_cause") or raw.get("cause")
         action = raw.get("annot_action") or raw.get("action")
@@ -800,18 +897,19 @@ def ingest_readings(
             oor_events.append((reading, eq.tag, param.label))
     audit(db, "ingest", actor=actor, entity_type="reading", detail={"created": len(created), "skipped": len(skipped), "source": source})
     set_setting(db, "updated_at", now)
-    db.commit()
     hook_results = []
     auto_wo: list[str] = []
     if oor_events:
         if fire_webhooks:
             for reading, tag, label in oor_events:
-                hook_results.extend(events.deliver(db, "out_of_range", events.oor_payload(reading, tag, label)))
+                hook_results.extend(events.enqueue(db, "out_of_range", events.oor_payload(reading, tag, label)))
         from logentra_server.workorders import maybe_auto_create
         for reading, tag, label in oor_events:
             wo = maybe_auto_create(db, reading, tag, label)
             if wo:
                 auto_wo.append(wo.id)
+    if commit:
+        db.commit()
     return {
         "added": len(created),
         "skipped": len(skipped),
@@ -864,8 +962,12 @@ def query_readings(
     source: str | None = None,
     limit: int = 1000,
     offset: int = 0,
+    principal=None,
 ) -> list[dict[str, Any]]:
     q = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment))
+    if principal and principal.scoped:
+        equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
+        q = q.filter(Reading.equipment_id.in_(equipment.statement))
     if equipment_id:
         q = q.filter(Reading.equipment_id == equipment_id)
     if tag:
@@ -958,9 +1060,7 @@ def upsert_annotation(db: Session, reading_id: str, data: dict[str, Any], *, act
 
 
 def delete_entry(db: Session, entry_id: str) -> int:
-    n = db.query(Reading).filter_by(entry_id=entry_id).delete()
-    db.commit()
-    return n
+    return db.query(Reading).filter_by(entry_id=entry_id).delete()
 
 
 def clear_all(db: Session, *, actor: str = "ui") -> None:
@@ -978,6 +1078,11 @@ def clear_all(db: Session, *, actor: str = "ui") -> None:
         WorkOrderComment,
         WorkOrderLabour,
     )
+    advance_catalog(db)
+    if db.query(Signoff).first() or db.query(Document).filter(
+        or_(Document.locked == 1, Document.status == "approved")
+    ).first():
+        raise HTTPException(409, "This operation would remove signed or approved evidence")
     db.query(DocumentComment).delete()
     db.query(DocumentApprovalStep).delete()
     db.query(DocumentVersion).delete()
@@ -989,7 +1094,6 @@ def clear_all(db: Session, *, actor: str = "ui") -> None:
     db.query(WorkOrderComment).delete()
     db.query(WorkOrder).delete()
     db.query(AutoWorkOrderRule).delete()
-    db.query(WebhookDelivery).delete()
     db.query(Annotation).delete()
     db.query(Reading).delete()
     db.query(RecordValue).delete()
@@ -1008,7 +1112,8 @@ def clear_all(db: Session, *, actor: str = "ui") -> None:
     db.query(FieldDefinition).delete()
     db.query(Setting).delete()
     audit(db, "clear", actor=actor, entity_type="database")
-    db.commit()
+    db.flush()
+    set_setting(db, "catalog_revision", uid("catalog"))
     ensure_default_fields(db)
     from logentra_server import seed as _seed
     _seed.ensure_default_routes(db)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 
 
 class SyncBody(BaseModel):
@@ -17,7 +17,7 @@ class ReadingIn(BaseModel):
     tag: str | None = None
     equipment_id: str | None = None
     parameter: str
-    value: float
+    value: FiniteFloat
     ts: str | None = None
     date: str | None = None
     time: str | None = None
@@ -35,7 +35,7 @@ class ReadingIn(BaseModel):
 
 
 class BulkReadingsIn(BaseModel):
-    readings: list[ReadingIn]
+    readings: list[ReadingIn] = Field(max_length=10000)
     create_missing_equipment: bool = False
 
 

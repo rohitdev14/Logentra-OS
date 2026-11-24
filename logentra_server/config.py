@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -18,6 +18,7 @@ class MqttConfig(BaseModel):
     port: int = 1883
     username: str = ""
     password: str = ""
+    tls: bool = False
     client_id: str = "logentra"
     topics: list[str] = Field(default_factory=lambda: ["logentra/readings", "logentra/+/+", "logbook/readings", "logbook/+/+"])
     topic_pattern: str = "logentra/{tag}/{parameter}"
@@ -30,19 +31,50 @@ class OutboundWebhookConfig(BaseModel):
 
 
 class Settings(BaseModel):
+    profile: Literal["standalone", "development", "production"] = "standalone"
+    cors_origins: list[str] = Field(default_factory=list)
+    request_limit_bytes: int = Field(30 * 1024 * 1024, ge=1024)
+    upload_limit_bytes: int = Field(25 * 1024 * 1024, ge=1)
+    login_attempts_per_minute: int = Field(10, ge=1, le=1000)
+    api_key_days: int = Field(90, ge=1, le=365)
+    webhook_attempts: int = Field(5, ge=1, le=20)
+    webhook_backoff_seconds: int = Field(5, ge=1, le=300)
+    webhook_private_destinations: bool = False
     host: str = "127.0.0.1"
     port: int = 8787
     open_browser: bool = True
     database_url: str = "sqlite:///data/logentra.db"
     api_key: str = ""
     # open = single-user / standalone (no login). users = require login or a user-bound API key.
-    auth_mode: str = "open"
-    session_days: int = 7
+    auth_mode: Literal["open", "users"] = "open"
+    session_days: int = Field(7, ge=1, le=30)
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
     bootstrap_equipment_cap: int = 1500
     mqtt: MqttConfig = Field(default_factory=MqttConfig)
     outbound_webhooks: list[OutboundWebhookConfig] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def production_defaults(cls, values):
+        if isinstance(values, dict) and values.get("profile") == "production":
+            values = {"auth_mode": "users", "session_days": 1, "open_browser": False, **values}
+        return values
+
+    @model_validator(mode="after")
+    def validate_security(self):
+        self.validate_bind(self.host)
+        if "*" in self.cors_origins:
+            raise ValueError("CORS requires explicit origins")
+        if self.profile == "production" and (
+            self.auth_mode != "users" or self.api_key or self.webhook_private_destinations
+        ):
+            raise ValueError("Production requires user authentication and public webhook destinations")
+        return self
+
+    def validate_bind(self, host: str) -> None:
+        if self.auth_mode == "open" and not self.api_key and host not in {"127.0.0.1", "::1", "localhost"}:
+            raise ValueError("Unauthenticated mode requires a loopback bind")
 
     @property
     def sqlalchemy_url(self) -> str:
@@ -58,6 +90,10 @@ class Settings(BaseModel):
 
 # Preferred LOGENTRA_* names; deprecated LOGBOOK_* names are still read as a fallback.
 _ENV_FIELDS: list[tuple[str, tuple[str, ...], str]] = [
+    ("profile", ("LOGENTRA_PROFILE",), "str"),
+    ("cors_origins", ("LOGENTRA_CORS_ORIGINS",), "list"),
+    ("request_limit_bytes", ("LOGENTRA_REQUEST_LIMIT_BYTES",), "int"),
+    ("upload_limit_bytes", ("LOGENTRA_UPLOAD_LIMIT_BYTES",), "int"),
     ("host", ("LOGENTRA_HOST", "LOGBOOK_HOST"), "str"),
     ("port", ("LOGENTRA_PORT", "LOGBOOK_PORT"), "int"),
     ("open_browser", ("LOGENTRA_OPEN_BROWSER", "LOGBOOK_OPEN_BROWSER"), "bool"),
@@ -87,9 +123,11 @@ def _cast(kind: str, val: str) -> Any:
         return int(val)
     if kind == "bool":
         return val.lower() in ("1", "true", "yes", "on")
+    if kind == "list":
+        return [item.strip() for item in val.split(",") if item.strip()]
     if kind == "auth":
         mode = val.lower().strip()
-        return "users" if mode in ("users", "user", "on", "1", "true") else "open"
+        return "users" if mode in ("users", "user", "on", "1", "true") else mode
     return val
 
 

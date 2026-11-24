@@ -18,7 +18,7 @@ from logentra_server.models import (
     WorkOrderLabour,
 )
 from logentra_server.pagination import clamp_page, page_result
-from logentra_server.utils import dumps, uid, utcnow_iso
+from logentra_server.utils import uid, utcnow_iso
 
 STATUSES = ("open", "in_progress", "on_hold", "done", "closed")
 PRIORITIES = ("low", "medium", "high", "urgent")
@@ -196,6 +196,7 @@ def create_work_order(
     user_id: str | None = None,
     fire_webhooks: bool = True,
     source: str = "manual",
+    commit: bool = True,
 ) -> WorkOrder:
     now = utcnow_iso()
     title = (data.get("title") or "").strip()
@@ -240,10 +241,11 @@ def create_work_order(
     db.add(wo)
     db.flush()
     service.audit(db, "create", actor=actor, user_id=user_id, entity_type="work_order", entity_id=wo.id, detail={"title": wo.title})
-    db.commit()
-    db.refresh(wo)
     if fire_webhooks:
-        events.deliver(db, "workorder.created", {"event": "workorder.created", "at": now, "work_order": to_dict(wo, db, detail=True)})
+        events.enqueue(db, "workorder.created", {"event": "workorder.created", "at": now, "work_order": to_dict(wo, db, detail=True)})
+    if commit:
+        db.commit()
+        db.refresh(wo)
     return wo
 
 
@@ -310,12 +312,11 @@ def update_work_order(
         wo.assignee_id = data.get("assignee_id") or data.get("assigneeId") or None
     wo.updated_at = now
     service.audit(db, "update", actor=actor, user_id=user_id, entity_type="work_order", entity_id=wo.id)
-    db.commit()
-    wo = get_work_order(db, wo.id) or wo
     if fire_webhooks:
         ev = "workorder.closed" if wo.status == "closed" and prev != "closed" else "workorder.updated"
-        events.deliver(db, ev, {"event": ev, "at": now, "work_order": to_dict(wo, db, detail=True)})
-    return wo
+        events.enqueue(db, ev, {"event": ev, "at": now, "work_order": to_dict(wo, db, detail=True)})
+    db.commit()
+    return get_work_order(db, wo.id) or wo
 
 
 def add_comment(db: Session, wo: WorkOrder, body: str, *, author: str = "", user_id: str | None = None) -> WorkOrderComment:
@@ -516,4 +517,5 @@ def maybe_auto_create(db: Session, reading, tag: str, parameter_label: str | Non
         actor="system",
         source="auto_oor",
         fire_webhooks=True,
+        commit=False,
     )

@@ -31,7 +31,6 @@ ROOT = Path(__file__).resolve().parent.parent
 ATTACH_DIR = ROOT / "data" / "attachments" / "documents"
 
 STATUSES = ("draft", "in_review", "approved", "rejected", "returned")
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -45,10 +44,11 @@ def safe_filename(name: str) -> str:
 def store_file(document_id: str, version_no: int, filename: str, data: bytes) -> tuple[str, str]:
     """Write bytes to disk; return (relative_storage_path, sha256_hex)."""
     digest = hashlib.sha256(data).hexdigest()
-    dest_dir = ATTACH_DIR / document_id
+    dest_dir = absolute_path(str(ATTACH_DIR / safe_filename(document_id)))
     dest_dir.mkdir(parents=True, exist_ok=True)
-    stored = dest_dir / f"v{version_no}_{digest[:12]}_{safe_filename(filename)}"
-    stored.write_bytes(data)
+    stored = dest_dir / f"v{version_no}_{digest[:12]}_{uid('file')}_{safe_filename(filename)}"
+    with stored.open("xb") as handle:
+        handle.write(data)
     return str(stored.relative_to(ROOT)), digest
 
 
@@ -56,6 +56,23 @@ def absolute_path(storage_path: str) -> Path:
     path = Path(storage_path)
     if not path.is_absolute():
         path = ROOT / path
+    path = path.resolve()
+    if not path.is_relative_to(ATTACH_DIR.resolve()):
+        raise ValueError("Invalid document storage path")
+    return path
+
+
+def verify_version(version) -> Path:
+    if not version:
+        raise ValueError("Upload a file before submitting")
+    path = absolute_path(version.storage_path)
+    try:
+        with path.open("rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    except OSError:
+        raise ValueError("Document file is unavailable") from None
+    if digest != version.sha256:
+        raise ValueError("Document checksum mismatch")
     return path
 
 
@@ -202,7 +219,7 @@ def _fire(db: Session, event: str, doc: Document, extra: dict[str, Any] | None =
     }
     if extra:
         payload.update(extra)
-    events.deliver(db, event, payload)
+    events.enqueue(db, event, payload)
 
 
 def route_to_dict(route: ApprovalRoute) -> dict[str, Any]:
@@ -338,7 +355,7 @@ def list_documents(
 ) -> dict[str, Any]:
     query = db.query(Document)
     if principal and principal.site_id:
-        query = query.filter(or_(Document.site_id == principal.site_id, Document.site_id.is_(None)))
+        query = query.filter(Document.site_id == principal.site_id)
     if status:
         query = query.filter(Document.status == status)
     if equipment_id:
@@ -375,7 +392,7 @@ def list_my_queue(db: Session, principal: Principal, *, page: int = 1, page_size
         .filter(Document.status == "in_review", Document.locked == 0)
     )
     if principal.site_id:
-        query = query.filter(or_(Document.site_id == principal.site_id, Document.site_id.is_(None)))
+        query = query.filter(Document.site_id == principal.site_id)
     rows = query.order_by(Document.updated_at.asc()).all()
     waiting = []
     for doc in rows:
@@ -552,12 +569,11 @@ def create_document(
     route_id: str | None = None,
     actor: str = "api",
     user_id: str | None = None,
+    commit: bool = True,
 ) -> Document:
     title = (title or "").strip() or (filename or "Untitled document")
     if not data:
         raise ValueError("A file is required")
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise ValueError(f"File exceeds the {MAX_UPLOAD_BYTES} byte limit")
     _validate_links(db, {
         "equipment_id": equipment_id, "record_id": record_id, "work_order_id": work_order_id,
     })
@@ -598,7 +614,10 @@ def create_document(
     doc.current_version_id = ver.id
     add_comment(db, doc, body=f"Uploaded {ver.filename} ({ver.size} bytes).", kind="system", event="uploaded", actor=actor, user_id=user_id, version_id=ver.id)
     service.audit(db, "create", actor=actor, user_id=user_id, entity_type="document", entity_id=doc.id, detail={"title": title})
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return _load(db, doc.id) or doc
 
 
@@ -618,8 +637,6 @@ def add_version(
         raise ValueError("A new version can only be uploaded while the document is a draft or returned for changes")
     if not data:
         raise ValueError("A file is required")
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise ValueError(f"File exceeds the {MAX_UPLOAD_BYTES} byte limit")
     next_no = max((v.version_no for v in (doc.versions or [])), default=0) + 1
     now = utcnow_iso()
     path, digest = store_file(doc.id, next_no, filename, data)
@@ -639,6 +656,7 @@ def add_version(
     db.add(ver)
     db.flush()
     doc.current_version_id = ver.id
+    doc.revision += 1
     doc.updated_at = now
     add_comment(db, doc, body=f"Uploaded revision {next_no}: {ver.filename}.", kind="system", event="uploaded", actor=actor, user_id=user_id, version_id=ver.id)
     service.audit(db, "update", actor=actor, user_id=user_id, entity_type="document", entity_id=doc.id, detail={"version": next_no})
@@ -663,6 +681,7 @@ def update_document(db: Session, doc: Document, body: dict[str, Any], *, actor: 
                       ("route_id", "route_id"), ("routeId", "route_id")):
         if src in body:
             setattr(doc, attr, body.get(src) or None)
+    doc.revision += 1
     doc.updated_at = utcnow_iso()
     service.audit(db, "update", actor=actor, user_id=user_id, entity_type="document", entity_id=doc.id)
     db.commit()
@@ -707,8 +726,7 @@ def submit_document(
     if doc.status not in ("draft", "returned"):
         raise ValueError(f"Cannot submit a document in status {doc.status}")
     ver = current_version(doc)
-    if not ver:
-        raise ValueError("Upload a file before submitting")
+    verify_version(ver)
     route = match_route(db, route_id=route_id or doc.route_id, document_type=doc.document_type, site_id=doc.site_id)
     if not route:
         raise ValueError("No matching approval route. Create a route or pass route_id.")
@@ -719,6 +737,7 @@ def submit_document(
     doc.submitted_by = actor
     doc.submitted_by_id = user_id
     doc.submitted_at = now
+    doc.revision += 1
     doc.updated_at = now
     _instantiate_steps(db, doc, route, ver.id)
     event = "document.submitted"
@@ -729,9 +748,8 @@ def submit_document(
         kind="system", event="submitted", actor=actor, user_id=user_id, version_id=ver.id,
     )
     service.audit(db, "submit", actor=actor, user_id=user_id, entity_type="document", entity_id=doc.id, detail={"route_id": route.id})
-    db.commit()
-    doc = _load(db, doc.id) or doc
     _fire(db, event, doc, {"route_name": route.name})
+    db.commit()
     return _load(db, doc.id) or doc
 
 
@@ -753,6 +771,7 @@ def approve_document(
         raise ValueError("Document is already approved and locked")
     if doc.status != "in_review":
         raise ValueError("Only documents in review can be approved")
+    verify_version(current_version(doc))
     step = current_pending_step(doc)
     if not step:
         raise ValueError("No pending approval step")
@@ -781,6 +800,7 @@ def approve_document(
     if nxt is None:
         doc.status = "approved"
         doc.locked = 1
+        doc.revision += 1
         doc.updated_at = now
         add_comment(
             db, doc,
@@ -788,13 +808,13 @@ def approve_document(
             kind="system", event="approved", actor=principal.actor, user_id=principal.user_id,
         )
         service.audit(db, "approve", actor=principal.actor, user_id=principal.user_id, entity_type="document", entity_id=doc.id, detail={"final": True})
-        db.commit()
-        doc = _load(db, doc.id) or doc
         _fire(db, "document.step_approved", doc, {"step": step_to_dict(step)})
         _fire(db, "document.approved", doc)
+        db.commit()
         return _load(db, doc.id) or doc
     nxt.status = "pending"
     doc.current_step_index = nxt.sort_order
+    doc.revision += 1
     doc.updated_at = now
     add_comment(
         db, doc,
@@ -802,9 +822,8 @@ def approve_document(
         kind="system", event="step_approved", actor=principal.actor, user_id=principal.user_id,
     )
     service.audit(db, "approve", actor=principal.actor, user_id=principal.user_id, entity_type="document", entity_id=doc.id, detail={"next": step_label(nxt)})
-    db.commit()
-    doc = _load(db, doc.id) or doc
     _fire(db, "document.step_approved", doc, {"step": step_to_dict(step), "next_label": step_label(nxt)})
+    db.commit()
     return _load(db, doc.id) or doc
 
 
@@ -826,12 +845,12 @@ def reject_document(db: Session, doc: Document, principal: Principal, *, comment
     step.comment = text
     step.acted_at = now
     doc.status = "rejected"
+    doc.revision += 1
     doc.updated_at = now
     add_comment(db, doc, body=text, kind="comment", event="rejected", actor=principal.actor, user_id=principal.user_id)
     service.audit(db, "reject", actor=principal.actor, user_id=principal.user_id, entity_type="document", entity_id=doc.id)
-    db.commit()
-    doc = _load(db, doc.id) or doc
     _fire(db, "document.rejected", doc, {"comment": text})
+    db.commit()
     return _load(db, doc.id) or doc
 
 
@@ -857,6 +876,7 @@ def return_document(db: Session, doc: Document, principal: Principal, *, comment
         if s.status == "waiting":
             s.status = "returned"
     doc.status = "returned"
+    doc.revision += 1
     doc.updated_at = now
     add_comment(
         db, doc,
@@ -864,9 +884,8 @@ def return_document(db: Session, doc: Document, principal: Principal, *, comment
         kind="comment", event="returned", actor=principal.actor, user_id=principal.user_id,
     )
     service.audit(db, "return", actor=principal.actor, user_id=principal.user_id, entity_type="document", entity_id=doc.id)
-    db.commit()
-    doc = _load(db, doc.id) or doc
     _fire(db, "document.returned", doc, {"comment": text})
+    db.commit()
     return _load(db, doc.id) or doc
 
 

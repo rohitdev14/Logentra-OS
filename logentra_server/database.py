@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Generator
 from pathlib import Path
 
 from sqlalchemy import create_engine, event, inspect, text

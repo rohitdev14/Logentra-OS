@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from logentra_server import documents as docs
 from logentra_server.auth import Principal
+from logentra_server.http_security import read_upload
 from logentra_server.models import ApprovalRoute
 
 
@@ -16,13 +17,15 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     router = APIRouter()
 
     def current(principal: Principal = Depends(get_principal)) -> Principal:
+        if principal.area_id:
+            principal.require_global()
         return principal
 
     def _doc(db: Session, did: str, principal: Principal):
         row = docs.get_document(db, did)
         if not row:
             raise HTTPException(404, "Document not found")
-        if principal.site_id and row.site_id and row.site_id != principal.site_id:
+        if not principal.allows_scope(row.site_id):
             raise HTTPException(404, "Document not found")
         return row
 
@@ -34,17 +37,20 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     # ---------- dashboard ----------
     @router.get("/api/dashboard", tags=["catalog"], summary="KPI counts, alerts, and my approvals queue")
     def dashboard(db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        principal.require("equipment.read")
+        principal.require_global()
+        principal.require("equipment.read", "readings.read", "workorders.read", "documents.read")
         return docs.dashboard_summary(db, principal)
 
     # ---------- routes ----------
     @router.get("/api/approval-routes", tags=["documents"])
     def list_routes(db: Session = Depends(get_db), principal: Principal = Depends(current), enabled: bool = False):
+        principal.require_global()
         principal.require("documents.read")
         return docs.list_routes(db, enabled_only=enabled)
 
     @router.post("/api/approval-routes", tags=["documents"], status_code=201)
     def create_route(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("routes.manage")
         try:
             row = docs.create_route(db, body, actor=principal.actor, user_id=principal.user_id)
@@ -54,6 +60,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.get("/api/approval-routes/{rid}", tags=["documents"])
     def get_route(rid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("documents.read")
         row = docs.get_route(db, rid)
         if not row:
@@ -62,6 +69,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.patch("/api/approval-routes/{rid}", tags=["documents"])
     def patch_route(rid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("routes.manage")
         row = docs.get_route(db, rid)
         if not row:
@@ -74,6 +82,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.delete("/api/approval-routes/{rid}", tags=["documents"])
     def delete_route(rid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("routes.manage")
         row = docs.get_route(db, rid)
         if not row:
@@ -130,7 +139,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         submit: bool = Form(False),
     ):
         principal.require("documents.upload")
-        data = await file.read()
+        principal.require_global()
+        data = await read_upload(file, settings.upload_limit_bytes)
         try:
             row = docs.create_document(
                 db,
@@ -146,6 +156,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
                 route_id=route_id,
                 actor=principal.actor,
                 user_id=principal.user_id,
+                commit=not submit,
             )
             if submit:
                 row = docs.submit_document(db, row, route_id=route_id, actor=principal.actor, user_id=principal.user_id)
@@ -160,6 +171,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.patch("/api/documents/{did}", tags=["documents"])
     def patch_document(did: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("documents.upload")
         row = _doc(db, did, principal)
         try:
@@ -177,7 +189,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     ):
         principal.require("documents.upload")
         row = _doc(db, did, principal)
-        data = await file.read()
+        data = await read_upload(file, settings.upload_limit_bytes)
         try:
             row = docs.add_version(
                 db, row, filename=file.filename or "upload.bin", data=data,
@@ -203,10 +215,25 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             ver = docs.current_version(row)
         if not ver:
             raise HTTPException(404, "File not found")
-        path = docs.absolute_path(ver.storage_path)
-        if not path.is_file():
-            raise HTTPException(404, "File missing from storage")
-        return FileResponse(path, media_type=ver.mime or "application/octet-stream", filename=ver.filename, content_disposition_type="inline")
+        try:
+            path = docs.verify_version(ver)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        from pathlib import Path
+        preview_types = {
+            ".pdf": ("application/pdf", b"%PDF-"),
+            ".png": ("image/png", b"\x89PNG\r\n\x1a\n"),
+            ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
+            ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
+        }
+        mime, signature = preview_types.get(Path(ver.filename).suffix.lower(), ("application/octet-stream", b""))
+        with path.open("rb") as handle:
+            preview = bool(signature and handle.read(len(signature)) == signature)
+        return FileResponse(
+            path, media_type=mime if preview else "application/octet-stream", filename=ver.filename,
+            content_disposition_type="inline" if preview else "attachment",
+            headers={"Content-Security-Policy": "sandbox", "X-Frame-Options": "SAMEORIGIN"},
+        )
 
     @router.post("/api/documents/{did}/submit", tags=["documents"])
     def submit(did: str, body: dict[str, Any] | None = None, db: Session = Depends(get_db), principal: Principal = Depends(current)):

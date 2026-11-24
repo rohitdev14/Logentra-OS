@@ -4,13 +4,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from logentra_server import service, workorders as wo
 from logentra_server.auth import Principal
 from logentra_server.models import AutoWorkOrderRule, WorkOrder
 from logentra_server.utils import uid
+from logentra_server.documents import safe_filename
+from logentra_server.http_security import read_upload
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 ATTACH_DIR = ROOT / "data" / "attachments"
@@ -26,7 +28,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         row = wo.get_work_order(db, wid)
         if not row:
             raise HTTPException(404, "Work order not found")
-        if principal.site_id and row.site_id and row.site_id != principal.site_id:
+        if not principal.allows_scope(row.site_id, row.area_id):
             raise HTTPException(404, "Work order not found")
         return row
 
@@ -54,11 +56,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.post("/api/work-orders", tags=["work-orders"], status_code=201)
     def create_work_order(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("workorders.create")
-        if principal.site_id and not body.get("site_id"):
-            body = dict(body)
-            body["site_id"] = principal.site_id
-            if principal.area_id and not body.get("area_id"):
-                body["area_id"] = principal.area_id
+        principal.require_global()
         try:
             row = wo.create_work_order(db, body, actor=principal.actor, user_id=principal.user_id)
         except ValueError as exc:
@@ -72,6 +70,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.patch("/api/work-orders/{wid}", tags=["work-orders"])
     def patch_work_order(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         row = _get(db, wid, principal)
         if "assignee_id" in body or "assigneeId" in body:
             principal.require("workorders.assign")
@@ -97,6 +96,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.post("/api/work-orders/{wid}/transition", tags=["work-orders"])
     def transition(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         row = _get(db, wid, principal)
         status = body.get("status")
         if not status:
@@ -116,6 +116,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.post("/api/work-orders/{wid}/assign", tags=["work-orders"])
     def assign(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("workorders.assign")
         row = _get(db, wid, principal)
         assignee = body.get("assignee_id") or body.get("assigneeId")
@@ -166,11 +167,13 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         content_type = None
         size = None
         if file is not None and file.filename:
-            filename = file.filename
+            filename = safe_filename(file.filename)
             content_type = file.content_type
-            data = await file.read()
+            data = await read_upload(file, settings.upload_limit_bytes)
             size = len(data)
-            dest_dir = ATTACH_DIR / row.id
+            dest_dir = (ATTACH_DIR / safe_filename(row.id)).resolve()
+            if not dest_dir.is_relative_to(ATTACH_DIR.resolve()):
+                raise HTTPException(400, "Invalid attachment path")
             dest_dir.mkdir(parents=True, exist_ok=True)
             stored = dest_dir / f"{uid('att')}_{filename}"
             stored.write_bytes(data)
@@ -185,7 +188,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             filename = body.get("filename")
             content_type = body.get("content_type")
             size = body.get("size")
-            storage_path = body.get("storage_path")
+            if body.get("storage_path"):
+                raise HTTPException(400, "Upload the attachment contents")
         try:
             att = wo.add_attachment(
                 db, row, filename=filename or "", content_type=content_type,
@@ -201,6 +205,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.delete("/api/work-orders/{wid}", tags=["work-orders"])
     def delete_work_order(wid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         row = _get(db, wid, principal)
         if not (principal.can("users.manage") or (principal.can("workorders.create") and row.status == "open" and row.created_by_id == principal.user_id)):
             principal.require("users.manage")
@@ -212,18 +217,21 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     # ---------- auto-create rules ----------
     @router.get("/api/work-order-rules", tags=["work-orders"])
     def list_rules(db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("workorders.read")
         rows = db.query(AutoWorkOrderRule).order_by(AutoWorkOrderRule.created_at.desc()).all()
         return [wo.rule_to_dict(r) for r in rows]
 
     @router.post("/api/work-order-rules", tags=["work-orders"], status_code=201)
     def create_rule(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("workorders.assign")
         row = wo.upsert_rule(db, body)
         return wo.rule_to_dict(row)
 
     @router.patch("/api/work-order-rules/{rid}", tags=["work-orders"])
     def patch_rule(rid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("workorders.assign")
         row = db.get(AutoWorkOrderRule, rid)
         if not row:
@@ -233,6 +241,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.delete("/api/work-order-rules/{rid}", tags=["work-orders"])
     def delete_rule(rid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require_global()
         principal.require("workorders.assign")
         row = db.get(AutoWorkOrderRule, rid)
         if not row:

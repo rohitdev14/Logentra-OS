@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -15,22 +16,12 @@ def utcnow_iso() -> str:
 
 
 def parse_ts(date: str | None = None, time: str | None = None, ts: str | None = None) -> str:
-    """Return a canonical ISO-8601 UTC-ish timestamp string used as the time-series key."""
-    if ts:
-        s = str(ts).strip().replace(" ", "T")
-        if s.endswith("Z"):
-            return s
-        # already has offset or is naive local — store as given, normalize seconds
-        if len(s) == 10:
-            return s + "T00:00:00"
-        if len(s) == 16:
-            return s + ":00"
-        return s
-    d = (date or "").strip() or _today()
-    t = (time or "").strip() or "00:00"
-    if len(t) == 5:
-        t = t + ":00"
-    return f"{d}T{t}"
+    """Normalize offset-bearing input to UTC and treat legacy naive input as UTC."""
+    raw = str(ts).strip() if ts else f"{(date or '').strip() or _today()}T{(time or '').strip() or '00:00'}"
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed.isoformat(timespec="seconds")
 
 
 def split_ts(ts: str) -> tuple[str, str]:
@@ -45,7 +36,7 @@ def split_ts(ts: str) -> tuple[str, str]:
 
 
 def _today() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def dumps(obj: Any) -> str | None:
@@ -70,7 +61,7 @@ def as_float(v: Any) -> float | None:
         n = float(v)
     except (TypeError, ValueError):
         return None
-    return n
+    return n if math.isfinite(n) else None
 
 
 def out_of_range(value: float | None, min_value: float | None, max_value: float | None) -> bool:

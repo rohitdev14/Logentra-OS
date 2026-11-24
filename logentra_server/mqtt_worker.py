@@ -30,7 +30,6 @@ def _match_pattern(pattern: str, topic: str) -> dict[str, str]:
 def parse_message(topic: str, payload: bytes, pattern: str) -> list[dict[str, Any]]:
     text = payload.decode("utf-8", errors="replace").strip()
     data: Any
-    data: Any
     try:
         data = json.loads(text) if text else {}
     except json.JSONDecodeError:
@@ -50,6 +49,8 @@ def parse_message(topic: str, payload: bytes, pattern: str) -> list[dict[str, An
     extracted = _match_pattern(pattern, topic)
     items = data if isinstance(data, list) else data.get("readings") if isinstance(data, dict) and "readings" in data else [data]
     out = []
+    if not isinstance(items, list):
+        return []
     for raw in items:
         if not isinstance(raw, dict):
             continue
@@ -62,51 +63,58 @@ def parse_message(topic: str, payload: bytes, pattern: str) -> list[dict[str, An
     return out
 
 
-def start_mqtt(settings: Settings, session_factory) -> threading.Thread | None:
+def start_mqtt(settings: Settings, session_factory):
+    connected = threading.Event()
     if not settings.mqtt.enabled:
-        return None
+        return None, connected
     try:
         import paho.mqtt.client as mqtt
     except ImportError:
         log.warning("paho-mqtt is not installed; MQTT subscriber not started")
-        return None
+        return None, connected
 
     cfg = settings.mqtt
 
     def on_connect(client, _u, _f, reason_code, *_a):
-        log.info("MQTT connected (%s) — subscribing %s", reason_code, cfg.topics)
+        if reason_code.is_failure:
+            log.warning("MQTT connection rejected")
+            return
+        connected.set()
+        log.info("MQTT connected")
         for t in cfg.topics:
             client.subscribe(t)
 
+    def on_disconnect(_client, _u, _flags, _reason, _properties):
+        connected.clear()
+
     def on_message(_client, _u, msg):
         try:
+            if len(msg.payload) > settings.request_limit_bytes:
+                log.warning("MQTT payload too large")
+                return
             items = parse_message(msg.topic, msg.payload, cfg.topic_pattern)
             if not items:
-                log.info("MQTT message on %s ignored (could not parse)", msg.topic)
+                log.warning("MQTT message could not be parsed")
                 return
             db = session_factory()
             try:
                 result = ingest_readings(db, items, source="mqtt", actor="mqtt", create_missing_equipment=False, fire_webhooks=True)
-                log.info("MQTT ingest topic=%s added=%s oor=%s", msg.topic, result["added"], result["out_of_range"])
+                log.info("MQTT ingest added=%s skipped=%s oor=%s", result["added"], result["skipped"], result["out_of_range"])
             finally:
                 db.close()
         except Exception:
-            log.exception("MQTT message handling failed")
+            log.error("MQTT message handling failed")
 
     client = mqtt.Client(client_id=cfg.client_id, protocol=mqtt.MQTTv311, callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    if cfg.tls:
+        client.tls_set()
     if cfg.username:
         client.username_pw_set(cfg.username, cfg.password or None)
     client.on_connect = on_connect
     client.on_message = on_message
 
-    def run():
-        try:
-            client.connect(cfg.host, cfg.port, keepalive=60)
-            client.loop_forever()
-        except Exception:
-            log.exception("MQTT loop exited")
-
-    t = threading.Thread(target=run, name="logbook-mqtt", daemon=True)
-    t.start()
-    log.info("MQTT subscriber starting for %s:%s", cfg.host, cfg.port)
-    return t
+    client.on_disconnect = on_disconnect
+    client.reconnect_delay_set(min_delay=1, max_delay=60)
+    client.connect_async(cfg.host, cfg.port, keepalive=60)
+    client.loop_start()
+    return client, connected
