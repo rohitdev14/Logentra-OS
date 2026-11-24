@@ -22,3 +22,11 @@ SQLite uses its backup API and integrity check. PostgreSQL uses pg_dump in custo
 5. Resume application and ingestion writers with the recovered pair.
 
 A tampered bundle and an existing SQLite target are rejected. PostgreSQL database changes are transactional, while publication of the attachment directory is a separate operation. If filesystem publication fails, preserve the bundle and retry into a fresh target. For rollback, restore the paired v0.5 bundle and use the checkpoint.
+
+## Evidence reconciliation
+
+With writers stopped, run the following from the application root against the recovered database and matching file tree.
+
+    python -m scripts.verify_evidence
+
+The JSON output reports the audit fingerprint, corrupt or missing referenced document versions, and unreferenced published or staged files. Compare a known snapshot with --expected-audit-sha256. Store the trusted fingerprint separately and compare matching snapshots because new audit entries change it. Preserve unreferenced files for investigation. Restore corrupt evidence only from a paired verified backup. Automated cleanup is deliberately absent so a live or historical file cannot be discarded by this check.

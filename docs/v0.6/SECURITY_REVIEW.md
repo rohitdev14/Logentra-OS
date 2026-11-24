@@ -13,3 +13,10 @@
 | Engineering evidence | Signed records reject changes and deletion. Approved documents lock and verify checksums. Checked paths protect linked objects from deletion. Audit is append-only through the application API. |
 
 Negative tests cover network access, invalid configuration, request size, throttle behavior, expired keys, scope enforcement, stale changes, checksum tampering and restricted webhook destinations. Residual risks include fail-closed scope gaps, per-process login throttling behind proxies, filesystem and database coordination after a crash and legacy mutation paths with limited concurrency coverage.
+
+## Qualification changes
+
+- Verified allowed same-area and denied cross-area or cross-site operational access. JSON backup exports and global import and sync remain unscoped. The [endpoint matrix](AUTHORIZATION_MATRIX.md) describes each control.
+- SQLite and PostgreSQL block audit rewrites and deletion. PostgreSQL also blocks truncation with a trigger. Authorized user deletion can detach an audit account reference while retaining actor and evidence fields.
+- Audit snapshots can be fingerprinted for offline comparison. Store the trusted fingerprint separately. Database owners and filesystem administrators remain outside this guarantee.
+- Ran nginx with a test certificate and verified HTTPS readiness, HSTS, production anonymous denial and edge login throttling. Docker and target ingress remain unqualified.

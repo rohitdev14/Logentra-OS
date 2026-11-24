@@ -17,3 +17,9 @@ The worker claims one due delivery with a lease and performs HTTP outside the tr
 A catalog generation orders browser writes against service-side writes. Clients supply revision numbers when editing existing engineering records. Prior snapshots are stored in audit entries. Scope-aware reads bind to the underlying equipment or work-order location. Global catalog mutations and unclassified legacy mutations require unscoped access. Documents have sites but no area model.
 
 Equipment tags remain globally unique because existing REST and MQTT tag lookups have no site namespace. Duplicate tags need a sender-facing identity protocol and a migration plan.
+
+## Qualification changes
+
+Migration 0006_qualification adds nullable document area classification, replay counters, a recent out-of-range index and database audit triggers. New scoped documents persist site and area at creation. Existing documents remain area-less pending review. Scoped MQTT configuration constrains access to existing assets. Global webhook management remains an unscoped operation.
+
+Document uploads use an exclusive atomic publication step with file and POSIX directory synchronization. Database commit and file publication are separate, so a read-only reconciliation command surfaces interrupted uploads. Replay updates the existing delivery row atomically, preserving payload and event ID.

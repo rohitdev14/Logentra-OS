@@ -15,3 +15,15 @@ The initial machine lacked pip, Playwright browsers, several Chromium shared lib
 The final run emitted the Starlette TestClient HTTPX deprecation and four resource warnings for SQLite connections in test helpers. The runtime dependency scan covers known advisories for its input inventory. The text diff was also reviewed for credential-like values, private keys and provider-token signatures.
 
 Docker, Podman and Buildah were unavailable locally. Container smoke jobs are defined in GitHub Actions, with no remote pipeline run. Coverage remains limited on the older authentication management, work-order and import API branches. Full-scale PostgreSQL load and production ingress qualification remain open.
+
+## Final qualification
+
+| Check | Result |
+| --- | --- |
+| c9278a6 checkpoint suite | 56 passed in 45.10 s with 79% backend line coverage |
+| Final SQLite, PostgreSQL, Chromium, Mosquitto and nginx suite | 62 passed in 44.24 s with 80% backend line coverage |
+| Sustained local HTTP delivery | 100 distinct IDs, each delivered on its first attempt, in 0.585 s |
+| Repeat dependency audit | No known vulnerabilities reported for the resolved inventory |
+| Ruff, Python compilation and diff whitespace check | Passed |
+
+The final suite includes cross-site and cross-area denial, scoped imports and exports, approval progression, concurrent replay, SQL audit guards, file publication failure, reconciliation, and nginx TLS ingress. Recovery tests used native SQLite and PostgreSQL backups and verified migration from 0003_v05 through 0006_qualification. Four warnings remained in the final run, including Starlette's HTTPX test client deprecation. Local container execution remains unavailable. The coverage objective remains open, especially on administration and import branches.

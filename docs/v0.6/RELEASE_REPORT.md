@@ -23,8 +23,8 @@ The full local suite passed 56 tests with 79% backend line coverage, including S
 - Standalone no-login clients require loopback. Production needs user authentication and expired or undated keys require rotation. CORS requires explicit origins.
 - Production catalog sync requires If-Match and edits to existing records supply a revision. Signed record deletes return conflict. Imports accept CSV or XLSX, and generic document files download as attachments.
 - Global equipment tags remain unique. Duplicate tags now return conflict, which avoids silently changing the identifier used by legacy integrations.
-- Scoped users can read covered resources. Several legacy write workflows and area-scoped approvals require unscoped access until their data has an unambiguous scope model.
-- Webhook consumers may receive duplicates across failures and should deduplicate by delivery ID. A dead-letter replay API and high-volume delivery verification remain open.
+- Scoped operational APIs now support same-location writes and approvals. Global catalog synchronization and unclassified historical workflows remain restricted.
+- Webhook consumers may receive duplicates across failures and should deduplicate by delivery ID. Bounded replay is available. High-volume delivery qualification remains open.
 - Existing timestamp strings were preserved. Newly ingested explicit offsets normalize to UTC. Legacy imports and historical timestamps need a review before an across-the-board format migration.
 - Audit is append-only at the API, without database-level tamper resistance. Filestore operations and database transactions remain distinct. Existing legacy JSON/CSV exports are not a substitute for native paired recovery.
 
@@ -41,3 +41,7 @@ The full local suite passed 56 tests with 79% backend line coverage, including S
 The major open gates are concurrent latency, complete scope-aware read/write workflows, production ingress and container qualification, and full-scale PostgreSQL verification. Local Docker execution was blocked because no Docker, Podman or Buildah executable was available. YAML and the underlying Python/PostgreSQL paths were checked. GitHub Actions was updated locally and has not run remotely.
 
 Before tagging 0.6.0, qualify production access and recovery on the target topology and complete the scoped permission matrix. The [roadmap](../ROADMAP.md) covers the v0.7 priorities of site-scoped identity, audit-ready replay, extensible revision history and broader UI and integration coverage.
+
+## Final qualification update
+
+Final qualification adds scoped operational workflows, protective audit triggers, evidence reconciliation, replay and a tested nginx example. PostgreSQL meets the provisional target at 10 users and misses it at 50 and 100. Container execution remains blocked locally. The updated decision and commit references are in the [final qualification report](FINAL_QUALIFICATION_REPORT.md).

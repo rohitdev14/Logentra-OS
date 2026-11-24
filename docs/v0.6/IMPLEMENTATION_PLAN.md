@@ -5,3 +5,7 @@
 3. Preserve signed evidence, require safe write preconditions, and establish transactional event delivery. Verify rollback, retries and stable identifiers.
 4. Add lifecycle monitoring, recovery and deployment tooling, and regression coverage.
 5. Re-run the benchmark and verify upgrade, existing workflows and release gates. Keep 0.5.0 if any critical gate remains open.
+
+## Qualification outcome
+
+Scoped operational APIs, replay, audit guards, nginx ingress and reconciliation were implemented and tested. Container execution remains blocked locally. PostgreSQL met the interactive target at 10 users and missed it at 50 and 100. The application stays at 0.5.0 and the remaining release gates are in the [final qualification report](FINAL_QUALIFICATION_REPORT.md).

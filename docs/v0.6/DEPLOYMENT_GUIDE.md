@@ -29,8 +29,12 @@ GET /api/health reports liveness. GET /api/ready checks database accessibility. 
 
 1. Stop application and ingestion writers. Create a paired backup according to the recovery guide.
 2. Rehearse the upgrade against a restore. Apply migrations with one process via python -m alembic upgrade head or normal startup.
-3. Verify migration head 0005_outbox and check equipment, readings, records, document downloads and work orders.
+3. Verify migration head 0006_qualification and check equipment, readings, records, document downloads and work orders.
 4. Reissue API keys without expiry when moving to production. Verify webhook and broker configuration.
 5. Resume ingestion after verification. For rollback, use the paired pre-upgrade backup and v0.5 checkpoint.
 
 Production catalog sync sends the bootstrap meta.catalogRevision value in If-Match. Existing record edits supply revision. On a 409, reload and reconcile. Integration API responses can show queued delivery before an outcome is available. New offset-bearing readings normalize to UTC while existing data remains unchanged.
+
+## Qualified TLS ingress
+
+The example in deployment/nginx.conf terminates TLS 1.2 or 1.3, adds HSTS, throttles login and proxies to a loopback application port. Replace the host and certificate paths with deployment values. Run nginx -t before starting it. A local nginx smoke test exercised the example with a trusted temporary certificate and an unprivileged port. Production certificates, routing and container behavior still require environment-specific verification.

@@ -11,3 +11,10 @@
 - Verified real webhook retry against a local receiver and MQTT reconnection using a Mosquitto process extracted under /tmp. No host services or packages were installed.
 - Reviewed the local diff and deployment assets. Release acceptance remains open. The application version stays at 0.5.0.
 - Fresh production CLI verification found and fixed a detached ORM instance after administrator creation. The final suite passed 56 tests with PostgreSQL, Chromium and live MQTT enabled. The separate Python 3.11 non-browser run passed 51 tests and skipped the two optional service cases.
+
+## Final qualification progress
+
+- Created checkpoint/v0.6-before-final-qualification at c9278a6 and reproduced the 56-test baseline and SQLite scale benchmark.
+- Implemented scoped engineering routes, document area classification, audit protection, file reconciliation and controlled webhook replay.
+- Added instrumented SQLite and PostgreSQL benchmark runs. Fixed an observed concurrent PostgreSQL metadata insertion race.
+- Verified nginx TLS ingress locally and reran the recovery, Chromium and MQTT checks. Docker remains unavailable locally.

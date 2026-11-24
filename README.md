@@ -81,7 +81,7 @@ The development branch adds configuration profiles, engineering write protection
 
 - [Deployment and upgrade guide](docs/v0.6/DEPLOYMENT_GUIDE.md)
 - [Backup and recovery guide](docs/v0.6/RECOVERY_GUIDE.md)
-- [Release verification](docs/v0.6/RELEASE_REPORT.md)
+- [Final release qualification](docs/v0.6/FINAL_QUALIFICATION_REPORT.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## Architecture
