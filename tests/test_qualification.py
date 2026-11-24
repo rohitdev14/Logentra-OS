@@ -73,6 +73,29 @@ def test_scoped_engineering_and_approval(db_url):
         assert client.post(f"/api/documents/{did}/approve", headers=north).status_code == 200
         assert client.post(f"/api/documents/{did}/approve", headers=admin).json()["status"] == "approved"
 
+        historical_work = client.post("/api/work-orders", headers=admin, json={
+            "title": "Legacy conflicting work", "site_id": "north", "area_id": "north-area",
+            "equipment_id": "north-asset", "linked_reading_id": "south-reading",
+        })
+        assert historical_work.status_code == 201
+        wid = historical_work.json()["id"]
+        assert client.get(f"/api/work-orders/{wid}", headers=admin).status_code == 200
+        assert client.get(f"/api/work-orders/{wid}", headers=north).status_code == 404
+        assert client.patch(f"/api/work-orders/{wid}", headers=north, json={"title": "Forbidden"}).status_code == 404
+        assert wid not in {row["id"] for row in client.get("/api/work-orders", headers=north).json()["items"]}
+
+        historical_doc = client.post("/api/documents", headers=admin, data={
+            "title": "Legacy conflicting document", "site_id": "north", "area_id": "north-area",
+            "work_order_id": wid,
+        }, files={"file": ("legacy.txt", b"foreign evidence")})
+        assert historical_doc.status_code == 201, historical_doc.text
+        foreign_id = historical_doc.json()["id"]
+        assert client.get(f"/api/documents/{foreign_id}/file", headers=admin).status_code == 200
+        for suffix in ("", "/file"):
+            assert client.get(f"/api/documents/{foreign_id}{suffix}", headers=north).status_code == 404
+        assert client.post(f"/api/documents/{foreign_id}/approve", headers=north).status_code == 404
+        assert foreign_id not in {row["id"] for row in client.get("/api/documents", headers=north).json()["items"]}
+
 
 def test_replay_preserves_event_and_requires_dead_state(client):
     factory = client.app.state.SessionLocal

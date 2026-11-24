@@ -132,14 +132,6 @@ def to_dict(wo: WorkOrder, db: Session | None = None, *, detail: bool = False,
     return out
 
 
-def _scope(q, principal):
-    if principal and getattr(principal, "site_id", None):
-        q = q.filter(WorkOrder.site_id == principal.site_id)
-    if principal and getattr(principal, "area_id", None):
-        q = q.filter(WorkOrder.area_id == principal.area_id)
-    return q
-
-
 def list_work_orders(
     db: Session,
     *,
@@ -153,8 +145,7 @@ def list_work_orders(
     principal=None,
 ) -> dict[str, Any]:
     page, page_size = clamp_page(page, page_size)
-    query = db.query(WorkOrder)
-    query = _scope(query, principal)
+    query = service.apply_evidence_scope(db, db.query(WorkOrder), WorkOrder, principal)
     if status:
         query = query.filter(WorkOrder.status == _norm_status(status, status))
     if priority:
@@ -184,9 +175,9 @@ def list_work_orders(
     return page_result(items, total, page, page_size)
 
 
-def get_work_order(db: Session, wid: str) -> WorkOrder | None:
+def get_work_order(db: Session, wid: str, principal=None) -> WorkOrder | None:
     return (
-        db.query(WorkOrder)
+        service.apply_evidence_scope(db, db.query(WorkOrder), WorkOrder, principal)
         .options(
             selectinload(WorkOrder.comments),
             selectinload(WorkOrder.attachments),

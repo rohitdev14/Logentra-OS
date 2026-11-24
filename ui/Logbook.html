@@ -2964,7 +2964,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         <span style="flex:1"></span>
         <button class="btn" data-act="tpl-dup">Duplicate</button>
         <button class="btn btn-danger" data-act="tpl-del">Delete template</button>
-        <button class="btn btn-navy" data-act="rec-start" ${state.equipment.length ? "" : "disabled"}>Start a record…</button>
+        <button class="btn btn-navy" data-act="rec-start" ${recordAssets().length ? "" : "disabled"}>Start a record…</button>
       </div>
       <datalist id="cat-list">${categories().map((c) => "<option value=\"" + esc(c) + "\">").join("")}</datalist>
     `;
@@ -2978,7 +2978,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
           <h2>Records</h2>
           <p class="page-lead">Filled-in instances of your templates — inspections, commissioning, maintenance, or anything else — tied to a piece of equipment.</p>
         </div>
-        <button class="btn btn-primary" data-act="rec-start" data-need-perm="records.write" ${state.templates.length && state.equipment.length ? "" : "disabled"}>New record</button>
+        <button class="btn btn-primary" data-act="rec-start" data-need-perm="records.write" ${state.templates.length && recordAssets().length ? "" : "disabled"}>New record</button>
       </div>
       <div class="card">
         ${rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Opened</th><th>Template</th><th>Tag</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>' +
@@ -3013,17 +3013,18 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const rec = state.records.find((r) => r.id === ui.recordId);
     if (!rec) return '<p class="empty">Record not found. <button class="btn" data-act="goto" data-view="records">Back</button></p>';
     const eq = eqById(rec.equipmentId);
+    const tag = eq ? eqTag(eq) : (recordAssets().find((asset) => asset.id === rec.equipmentId) || {}).tag;
     const p = recordProgress(rec);
     const cols = rec.columns || [];
     return `
       <div class="print-only print-head">
-        <h1>Record — ${esc(eq ? eqTag(eq) : "")} · ${esc(rec.templateName || "")}</h1>
+        <h1>Record — ${esc(tag || "")} · ${esc(rec.templateName || "")}</h1>
         <p class="tiny">${esc(PRODUCT_NAME)} ${esc(RELEASE_LABEL)} · printed ${esc(todayISO())}</p>
       </div>
       <div class="row spread no-print">
         <div>
           <button class="btn btn-sm" data-act="goto" data-view="records">← All records</button>
-          <h2 style="margin-top:.4rem">${esc(eq ? eqTag(eq) : "Unknown")} — ${esc(rec.templateName || "")}</h2>
+          <h2 style="margin-top:.4rem">${esc(tag || "Unknown")} — ${esc(rec.templateName || "")}</h2>
           <p class="tiny">${esc(eq ? eqCat(eq) : "")} · ${esc(eq ? eqVal(eq, "location") : "")} · opened ${esc(rec.createdAt || "—")} · ${esc(kindLabel(rec.kind))}</p>
         </div>
         <div class="row">
@@ -3485,8 +3486,13 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     });
   }
 
+  function recordAssets() {
+    return state.meta.paginated ? (state.equipmentIndex || []) : state.equipment;
+  }
+
   function modalStartRecord() {
-    if (!state.templates.length || !state.equipment.length) { toast("You need at least one template and one equipment row."); return; }
+    const assets = recordAssets();
+    if (!state.templates.length || !assets.length) { toast("You need at least one template and one equipment row."); return; }
     const box = openModal(`
       <h2>Start a record</h2>
       <div class="stack">
@@ -3495,8 +3501,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
             '<option value="' + t.id + '"' + (t.id === ui.templateId ? " selected" : "") + ">" + esc(t.name) + "</option>").join("")}</select>
         </label>
         <label class="fld"><span>Equipment</span>
-          <select id="m-eq">${state.equipment.map((e) =>
-            '<option value="' + e.id + '">' + esc(eqTag(e)) + (eqCat(e) ? " — " + esc(eqCat(e)) : "") + "</option>").join("")}</select>
+          <select id="m-eq">${assets.map((e) =>
+            '<option value="' + esc(e.id) + '">' + esc(e.tag || eqTag(e)) + (eqCat(e) ? " — " + esc(eqCat(e)) : "") + "</option>").join("")}</select>
         </label>
         <div class="row spread"><button class="btn" data-close="1">Cancel</button><button class="btn btn-primary" id="m-go">Create</button></div>
       </div>
@@ -3504,7 +3510,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     box.querySelector("[data-close]").addEventListener("click", closeModal);
     box.querySelector("#m-go").addEventListener("click", () => {
       const tpl = state.templates.find((t) => t.id === document.getElementById("m-tpl").value);
-      const eq = eqById(document.getElementById("m-eq").value);
+      const eq = assets.find((asset) => asset.id === document.getElementById("m-eq").value);
       const cols = clone(tpl.columns || []).map((c) => Object.assign({}, c, { id: c.id || uid("col") }));
       const rec = {
         id: uid("rec"),

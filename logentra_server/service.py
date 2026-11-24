@@ -32,6 +32,7 @@ from logentra_server.models import (
     Template,
     TemplateColumn,
     TemplateItem,
+    WorkOrder,
 )
 from logentra_server.branding import APP_VERSION, PRODUCT_NAME
 from logentra_server.pagination import clamp_page, page_result
@@ -111,6 +112,34 @@ def apply_scope(query, model, principal) -> Any:
     if area_id and hasattr(model, "area_id"):
         query = query.filter(model.area_id == area_id)
     return query
+
+
+def apply_evidence_scope(db, query, model, principal):
+    """Fail closed on historical links whose current scope disagrees with the parent."""
+    query = apply_scope(query, model, principal)
+    if not principal or not principal.scoped:
+        return query
+    assets = apply_scope(db.query(Equipment.id), Equipment, principal).statement
+    records = db.query(Record.id).filter(Record.equipment_id.in_(assets)).statement
+
+    def permits(column, ids):
+        return or_(column.is_(None), column.in_(ids))
+
+    def scoped_work(orders):
+        readings = db.query(Reading.id).filter(Reading.equipment_id.in_(assets)).statement
+        annotations = db.query(Annotation.id).filter(Annotation.reading_id.in_(readings)).statement
+        punches = db.query(Punch.id).filter(Punch.record_id.in_(records)).statement
+        return orders.filter(
+            permits(WorkOrder.equipment_id, assets), permits(WorkOrder.linked_record_id, records),
+            permits(WorkOrder.linked_reading_id, readings), permits(WorkOrder.linked_annotation_id, annotations),
+            permits(WorkOrder.linked_punch_id, punches),
+        )
+
+    if model is WorkOrder:
+        return scoped_work(query)
+    orders = scoped_work(apply_scope(db.query(WorkOrder.id), WorkOrder, principal)).statement
+    return query.filter(permits(Document.equipment_id, assets), permits(Document.record_id, records),
+                        permits(Document.work_order_id, orders))
 
 
 def list_equipment(
@@ -733,9 +762,57 @@ def upsert_presets(db: Session, presets: dict[str, list]) -> None:
     db.flush()
 
 
+def require_signoff_permission(db: Session, principal, record: dict) -> None:
+    if not record.get("signoffName") or not record.get("signoffDate"):
+        return
+    old = db.get(Record, record["id"]) if record.get("id") else None
+    if not old or not old.signoff or (
+        old.signoff.name != record["signoffName"] or old.signoff.signed_at[:10] != record["signoffDate"]
+    ):
+        principal.require("signoff")
+
+def scoped_equipment_input(db, principal, payload):
+    if not principal.scoped:
+        return payload
+    existing = db.get(Equipment, payload["id"]) if payload.get("id") else None
+    if existing and not principal.allows_scope(existing.site_id, existing.area_id):
+        raise HTTPException(404, "Equipment not found")
+    old_site, old_area = (existing.site_id, existing.area_id) if existing else (principal.site_id, principal.area_id)
+    site = payload.get("site_id", old_site)
+    area = payload.get("area_id", old_area)
+    if not principal.allows_scope(site, area):
+        raise HTTPException(403, "Equipment location is outside your scope")
+    if existing and (site, area) != (old_site, old_area):
+        raise HTTPException(403, "Changing equipment location requires unscoped access")
+    return {**payload, "site_id": site, "area_id": area}
+
+def require_record_scope(db, principal, record_id, equipment_id=None):
+    if not principal.scoped:
+        return
+    existing = db.get(Record, record_id) if record_id else None
+    if existing and (not existing.equipment or not principal.allows_scope(
+        existing.equipment.site_id, existing.equipment.area_id
+    )):
+        raise HTTPException(404, "Record not found")
+    if existing and equipment_id and equipment_id != existing.equipment_id:
+        raise HTTPException(403, "Moving records requires unscoped access")
+    if not existing:
+        equipment = db.get(Equipment, equipment_id) if equipment_id else None
+        if not equipment or not principal.allows_scope(equipment.site_id, equipment.area_id):
+            raise HTTPException(404, "Equipment not found")
+
 def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui",
-                 expected: str | None = None, commit: bool = True) -> dict[str, Any]:
+                 expected: str | None = None, commit: bool = True, principal=None) -> dict[str, Any]:
     revision = advance_catalog(db, expected)
+    if principal:
+        if principal.scoped:
+            if set(state) - {"equipment", "records"}:
+                principal.require_global()
+            if "equipment" in state:
+                state["equipment"] = [scoped_equipment_input(db, principal, item) for item in state["equipment"]]
+        for record in state.get("records", []):
+            require_record_scope(db, principal, record.get("id"), record.get("equipmentId"))
+            require_signoff_permission(db, principal, record)
     ensure_default_fields(db)
     if "equipmentFields" in state:
         _upsert_fields(db, state["equipmentFields"])

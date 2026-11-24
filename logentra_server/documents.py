@@ -101,9 +101,9 @@ def guess_mime(filename: str, declared: str | None = None) -> str:
     return guessed or declared or "application/octet-stream"
 
 
-def _load(db: Session, doc_id: str) -> Document | None:
+def _load(db: Session, doc_id: str, principal=None) -> Document | None:
     return (
-        db.query(Document)
+        service.apply_evidence_scope(db, db.query(Document), Document, principal)
         .options(
             selectinload(Document.versions),
             selectinload(Document.approval_steps),
@@ -114,8 +114,8 @@ def _load(db: Session, doc_id: str) -> Document | None:
     )
 
 
-def get_document(db: Session, doc_id: str) -> Document | None:
-    return _load(db, doc_id)
+def get_document(db: Session, doc_id: str, principal=None) -> Document | None:
+    return _load(db, doc_id, principal)
 
 
 def current_version(doc: Document) -> DocumentVersion | None:
@@ -373,7 +373,7 @@ def list_documents(
     principal: Principal | None = None,
 ) -> dict[str, Any]:
     query = db.query(Document)
-    query = service.apply_scope(query, Document, principal)
+    query = service.apply_evidence_scope(db, query, Document, principal)
     if status:
         query = query.filter(Document.status == status)
     if equipment_id:
@@ -409,7 +409,7 @@ def list_my_queue(db: Session, principal: Principal, *, page: int = 1, page_size
         .options(selectinload(Document.versions), selectinload(Document.approval_steps))
         .filter(Document.status == "in_review", Document.locked == 0)
     )
-    query = service.apply_scope(query, Document, principal)
+    query = service.apply_evidence_scope(db, query, Document, principal)
     rows = query.order_by(Document.updated_at.asc()).all()
     waiting = []
     for doc in rows:
@@ -913,7 +913,7 @@ def dashboard_summary(db: Session, principal: Principal | None = None) -> dict[s
 
     eq_count = service.apply_scope(db.query(Equipment), Equipment, principal).count()
     open_statuses = ("open", "in_progress", "on_hold")
-    active_work = service.apply_scope(db.query(WorkOrder), WorkOrder, principal).filter(WorkOrder.status.in_(open_statuses))
+    active_work = service.apply_evidence_scope(db, db.query(WorkOrder), WorkOrder, principal).filter(WorkOrder.status.in_(open_statuses))
     open_wo = active_work.count()
     now = utcnow_iso()
     overdue = (
@@ -931,7 +931,7 @@ def dashboard_summary(db: Session, principal: Principal | None = None) -> dict[s
     if scoped:
         oor_q = oor_q.filter(Reading.equipment_id.in_(assets.statement))
     oor_count = oor_q.count()
-    pending_all = service.apply_scope(db.query(Document), Document, principal).filter(Document.status == "in_review").count()
+    pending_all = service.apply_evidence_scope(db, db.query(Document), Document, principal).filter(Document.status == "in_review").count()
     my_queue = list_my_queue(db, principal or Principal(mode="open"), page=1, page_size=8) if principal else {"items": [], "total": 0}
 
     alert_query = (

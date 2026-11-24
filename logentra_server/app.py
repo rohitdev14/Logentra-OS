@@ -206,15 +206,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(readings.build_router(get_db, perm, settings, actor_name))
     app.include_router(documents.build_router(get_db, get_principal, settings))
 
-    def require_signoff_permission(db: Session, principal: Principal, record: dict) -> None:
-        if not record.get("signoffName") or not record.get("signoffDate"):
-            return
-        old = db.get(Record, record["id"]) if record.get("id") else None
-        if not old or not old.signoff or (
-            old.signoff.name != record["signoffName"] or old.signoff.signed_at[:10] != record["signoffDate"]
-        ):
-            principal.require("signoff")
-
     # -------------- bootstrap / catalog --------------
     @app.get("/api/bootstrap", tags=["catalog"], summary="Full app state (UI-compatible)", dependencies=perm("equipment.read", scoped=True))
     def get_bootstrap(request: Request, db: Session = Depends(get_db)):
@@ -241,7 +232,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 
-    @app.put("/api/sync", tags=["catalog"], summary="Upsert catalog (fields, equipment, templates, records). Does not delete readings.", dependencies=perm())
+    @app.put("/api/sync", tags=["catalog"], summary="Upsert catalog (fields, equipment, templates, records). Does not delete readings.", dependencies=perm(scoped=True))
     def put_sync(body: SyncBody, request: Request, db: Session = Depends(get_db),
                  catalog_revision: str | None = Header(None, alias="If-Match")):
         principal = request.state.principal
@@ -254,9 +245,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 principal.require(permission)
         if settings.profile == "production" and catalog_revision is None:
             raise HTTPException(428, "If-Match catalog revision is required")
-        for record in state.get("records", []):
-            require_signoff_permission(db, principal, record)
-        return service.sync_catalog(db, state, actor=actor_name(request), expected=catalog_revision)
+        return service.sync_catalog(db, state, actor=actor_name(request), expected=catalog_revision, principal=principal)
 
     @app.post("/api/demo", tags=["catalog"], summary="Replace catalog+readings with the fictional generic-plant demo", dependencies=manage_settings)
     def post_demo(request: Request, db: Session = Depends(get_db)):
@@ -293,36 +282,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
-    def scoped_equipment_input(db, principal, payload):
-        if not principal.scoped:
-            return payload
-        existing = db.get(Equipment, payload["id"]) if payload.get("id") else None
-        if existing and not principal.allows_scope(existing.site_id, existing.area_id):
-            raise HTTPException(404, "Equipment not found")
-        old_site, old_area = (existing.site_id, existing.area_id) if existing else (principal.site_id, principal.area_id)
-        site = payload.get("site_id", old_site)
-        area = payload.get("area_id", old_area)
-        if not principal.allows_scope(site, area):
-            raise HTTPException(403, "Equipment location is outside your scope")
-        if existing and (site, area) != (old_site, old_area):
-            raise HTTPException(403, "Changing equipment location requires unscoped access")
-        return {**payload, "site_id": site, "area_id": area}
-
-    def require_record_scope(db, principal, record_id, equipment_id=None):
-        if not principal.scoped:
-            return
-        existing = db.get(Record, record_id) if record_id else None
-        if existing and (not existing.equipment or not principal.allows_scope(
-            existing.equipment.site_id, existing.equipment.area_id
-        )):
-            raise HTTPException(404, "Record not found")
-        if existing and equipment_id and equipment_id != existing.equipment_id:
-            raise HTTPException(403, "Moving records requires unscoped access")
-        if not existing:
-            equipment = db.get(Equipment, equipment_id) if equipment_id else None
-            if not equipment or not principal.allows_scope(equipment.site_id, equipment.area_id):
-                raise HTTPException(404, "Equipment not found")
-
     # -------------- equipment & fields --------------
     @app.get("/api/fields", tags=["equipment"], dependencies=perm("equipment.read", scoped=True))
     def list_fields(db: Session = Depends(get_db)):
@@ -356,7 +315,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             items = [items]
         if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
             raise HTTPException(422, "Equipment must contain objects")
-        rows = service.upsert_equipment_list(db, [scoped_equipment_input(db, request.state.principal, item)
+        rows = service.upsert_equipment_list(db, [service.scoped_equipment_input(db, request.state.principal, item)
                                                   for item in items])
         service.audit(db, "create", actor=actor_name(request), user_id=actor_user_id(request), entity_type="equipment", detail={"count": len(rows)})
         db.commit()
@@ -372,7 +331,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/equipment", tags=["equipment"], dependencies=perm("equipment.write", scoped=True), status_code=201)
     def create_equipment(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         service.advance_catalog(db)
-        rows = service.upsert_equipment_list(db, [scoped_equipment_input(db, request.state.principal, body)])
+        rows = service.upsert_equipment_list(db, [service.scoped_equipment_input(db, request.state.principal, body)])
         service.audit(db, "create", actor=actor_name(request), entity_type="equipment", entity_id=rows[0].id)
         db.commit()
         return service.equipment_to_ui(rows[0])
@@ -385,7 +344,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Equipment not found")
         body = dict(body)
         body["id"] = eid
-        service.upsert_equipment_list(db, [scoped_equipment_input(db, request.state.principal, body)])
+        service.upsert_equipment_list(db, [service.scoped_equipment_input(db, request.state.principal, body)])
         service.audit(db, "update", actor=actor_name(request), entity_type="equipment", entity_id=eid)
         db.commit()
         return service.equipment_to_ui(db.get(Equipment, eid))
@@ -456,8 +415,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/records", tags=["records"], dependencies=perm("records.write", scoped=True), status_code=201)
     def create_record(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         service.advance_catalog(db)
-        require_record_scope(db, request.state.principal, body.get("id"), body.get("equipmentId"))
-        require_signoff_permission(db, request.state.principal, body)
+        service.require_record_scope(db, request.state.principal, body.get("id"), body.get("equipmentId"))
+        service.require_signoff_permission(db, request.state.principal, body)
         service.upsert_records(db, [body])
         rid = body.get("id")
         r = db.get(Record, rid) if rid else db.query(Record).order_by(Record.created_at.desc()).first()
@@ -472,7 +431,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         r = db.get(Record, rid)
         if not r:
             raise HTTPException(404, "Record not found")
-        require_record_scope(db, request.state.principal, rid)
+        service.require_record_scope(db, request.state.principal, rid)
         if r.signoff:
             raise HTTPException(409, "Signed records cannot be deleted")
         service.protect_document_links(db, Document.record_id, r.id)

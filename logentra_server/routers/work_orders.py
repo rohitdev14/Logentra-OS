@@ -25,7 +25,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         return principal
 
     def _get(db: Session, wid: str, principal: Principal) -> WorkOrder:
-        row = wo.get_work_order(db, wid)
+        row = wo.get_work_order(db, wid, principal)
         if not row:
             raise HTTPException(404, "Work order not found")
         if not principal.allows_scope(row.site_id, row.area_id):

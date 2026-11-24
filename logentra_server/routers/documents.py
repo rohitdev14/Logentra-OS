@@ -20,7 +20,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         return principal
 
     def _doc(db: Session, did: str, principal: Principal):
-        row = docs.get_document(db, did)
+        row = docs.get_document(db, did, principal)
         if not row:
             raise HTTPException(404, "Document not found")
         if not principal.allows_scope(row.site_id, row.area_id):
@@ -40,6 +40,10 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
                 linked = db.get(model, identifier)
                 if isinstance(linked, Record):
                     linked = linked.equipment
+                if model is WorkOrder and not service.apply_evidence_scope(
+                    db, db.query(WorkOrder.id).filter_by(id=identifier), WorkOrder, principal
+                ).first():
+                    raise HTTPException(404, "Linked object not found")
                 if not linked or not principal.allows_scope(linked.site_id, linked.area_id):
                     raise HTTPException(404, "Linked object not found")
 

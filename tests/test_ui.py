@@ -277,3 +277,78 @@ def test_browser_retains_catalog_edit_on_conflict(live_url):
         rows = page.request.get(live_url + "/api/records").json()
         assert next(record for record in rows if record["id"] == original["id"])["notes"] == "committed elsewhere"
         browser.close()
+
+
+def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path):
+    import socket
+
+    from fastapi.testclient import TestClient
+    from playwright.sync_api import sync_playwright
+    from logentra_server.app import create_app
+    from logentra_server.config import Settings
+
+    if os.environ.get("PLAYWRIGHT_SKIP") == "1":
+        pytest.skip("PLAYWRIGHT_SKIP=1")
+    app = create_app(Settings(database_url=f"sqlite:///{tmp_path}/scoped-browser.db", profile="production",
+                              bootstrap_admin_username="admin", bootstrap_admin_password="synthetic-scoped-browser"))
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        token = client.post("/api/auth/login", json={
+            "username": "admin", "password": "synthetic-scoped-browser",
+        }).json()["token"]
+        admin = {"Authorization": "Bearer " + token}
+        assert client.post("/api/sites", headers=admin, json={
+            "id": "browser-site", "name": "Browser site", "areas": [{"id": "browser-zone", "name": "Zone"}],
+        }).status_code == 201
+        assert client.post("/api/users", headers=admin, json={
+            "username": "scoped-browser", "password": "synthetic-scoped-browser", "role": "technician",
+            "site_id": "browser-site", "area_id": "browser-zone",
+        }).status_code == 201
+        for item in (
+            {"id": "browser-allowed", "values": {"fld_tag": "BR-ALLOWED"}, "site_id": "browser-site", "area_id": "browser-zone"},
+            {"id": "browser-denied", "values": {"fld_tag": "BR-DENIED"}},
+        ):
+            assert client.post("/api/equipment", headers=admin, json=item).status_code == 201
+        assert client.post("/api/templates", headers=admin, json={
+            "id": "browser-template", "name": "Scoped checklist", "kind": "custom",
+        }).status_code == 201
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    url = f"http://127.0.0.1:{port}"
+    app = create_app(app.state.settings)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.05)
+        assert server.started
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.getenv("LOGENTRA_TEST_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.goto(url)
+            page.fill("#login-user", "scoped-browser")
+            page.fill("#login-pass", "synthetic-scoped-browser")
+            page.get_by_role("button", name="Sign in").click()
+            page.locator("#login-gate").wait_for(state="hidden")
+            page.evaluate("Logbook.goto('records')")
+            page.get_by_role("button", name="New record").click()
+            assert page.locator("#m-eq option").all_text_contents() == ["BR-ALLOWED"]
+            with page.expect_response(lambda response: response.url.endswith("/api/sync")) as created:
+                page.locator("#m-go").click()
+            assert created.value.ok
+            page.locator("#rec-notes").fill("Scoped browser update")
+            with page.expect_response(lambda response: response.url.endswith("/api/sync")) as saved:
+                page.get_by_role("button", name="Save").click()
+            assert saved.value.ok
+            page.wait_for_function("Logbook.getState().records.some(record => record.revision === 2)")
+            recovered = page.request.get(url + "/api/records", headers=admin).json()[0]
+            assert recovered["notes"] == "Scoped browser update"
+            assert recovered["equipmentId"] == "browser-allowed"
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
