@@ -25,6 +25,10 @@ The application runs as UID 10001 and persists /app/data in the logentra-data vo
 
 GET /api/health reports liveness. GET /api/ready checks database accessibility. Authenticated integration health reports MQTT connectivity, worker status and counts by webhook delivery state. Docker execution is unverified on the local host.
 
+## Container images
+
+The application image is built from `python:3.12.16-slim-trixie` and runs `apt-get upgrade` during the build so Debian security fixes are included. The production overlay pins `postgres:17.12-alpine3.24` and `nginx:1.30.8-alpine3.24`. Rebuild and retag after upstream patch releases; do not float on unversioned `latest` or unpatched major tags.
+
 ## Upgrade from v0.5
 
 1. Stop application and ingestion writers. Create a paired backup according to the recovery guide.

@@ -19,7 +19,7 @@ services:
       - no-new-privileges:true
     cap_drop: [ALL]
   postgres:
-    image: postgres:17
+    image: postgres:17.12-alpine3.24
     profiles: [postgres]
     environment:
       POSTGRES_DB: logentra

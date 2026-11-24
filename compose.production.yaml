@@ -15,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${LOGENTRA_POSTGRES_PASSWORD:?Set the dedicated PostgreSQL password}
     networks: [database]
   nginx:
-    image: nginx:stable
+    image: nginx:1.30.8-alpine3.24
     depends_on:
       app:
         condition: service_healthy
