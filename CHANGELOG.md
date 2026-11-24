@@ -10,6 +10,7 @@ Production Compose overlay, scoped authorization, recovery tooling, and performa
 - Catalog generations, record and document concurrency checks, checksum verification and signed evidence protections.
 - Queued webhook delivery, retry and dead-letter states, MQTT reconnect and integration health.
 - Non-root containers, native backup/restore, regression coverage and browser save-conflict feedback.
+- Sample backup with an out-of-range reading and operator note, plus an import round-trip test (suggested by @jul1anodev on X).
 - Restored attachment trees are chowned to UID 10001 (or `--owner` / `LOGENTRA_ATTACHMENTS_OWNER`) and left readable by the application user.
 - Alembic 0007 adds PostgreSQL `pg_trgm` and btree indexes, cheaper list counts, exact-match search predicates, connection pooling and two production workers. Operators can profile with `pg_stat_statements` and `scripts/explain_hot_paths.sql`.
 - Documents inherit `site_id` and `area_id` from linked equipment when those fields are omitted.

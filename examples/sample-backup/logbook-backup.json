@@ -1,0 +1,162 @@
+{
+  "meta": {
+    "version": 2,
+    "product": "Logentra OS",
+    "demo": false,
+    "description": "Fictional Cedar Creek Pump Station sample. One site, two assets, a handful of readings, and one annotated out-of-range point."
+  },
+  "equipmentFields": [
+    {
+      "id": "fld_tag",
+      "key": "tag",
+      "label": "Tag",
+      "type": "text",
+      "locked": true
+    },
+    {
+      "id": "fld_category",
+      "key": "category",
+      "label": "Category",
+      "type": "text"
+    },
+    {
+      "id": "fld_location",
+      "key": "location",
+      "label": "Location",
+      "type": "text"
+    }
+  ],
+  "equipment": [
+    {
+      "id": "eq_p210",
+      "values": {
+        "fld_tag": "P-210",
+        "fld_category": "Pump",
+        "fld_location": "Cedar Creek Pump Station (fictional)"
+      },
+      "params": [
+        {
+          "key": "vibration",
+          "label": "Vibration",
+          "unit": "mm/s",
+          "min": "",
+          "max": 4.5
+        },
+        {
+          "key": "flow",
+          "label": "Flow",
+          "unit": "m3/h",
+          "min": 20,
+          "max": 80
+        }
+      ],
+      "createdAt": "2026-03-01"
+    },
+    {
+      "id": "eq_t210",
+      "values": {
+        "fld_tag": "T-210",
+        "fld_category": "Tank",
+        "fld_location": "Cedar Creek Pump Station (fictional)"
+      },
+      "params": [
+        {
+          "key": "level",
+          "label": "Level",
+          "unit": "m",
+          "min": 1.0,
+          "max": 4.0
+        }
+      ],
+      "createdAt": "2026-03-01"
+    }
+  ],
+  "templates": [],
+  "records": [],
+  "paramPresets": {},
+  "logs": [
+    {
+      "id": "log_p210_0310",
+      "equipmentId": "eq_p210",
+      "date": "2026-03-10",
+      "time": "08:00",
+      "readings": {
+        "vibration": 2.1,
+        "flow": 45
+      },
+      "remarks": "Routine rounds",
+      "enteredBy": "A. Chen",
+      "annotations": {}
+    },
+    {
+      "id": "log_p210_0311",
+      "equipmentId": "eq_p210",
+      "date": "2026-03-11",
+      "time": "08:00",
+      "readings": {
+        "vibration": 2.4,
+        "flow": 47
+      },
+      "remarks": "Routine rounds",
+      "enteredBy": "A. Chen",
+      "annotations": {}
+    },
+    {
+      "id": "log_p210_0312",
+      "equipmentId": "eq_p210",
+      "date": "2026-03-12",
+      "time": "08:00",
+      "readings": {
+        "vibration": 6.8,
+        "flow": 46
+      },
+      "remarks": "High vibration after weekend service",
+      "enteredBy": "A. Chen",
+      "annotations": {
+        "vibration": {
+          "cause": "Coupling guard loosened after weekend service",
+          "action": "Retorqued coupling bolts; scheduled alignment check",
+          "by": "A. Chen",
+          "at": "2026-03-12T09:15:00"
+        }
+      }
+    },
+    {
+      "id": "log_p210_0313",
+      "equipmentId": "eq_p210",
+      "date": "2026-03-13",
+      "time": "08:00",
+      "readings": {
+        "vibration": 2.2,
+        "flow": 44
+      },
+      "remarks": "Vibration back within limits",
+      "enteredBy": "A. Chen",
+      "annotations": {}
+    },
+    {
+      "id": "log_t210_0310",
+      "equipmentId": "eq_t210",
+      "date": "2026-03-10",
+      "time": "08:00",
+      "readings": {
+        "level": 2.4
+      },
+      "remarks": "Routine rounds",
+      "enteredBy": "A. Chen",
+      "annotations": {}
+    },
+    {
+      "id": "log_t210_0311",
+      "equipmentId": "eq_t210",
+      "date": "2026-03-11",
+      "time": "08:00",
+      "readings": {
+        "level": 2.6
+      },
+      "remarks": "Routine rounds",
+      "enteredBy": "A. Chen",
+      "annotations": {}
+    }
+  ]
+}

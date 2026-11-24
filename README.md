@@ -75,6 +75,24 @@ The display name lives in [`logentra_server/branding.py`](logentra_server/brandi
 
 The offline single-file app needs no install: open `standalone/Logbook.html` in a browser.
 
+## Try the sample backup
+
+A small fictional v0.2 JSON backup lives at [`examples/sample-backup/logbook-backup.json`](examples/sample-backup/logbook-backup.json). It has one site (Cedar Creek Pump Station), two equipment items (booster pump P-210 and contact tank T-210), a handful of readings, and exactly one out-of-range point: P-210 vibration at 6.8 mm/s on 12 March 2026, with an operator note already attached. The plant, tags, and people are fictional.
+
+The default import **replaces** catalog and readings in the running instance. Try this on a fresh `python run.py` database, or pass `?replace=false` if you want to merge.
+
+From the UI, open [http://127.0.0.1:8787/](http://127.0.0.1:8787/), go to **Backup**, choose **Import JSON…**, and select `examples/sample-backup/logbook-backup.json`. Leave **Replace all data in this browser** selected on an empty instance.
+
+From the API:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/migrate/v2 \
+  -H 'Content-Type: application/json' \
+  --data @examples/sample-backup/logbook-backup.json
+```
+
+Then open **Trends**, choose equipment **P-210** and parameter **Vibration**. You should see four daily points from 10–13 March 2026. The 12 March 08:00 point sits above the 4.5 mm/s max line, is flagged out of range, and shows the operator note (cause, action, initials, and time) in the annotations table under the chart.
+
 ## v0.6.0
 
 This release adds configuration profiles, engineering write protections, queued integrations, native recovery tooling, PostgreSQL performance indexes, and pinned production container images. The application reports v0.6.0.
@@ -204,14 +222,14 @@ Demo tags such as P-101 and the “Northbrook Works” sample plant are fictiona
 
 Full setup, schema, and route list: **[docs/README.md](docs/README.md)**.  
 Grafana, Node-RED, a Python client, and an AI-agent prompt: **[docs/integrations.md](docs/integrations.md)**.  
-Copy-paste examples also live in [`examples/`](examples/).  
+Copy-paste examples also live in [`examples/`](examples/), including a [sample backup](examples/sample-backup/logbook-backup.json) you can import to try Trends.  
 Desktop packaging notes (PyInstaller, Tauri sidecar, Docker): **[docs/packaging.md](docs/packaging.md)**.
 
 ## Tests
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/test_api.py tests/test_ingest.py tests/test_oor.py tests/test_auth.py tests/test_workorders.py tests/test_pagination.py tests/test_migrations.py -q
+python -m pytest tests/test_api.py tests/test_ingest.py tests/test_oor.py tests/test_auth.py tests/test_workorders.py tests/test_pagination.py tests/test_migrations.py tests/test_sample_backup.py -q
 ```
 
 The optional Playwright UI smoke test (`tests/test_ui.py`) needs a local Chrome/Chromium and is not run in the default GitHub Actions workflow.
