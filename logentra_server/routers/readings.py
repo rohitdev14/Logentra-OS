@@ -7,20 +7,36 @@ from sqlalchemy.orm import Session
 
 from logentra_server import importers, service
 from logentra_server.http_security import read_upload
-from logentra_server.models import Annotation, FieldDefinition, Reading
+from logentra_server.models import Annotation, Equipment, FieldDefinition, Reading
 from logentra_server.schemas import AnnotationIn, BulkReadingsIn, ReadingIn
 from logentra_server.utils import loads, uid
 
 
 def build_router(get_db, perm, settings, actor_name) -> APIRouter:
     router = APIRouter()
-    read_rd = perm("readings.read")
-    write_rd = perm("readings.write")
-    write_ann = perm("annotations.write")
+    read_rd = perm("readings.read", scoped=True)
+    write_rd = perm("readings.write", scoped=True)
+    write_ann = perm("annotations.write", scoped=True)
     # -------------- readings --------------
 
 
 
+
+    def check_reading_scope(reading, request):
+        principal = request.state.principal
+        if principal.scoped and (
+            not reading or not reading.equipment
+            or not principal.allows_scope(reading.equipment.site_id, reading.equipment.area_id)
+        ):
+            raise HTTPException(404, "Reading not found")
+
+    def grouped_reading(db, request, entry_id, parameter):
+        query = db.query(Reading).filter_by(entry_id=entry_id, parameter_key=parameter)
+        principal = request.state.principal
+        if principal.scoped:
+            equipment = service.apply_scope(db.query(Equipment.id), Equipment, principal)
+            query = query.filter(Reading.equipment_id.in_(equipment.statement))
+        return query.order_by(Reading.ts.desc()).first()
 
     @router.get("/api/readings", tags=["readings"], summary="Query time-series readings", dependencies=perm("readings.read", scoped=True))
     def get_readings(
@@ -41,29 +57,33 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         )
         return {"count": len(rows), "readings": rows}
 
-    @router.post("/api/readings", tags=["readings"], summary="Insert one reading", dependencies=write_rd, status_code=201)
+    @router.post("/api/readings", tags=["readings"], summary="Insert one reading", dependencies=perm("readings.write", scoped=True), status_code=201)
     def post_reading(body: ReadingIn, request: Request, db: Session = Depends(get_db)):
         result = service.ingest_readings(
             db, [body.model_dump(exclude_none=True)], source=body.source or "api",
-            actor=actor_name(request), create_missing_equipment=False, fire_webhooks=True,
+            actor=actor_name(request), create_missing_equipment=False, fire_webhooks=True, principal=request.state.principal,
         )
         if result["added"] == 0 and not any(row["reason"] == "duplicate" for row in result["skipped_items"]):
             raise HTTPException(400, result)
         return result
 
-    @router.post("/api/readings/bulk", tags=["readings"], summary="Insert many readings in one transaction", dependencies=write_rd)
+    @router.post("/api/readings/bulk", tags=["readings"], summary="Insert many readings in one transaction", dependencies=perm("readings.write", scoped=True))
     def post_readings_bulk(body: BulkReadingsIn, request: Request, db: Session = Depends(get_db)):
         if body.create_missing_equipment:
             request.state.principal.require("equipment.write")
         items = [r.model_dump(exclude_none=True) for r in body.readings]
         return service.ingest_readings(
             db, items, source="api", actor=actor_name(request),
-            create_missing_equipment=body.create_missing_equipment, fire_webhooks=True,
+            create_missing_equipment=body.create_missing_equipment, fire_webhooks=True, principal=request.state.principal,
         )
 
     @router.delete("/api/readings/{rid}", tags=["readings"], dependencies=write_rd)
     def delete_reading(rid: str, request: Request, db: Session = Depends(get_db)):
         r = db.get(Reading, rid)
+        if r:
+            check_reading_scope(r, request)
+        elif request.state.principal.scoped:
+            raise HTTPException(404, "Reading not found")
         if not r:
             # treat as entry_id so the UI can delete a whole log line
             n = service.delete_entry(db, rid)
@@ -81,6 +101,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
 
     @router.put("/api/readings/{rid}/annotation", tags=["readings"], summary="Add or edit an annotation", dependencies=write_ann)
     def put_annotation(rid: str, body: AnnotationIn, request: Request, db: Session = Depends(get_db)):
+        check_reading_scope(db.get(Reading, rid), request)
         try:
             an = service.upsert_annotation(db, rid, body.model_dump(), actor=actor_name(request))
         except KeyError:
@@ -90,7 +111,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
     @router.put("/api/logs/{entry_id}/annotations/{parameter}", tags=["readings"],
              summary="Add or edit an annotation on a grouped log entry + parameter", dependencies=write_ann)
     def put_log_annotation(entry_id: str, parameter: str, body: AnnotationIn, request: Request, db: Session = Depends(get_db)):
-        r = db.query(Reading).filter_by(entry_id=entry_id, parameter_key=parameter).order_by(Reading.ts.desc()).first()
+        r = grouped_reading(db, request, entry_id, parameter)
         if not r:
             raise HTTPException(404, "Reading not found for that log entry and parameter")
         an = service.upsert_annotation(db, r.id, body.model_dump(), actor=actor_name(request))
@@ -98,7 +119,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
 
     @router.delete("/api/logs/{entry_id}/annotations/{parameter}", tags=["readings"], dependencies=write_ann)
     def delete_log_annotation(entry_id: str, parameter: str, request: Request, db: Session = Depends(get_db)):
-        r = db.query(Reading).filter_by(entry_id=entry_id, parameter_key=parameter).first()
+        r = grouped_reading(db, request, entry_id, parameter)
         if not r or not r.annotation:
             raise HTTPException(404, "Annotation not found")
         aid = r.annotation.id
@@ -112,6 +133,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         an = db.get(Annotation, aid)
         if not an:
             raise HTTPException(404, "Annotation not found")
+        check_reading_scope(db.get(Reading, an.reading_id), request)
         db.delete(an)
         service.audit(db, "delete", actor=actor_name(request), entity_type="annotation", entity_id=aid)
         db.commit()
@@ -141,6 +163,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         dependencies=read_rd,
     )
     def get_oor_events(
+        request: Request,
         db: Session = Depends(get_db),
         unacknowledged: bool | None = None,
         equipment_id: str | None = None,
@@ -151,7 +174,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
     ):
         rows = service.query_events(
             db, unacknowledged=unacknowledged, equipment_id=equipment_id,
-            tag=tag, ts_from=ts_from, ts_to=ts_to, limit=limit,
+            tag=tag, ts_from=ts_from, ts_to=ts_to, limit=limit, principal=request.state.principal,
         )
         return {"count": len(rows), "events": rows}
 
@@ -160,7 +183,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         "/api/ingest/readings",
         tags=["ingest"],
         summary="IoT / gateway webhook. Accepts one reading, a list, or {readings: [...]}.",
-        dependencies=write_rd,
+        dependencies=perm("readings.write", scoped=True),
     )
     async def ingest_webhook(
         request: Request,
@@ -186,10 +209,10 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
             request.state.principal.require("equipment.write")
         return service.ingest_readings(
             db, items, source="webhook", actor=actor_name(request) or "webhook",
-            create_missing_equipment=create_missing_equipment, fire_webhooks=True,
+            create_missing_equipment=create_missing_equipment, fire_webhooks=True, principal=request.state.principal,
         )
 
-    @router.post("/api/ingest/file", tags=["ingest"], summary="Upload a CSV or Excel table of equipment or readings", dependencies=write_rd)
+    @router.post("/api/ingest/file", tags=["ingest"], summary="Upload a CSV or Excel table of equipment or readings", dependencies=perm("readings.write", scoped=True))
     async def ingest_file(
         request: Request,
         db: Session = Depends(get_db),
@@ -199,6 +222,8 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         create_missing_equipment: bool = Query(True),
         mapping: str | None = Query(default=None, description="Optional JSON object header->field"),
     ):
+        if kind == "equipment":
+            request.state.principal.require_global()
         if create_missing_equipment or kind == "equipment":
             request.state.principal.require("equipment.write")
         raw = await read_upload(file, settings.upload_limit_bytes)
@@ -284,7 +309,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
                 })
         return service.ingest_readings(
             db, items, source="import", actor=actor_name(request),
-            create_missing_equipment=create_missing_equipment, fire_webhooks=True,
+            create_missing_equipment=create_missing_equipment, fire_webhooks=True, principal=request.state.principal,
         )
 
     return router

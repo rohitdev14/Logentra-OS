@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from logentra_server import service, workorders as wo
 from logentra_server.auth import Principal
-from logentra_server.models import AutoWorkOrderRule, WorkOrder
+from logentra_server.models import AutoWorkOrderRule, Document, Equipment, User, WorkOrder
 from logentra_server.utils import uid
 from logentra_server.documents import safe_filename
 from logentra_server.http_security import read_upload
@@ -31,6 +31,15 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         if not principal.allows_scope(row.site_id, row.area_id):
             raise HTTPException(404, "Work order not found")
         return row
+
+    def check_assignee(db, principal, assignee):
+        if assignee is None:
+            return
+        principal.require("workorders.assign")
+        if principal.scoped:
+            user = db.get(User, assignee)
+            if not user or not user.is_active or not principal.allows_scope(user.site_id, user.area_id):
+                raise HTTPException(404, "Assignee not found")
 
     @router.get("/api/work-orders", tags=["work-orders"])
     def list_work_orders(
@@ -56,7 +65,26 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.post("/api/work-orders", tags=["work-orders"], status_code=201)
     def create_work_order(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("workorders.create")
-        principal.require_global()
+        check_assignee(db, principal, body.get("assignee_id") or body.get("assigneeId"))
+        if principal.scoped:
+            allowed = {"id", "title", "description", "priority", "equipment_id", "equipmentId", "due_at", "dueAt",
+                       "due_date", "site_id", "siteId", "area_id", "areaId", "assignee_id", "assigneeId"}
+            if set(body) - allowed:
+                raise HTTPException(403, "This work order contains restricted fields")
+            site = body.get("site_id") or body.get("siteId") or principal.site_id
+            area = body.get("area_id") or body.get("areaId") or principal.area_id
+            equipment = body.get("equipment_id") or body.get("equipmentId")
+            if equipment:
+                row = db.get(Equipment, equipment)
+                if not row or not principal.allows_scope(row.site_id, row.area_id):
+                    raise HTTPException(404, "Equipment not found")
+                site, area = site or row.site_id, area or row.area_id
+                if (site, area) != (row.site_id, row.area_id):
+                    raise HTTPException(403, "Work order location must match its equipment")
+            if not principal.allows_scope(site, area):
+                raise HTTPException(403, "Work order location is outside your scope")
+            service.validate_location(db, site, area)
+            body = {**body, "site_id": site, "area_id": area}
         try:
             row = wo.create_work_order(db, body, actor=principal.actor, user_id=principal.user_id)
         except ValueError as exc:
@@ -70,13 +98,20 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.patch("/api/work-orders/{wid}", tags=["work-orders"])
     def patch_work_order(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        principal.require_global()
         row = _get(db, wid, principal)
+        if principal.scoped and (body.get("equipment_id") or body.get("equipmentId")) == row.equipment_id:
+            body = {key: value for key, value in body.items() if key not in {"equipment_id", "equipmentId"}}
+        if principal.scoped and set(body) - {
+            "title", "description", "priority", "due_at", "dueAt", "due_date", "status",
+            "assignee_id", "assigneeId", "labour_minutes", "labour_notes",
+        }:
+            raise HTTPException(403, "Changing work order links or location requires unscoped access")
         if "assignee_id" in body or "assigneeId" in body:
             principal.require("workorders.assign")
+            check_assignee(db, principal, body.get("assignee_id") or body.get("assigneeId"))
         if "status" in body and body.get("status"):
             target = str(body.get("status")).lower()
-            if target == "closed":
+            if target in ("closed", "close"):
                 principal.require("workorders.close")
             else:
                 # moving along the workflow is allowed for anyone who can create or assign
@@ -96,7 +131,6 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.post("/api/work-orders/{wid}/transition", tags=["work-orders"])
     def transition(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        principal.require_global()
         row = _get(db, wid, principal)
         status = body.get("status")
         if not status:
@@ -116,10 +150,10 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.post("/api/work-orders/{wid}/assign", tags=["work-orders"])
     def assign(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        principal.require_global()
         principal.require("workorders.assign")
         row = _get(db, wid, principal)
         assignee = body.get("assignee_id") or body.get("assigneeId")
+        check_assignee(db, principal, assignee)
         row = wo.update_work_order(
             db, row, {"assignee_id": assignee}, actor=principal.actor, user_id=principal.user_id,
         )
@@ -205,11 +239,11 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.delete("/api/work-orders/{wid}", tags=["work-orders"])
     def delete_work_order(wid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        principal.require_global()
         row = _get(db, wid, principal)
         if not (principal.can("users.manage") or (principal.can("workorders.create") and row.status == "open" and row.created_by_id == principal.user_id)):
             principal.require("users.manage")
         service.audit(db, "delete", actor=principal.actor, user_id=principal.user_id, entity_type="work_order", entity_id=wid)
+        service.protect_document_links(db, Document.work_order_id, wid)
         db.delete(row)
         db.commit()
         return {"ok": True}

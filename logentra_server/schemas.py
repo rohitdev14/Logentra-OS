@@ -51,3 +51,8 @@ class WebhookIn(BaseModel):
     secret: str | None = ""
     events: list[str] = Field(default_factory=lambda: ["out_of_range"])
     enabled: bool = True
+
+
+
+class ReplayIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=500, pattern=r"\S")

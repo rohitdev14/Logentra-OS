@@ -45,6 +45,8 @@ mqtt:
   host: 127.0.0.1
   port: 1883
   tls: false
+  # site_id: site_id_from_logentra
+  # area_id: area_id_from_logentra
   username: ""
   password: ""
   client_id: logentra

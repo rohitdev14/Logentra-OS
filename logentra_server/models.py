@@ -289,6 +289,7 @@ class WebhookDelivery(Base):
     state: Mapped[str] = mapped_column(Text, nullable=False, default="historical")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[float | None] = mapped_column(Float)
+    replays: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     claim_token: Mapped[str | None] = mapped_column(Text)
     webhook: Mapped[OutboundWebhook | None] = relationship(back_populates="deliveries")
 
@@ -543,6 +544,7 @@ class Document(Base):
     record_id: Mapped[str | None] = mapped_column(Text, ForeignKey("records.id", ondelete="SET NULL"))
     work_order_id: Mapped[str | None] = mapped_column(Text, ForeignKey("work_orders.id", ondelete="SET NULL"))
     site_id: Mapped[str | None] = mapped_column(Text, ForeignKey("sites.id", ondelete="SET NULL"))
+    area_id: Mapped[str | None] = mapped_column(Text, ForeignKey("areas.id", ondelete="SET NULL"))
     route_id: Mapped[str | None] = mapped_column(Text, ForeignKey("approval_routes.id", ondelete="SET NULL"))
     current_version_id: Mapped[str | None] = mapped_column(Text)
     current_step_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

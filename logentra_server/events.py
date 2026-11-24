@@ -98,6 +98,20 @@ def enqueue(db: Session, event: str, payload: dict[str, Any]) -> list[dict[str, 
     return results
 
 
+def replay_dead_delivery(db: Session, delivery_id: str) -> bool:
+    """Requeue without creating a new event or changing its payload."""
+    available = db.query(OutboundWebhook.id).filter(OutboundWebhook.enabled == 1)
+    return bool(db.query(WebhookDelivery).filter(
+        WebhookDelivery.id == delivery_id,
+        WebhookDelivery.state == "dead",
+        WebhookDelivery.replays < 3,
+        WebhookDelivery.webhook_id.in_(available.statement),
+    ).update({
+        "state": "pending", "attempts": 0, "replays": WebhookDelivery.replays + 1,
+        "available_at": time.time(), "claim_token": None,
+    }, synchronize_session=False))
+
+
 def dispatch_one(session_factory, settings) -> bool:
     now = time.time()
     token = uid("claim")

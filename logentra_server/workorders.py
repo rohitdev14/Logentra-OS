@@ -49,20 +49,21 @@ def _norm_priority(value: str | None, default: str = "medium") -> str:
     return s
 
 
-def _user_name(db: Session, user_id: str | None) -> str | None:
+def _user_name(db: Session, user_id: str | None, users_by_id=None) -> str | None:
     if not user_id:
         return None
-    u = db.get(User, user_id)
+    u = users_by_id.get(user_id) if users_by_id is not None else db.get(User, user_id)
     return (u.display_name or u.username) if u else None
 
 
-def to_dict(wo: WorkOrder, db: Session | None = None, *, detail: bool = False) -> dict[str, Any]:
+def to_dict(wo: WorkOrder, db: Session | None = None, *, detail: bool = False,
+            equipment_by_id=None, users_by_id=None) -> dict[str, Any]:
     tag = None
-    if wo.equipment_id and wo.equipment_id:
+    if wo.equipment_id:
         # equipment may be gone
         from logentra_server.models import Equipment as Eq
         if db:
-            eq = db.get(Eq, wo.equipment_id)
+            eq = equipment_by_id.get(wo.equipment_id) if equipment_by_id is not None else db.get(Eq, wo.equipment_id)
             tag = eq.tag if eq else None
     out: dict[str, Any] = {
         "id": wo.id,
@@ -75,9 +76,9 @@ def to_dict(wo: WorkOrder, db: Session | None = None, *, detail: bool = False) -
         "site_id": wo.site_id,
         "area_id": wo.area_id,
         "assignee_id": wo.assignee_id,
-        "assignee": _user_name(db, wo.assignee_id) if db else None,
+        "assignee": _user_name(db, wo.assignee_id, users_by_id) if db else None,
         "created_by_id": wo.created_by_id,
-        "created_by": _user_name(db, wo.created_by_id) if db else None,
+        "created_by": _user_name(db, wo.created_by_id, users_by_id) if db else None,
         "due_at": wo.due_at,
         "started_at": wo.started_at,
         "completed_at": wo.completed_at,
@@ -172,7 +173,15 @@ def list_work_orders(
         .limit(page_size)
         .all()
     )
-    return page_result([to_dict(r, db) for r in rows], total, page, page_size)
+    equipment_ids = {row.equipment_id for row in rows if row.equipment_id}
+    user_ids = {identifier for row in rows for identifier in (row.assignee_id, row.created_by_id) if identifier}
+    # Keep the eager results alive while to_dict resolves objects through the identity map.
+    equipment = db.query(Equipment).filter(Equipment.id.in_(equipment_ids)).all() if equipment_ids else []
+    users = db.query(User).filter(User.id.in_(user_ids)).all() if user_ids else []
+    equipment_by_id = {e.id: e for e in equipment}
+    users_by_id = {u.id: u for u in users}
+    items = [to_dict(row, db, equipment_by_id=equipment_by_id, users_by_id=users_by_id) for row in rows]
+    return page_result(items, total, page, page_size)
 
 
 def get_work_order(db: Session, wid: str) -> WorkOrder | None:

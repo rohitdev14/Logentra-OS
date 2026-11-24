@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
+from tempfile import NamedTemporaryFile
 import re
 from pathlib import Path
 from typing import Any
@@ -47,8 +49,24 @@ def store_file(document_id: str, version_no: int, filename: str, data: bytes) ->
     dest_dir = absolute_path(str(ATTACH_DIR / safe_filename(document_id)))
     dest_dir.mkdir(parents=True, exist_ok=True)
     stored = dest_dir / f"v{version_no}_{digest[:12]}_{uid('file')}_{safe_filename(filename)}"
-    with stored.open("xb") as handle:
-        handle.write(data)
+    staging = None
+    try:
+        with NamedTemporaryFile(dir=dest_dir, prefix=".upload-", delete=False) as handle:
+            staging = Path(handle.name)
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(staging, stored)
+        if os.name == "posix":
+            for directory in (dest_dir, dest_dir.parent):
+                descriptor = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+    finally:
+        if staging:
+            staging.unlink(missing_ok=True)
     return str(stored.relative_to(ROOT)), digest
 
 
@@ -310,6 +328,7 @@ def to_dict(doc: Document, db: Session | None = None, *, detail: bool = False) -
         "record_id": doc.record_id,
         "work_order_id": doc.work_order_id,
         "site_id": doc.site_id,
+        "area_id": doc.area_id,
         "route_id": doc.route_id,
         "current_version_id": doc.current_version_id,
         "current_step_index": doc.current_step_index,
@@ -354,8 +373,7 @@ def list_documents(
     principal: Principal | None = None,
 ) -> dict[str, Any]:
     query = db.query(Document)
-    if principal and principal.site_id:
-        query = query.filter(Document.site_id == principal.site_id)
+    query = service.apply_scope(query, Document, principal)
     if status:
         query = query.filter(Document.status == status)
     if equipment_id:
@@ -391,8 +409,7 @@ def list_my_queue(db: Session, principal: Principal, *, page: int = 1, page_size
         .options(selectinload(Document.versions), selectinload(Document.approval_steps))
         .filter(Document.status == "in_review", Document.locked == 0)
     )
-    if principal.site_id:
-        query = query.filter(Document.site_id == principal.site_id)
+    query = service.apply_scope(query, Document, principal)
     rows = query.order_by(Document.updated_at.asc()).all()
     waiting = []
     for doc in rows:
@@ -430,8 +447,8 @@ def match_route(db: Session, *, route_id: str | None = None, document_type: str 
         route = get_route(db, route_id)
         if not route:
             raise ValueError("Approval route not found")
-        if not route.enabled:
-            raise ValueError("Approval route is disabled")
+        if not route.enabled or (route.site_id and route.site_id != site_id):
+            raise ValueError("Approval route is unavailable for this site")
         return route
     rows = (
         db.query(ApprovalRoute)
@@ -566,6 +583,7 @@ def create_document(
     record_id: str | None = None,
     work_order_id: str | None = None,
     site_id: str | None = None,
+    area_id: str | None = None,
     route_id: str | None = None,
     actor: str = "api",
     user_id: str | None = None,
@@ -587,6 +605,7 @@ def create_document(
         record_id=record_id,
         work_order_id=work_order_id,
         site_id=site_id,
+        area_id=area_id,
         route_id=route_id,
         current_step_index=0,
         locked=0,
@@ -892,13 +911,13 @@ def return_document(db: Session, doc: Document, principal: Principal, *, comment
 def dashboard_summary(db: Session, principal: Principal | None = None) -> dict[str, Any]:
     from logentra_server.models import Annotation, Equipment, Reading, WorkOrder
 
-    eq_count = db.query(Equipment).count()
+    eq_count = service.apply_scope(db.query(Equipment), Equipment, principal).count()
     open_statuses = ("open", "in_progress", "on_hold")
-    open_wo = db.query(WorkOrder).filter(WorkOrder.status.in_(open_statuses)).count()
+    active_work = service.apply_scope(db.query(WorkOrder), WorkOrder, principal).filter(WorkOrder.status.in_(open_statuses))
+    open_wo = active_work.count()
     now = utcnow_iso()
     overdue = (
-        db.query(WorkOrder)
-        .filter(WorkOrder.status.in_(open_statuses), WorkOrder.due_at.isnot(None), WorkOrder.due_at < now[:10])
+        active_work.filter(WorkOrder.due_at.isnot(None), WorkOrder.due_at < now[:10])
         .count()
     )
     # unacknowledged OOR: out_of_range=1 and no annotation
@@ -907,19 +926,23 @@ def dashboard_summary(db: Session, principal: Principal | None = None) -> dict[s
         .outerjoin(Annotation, Annotation.reading_id == Reading.id)
         .filter(Reading.out_of_range == 1, Annotation.id.is_(None))
     )
+    assets = service.apply_scope(db.query(Equipment.id), Equipment, principal)
+    scoped = principal and principal.scoped
+    if scoped:
+        oor_q = oor_q.filter(Reading.equipment_id.in_(assets.statement))
     oor_count = oor_q.count()
-    pending_all = db.query(Document).filter(Document.status == "in_review").count()
+    pending_all = service.apply_scope(db.query(Document), Document, principal).filter(Document.status == "in_review").count()
     my_queue = list_my_queue(db, principal or Principal(mode="open"), page=1, page_size=8) if principal else {"items": [], "total": 0}
 
-    alert_rows = (
+    alert_query = (
         db.query(Reading, Equipment)
         .join(Equipment, Equipment.id == Reading.equipment_id)
         .outerjoin(Annotation, Annotation.reading_id == Reading.id)
         .filter(Reading.out_of_range == 1)
-        .order_by(Reading.ts.desc())
-        .limit(8)
-        .all()
     )
+    if scoped:
+        alert_query = alert_query.filter(Reading.equipment_id.in_(assets.statement))
+    alert_rows = alert_query.order_by(Reading.ts.desc()).limit(8).all()
     alerts = []
     for reading, eq in alert_rows:
         ann = reading.annotation

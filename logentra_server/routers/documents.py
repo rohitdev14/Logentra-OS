@@ -7,27 +7,41 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from logentra_server import documents as docs
+from logentra_server import documents as docs, service
 from logentra_server.auth import Principal
 from logentra_server.http_security import read_upload
-from logentra_server.models import ApprovalRoute
+from logentra_server.models import ApprovalRoute, Equipment, Record, WorkOrder
 
 
 def build_router(get_db, get_principal, settings) -> APIRouter:
     router = APIRouter()
 
     def current(principal: Principal = Depends(get_principal)) -> Principal:
-        if principal.area_id:
-            principal.require_global()
         return principal
 
     def _doc(db: Session, did: str, principal: Principal):
         row = docs.get_document(db, did)
         if not row:
             raise HTTPException(404, "Document not found")
-        if not principal.allows_scope(row.site_id):
+        if not principal.allows_scope(row.site_id, row.area_id):
             raise HTTPException(404, "Document not found")
         return row
+
+    def check_links(db, principal, data):
+        if not principal.scoped:
+            return
+        for key, model, permission in (
+            ("equipment_id", Equipment, "equipment.read"),
+            ("record_id", Record, "records.read"),
+            ("work_order_id", WorkOrder, "workorders.read"),
+        ):
+            if identifier := data.get(key):
+                principal.require(permission)
+                linked = db.get(model, identifier)
+                if isinstance(linked, Record):
+                    linked = linked.equipment
+                if not linked or not principal.allows_scope(linked.site_id, linked.area_id):
+                    raise HTTPException(404, "Linked object not found")
 
     def _err(exc: Exception):
         if isinstance(exc, PermissionError):
@@ -37,16 +51,18 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     # ---------- dashboard ----------
     @router.get("/api/dashboard", tags=["catalog"], summary="KPI counts, alerts, and my approvals queue")
     def dashboard(db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        principal.require_global()
         principal.require("equipment.read", "readings.read", "workorders.read", "documents.read")
         return docs.dashboard_summary(db, principal)
 
     # ---------- routes ----------
     @router.get("/api/approval-routes", tags=["documents"])
     def list_routes(db: Session = Depends(get_db), principal: Principal = Depends(current), enabled: bool = False):
-        principal.require_global()
         principal.require("documents.read")
-        return docs.list_routes(db, enabled_only=enabled)
+        rows = docs.list_routes(db, enabled_only=enabled)
+        if principal.scoped:
+            return [{**route, "steps": []} for route in rows
+                    if route["site_id"] is None or route["site_id"] == principal.site_id]
+        return rows
 
     @router.post("/api/approval-routes", tags=["documents"], status_code=201)
     def create_route(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
@@ -135,13 +151,20 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         record_id: str | None = Form(None),
         work_order_id: str | None = Form(None),
         site_id: str | None = Form(None),
+        area_id: str | None = Form(None),
         route_id: str | None = Form(None),
         submit: bool = Form(False),
     ):
         principal.require("documents.upload")
-        principal.require_global()
+        site_id, area_id = site_id or principal.site_id, area_id or principal.area_id
+        if not principal.allows_scope(site_id, area_id):
+            raise HTTPException(403, "Document location is outside your scope")
+        service.validate_location(db, site_id, area_id)
+        check_links(db, principal, {"equipment_id": equipment_id, "record_id": record_id, "work_order_id": work_order_id})
         data = await read_upload(file, settings.upload_limit_bytes)
         try:
+            if route_id:
+                docs.match_route(db, route_id=route_id, site_id=site_id)
             row = docs.create_document(
                 db,
                 title=title or file.filename or "Untitled",
@@ -152,7 +175,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
                 equipment_id=equipment_id,
                 record_id=record_id,
                 work_order_id=work_order_id,
-                site_id=site_id or principal.site_id,
+                site_id=site_id,
+                area_id=area_id,
                 route_id=route_id,
                 actor=principal.actor,
                 user_id=principal.user_id,
@@ -171,9 +195,11 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.patch("/api/documents/{did}", tags=["documents"])
     def patch_document(did: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        principal.require_global()
         principal.require("documents.upload")
         row = _doc(db, did, principal)
+        if principal.scoped:
+            if set(body) - {"title", "document_type", "documentType"}:
+                raise HTTPException(403, "Changing document links or location requires unscoped access")
         try:
             row = docs.update_document(db, row, body, actor=principal.actor, user_id=principal.user_id)
         except ValueError as exc:

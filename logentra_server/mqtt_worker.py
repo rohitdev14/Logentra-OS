@@ -6,6 +6,7 @@ import logging
 import threading
 from typing import Any
 
+from logentra_server.auth import Principal
 from logentra_server.config import Settings
 from logentra_server.service import ingest_readings
 
@@ -74,6 +75,8 @@ def start_mqtt(settings: Settings, session_factory):
         return None, connected
 
     cfg = settings.mqtt
+    principal = Principal(mode="integration", username="mqtt", site_id=cfg.site_id,
+                          area_id=cfg.area_id, permissions={"equipment.write"})
 
     def on_connect(client, _u, _f, reason_code, *_a):
         if reason_code.is_failure:
@@ -98,7 +101,7 @@ def start_mqtt(settings: Settings, session_factory):
                 return
             db = session_factory()
             try:
-                result = ingest_readings(db, items, source="mqtt", actor="mqtt", create_missing_equipment=False, fire_webhooks=True)
+                result = ingest_readings(db, items, source="mqtt", actor="mqtt", create_missing_equipment=False, fire_webhooks=True, principal=principal)
                 log.info("MQTT ingest added=%s skipped=%s oor=%s", result["added"], result["skipped"], result["out_of_range"])
             finally:
                 db.close()

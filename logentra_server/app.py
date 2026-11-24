@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from logentra_server.auth import Principal, make_auth_dependency
 from logentra_server.branding import PRODUCT_NAME, RELEASE_LABEL
-from logentra_server.schemas import SyncBody, WebhookIn
+from logentra_server.schemas import ReplayIn, SyncBody, WebhookIn
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
@@ -195,8 +195,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Authenticated API routes (open mode still grants every permission)
     read_eq = perm("equipment.read")
-    write_eq = perm("equipment.write")
-    write_rec = perm("records.write")
     write_tpl = perm("templates.write")
     read_rd = perm("readings.read")
     manage_settings = perm("settings.manage")
@@ -295,6 +293,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    def scoped_equipment_input(db, principal, payload):
+        if not principal.scoped:
+            return payload
+        existing = db.get(Equipment, payload["id"]) if payload.get("id") else None
+        if existing and not principal.allows_scope(existing.site_id, existing.area_id):
+            raise HTTPException(404, "Equipment not found")
+        old_site, old_area = (existing.site_id, existing.area_id) if existing else (principal.site_id, principal.area_id)
+        site = payload.get("site_id", old_site)
+        area = payload.get("area_id", old_area)
+        if not principal.allows_scope(site, area):
+            raise HTTPException(403, "Equipment location is outside your scope")
+        if existing and (site, area) != (old_site, old_area):
+            raise HTTPException(403, "Changing equipment location requires unscoped access")
+        return {**payload, "site_id": site, "area_id": area}
+
+    def require_record_scope(db, principal, record_id, equipment_id=None):
+        if not principal.scoped:
+            return
+        existing = db.get(Record, record_id) if record_id else None
+        if existing and (not existing.equipment or not principal.allows_scope(
+            existing.equipment.site_id, existing.equipment.area_id
+        )):
+            raise HTTPException(404, "Record not found")
+        if existing and equipment_id and equipment_id != existing.equipment_id:
+            raise HTTPException(403, "Moving records requires unscoped access")
+        if not existing:
+            equipment = db.get(Equipment, equipment_id) if equipment_id else None
+            if not equipment or not principal.allows_scope(equipment.site_id, equipment.area_id):
+                raise HTTPException(404, "Equipment not found")
+
     # -------------- equipment & fields --------------
     @app.get("/api/fields", tags=["equipment"], dependencies=perm("equipment.read", scoped=True))
     def list_fields(db: Session = Depends(get_db)):
@@ -318,7 +346,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             paginate=page is not None,
         )
 
-    @app.post("/api/equipment/bulk", tags=["equipment"], dependencies=write_eq, status_code=201)
+    @app.post("/api/equipment/bulk", tags=["equipment"], dependencies=perm("equipment.write", scoped=True), status_code=201)
     def bulk_equipment(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         service.advance_catalog(db)
         items = body.get("equipment") if isinstance(body, dict) and "equipment" in body else body.get("items") if isinstance(body, dict) else body
@@ -326,7 +354,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             items = body if isinstance(body, list) else []
         if isinstance(items, dict):
             items = [items]
-        rows = service.upsert_equipment_list(db, items)
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise HTTPException(422, "Equipment must contain objects")
+        rows = service.upsert_equipment_list(db, [scoped_equipment_input(db, request.state.principal, item)
+                                                  for item in items])
         service.audit(db, "create", actor=actor_name(request), user_id=actor_user_id(request), entity_type="equipment", detail={"count": len(rows)})
         db.commit()
         return {"added": len(rows), "ids": [r.id for r in rows], "items": [service.equipment_to_ui(r) for r in rows]}
@@ -338,15 +369,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Equipment not found")
         return service.equipment_to_ui(eq)
 
-    @app.post("/api/equipment", tags=["equipment"], dependencies=write_eq, status_code=201)
+    @app.post("/api/equipment", tags=["equipment"], dependencies=perm("equipment.write", scoped=True), status_code=201)
     def create_equipment(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         service.advance_catalog(db)
-        rows = service.upsert_equipment_list(db, [body])
+        rows = service.upsert_equipment_list(db, [scoped_equipment_input(db, request.state.principal, body)])
         service.audit(db, "create", actor=actor_name(request), entity_type="equipment", entity_id=rows[0].id)
         db.commit()
         return service.equipment_to_ui(rows[0])
 
-    @app.patch("/api/equipment/{eid}", tags=["equipment"], dependencies=write_eq)
+    @app.patch("/api/equipment/{eid}", tags=["equipment"], dependencies=perm("equipment.write", scoped=True))
     def patch_equipment(eid: str, body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         service.advance_catalog(db)
         eq = db.get(Equipment, eid)
@@ -354,17 +385,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Equipment not found")
         body = dict(body)
         body["id"] = eid
-        service.upsert_equipment_list(db, [body])
+        service.upsert_equipment_list(db, [scoped_equipment_input(db, request.state.principal, body)])
         service.audit(db, "update", actor=actor_name(request), entity_type="equipment", entity_id=eid)
         db.commit()
         return service.equipment_to_ui(db.get(Equipment, eid))
 
-    @app.delete("/api/equipment/{eid}", tags=["equipment"], dependencies=write_eq)
+    @app.delete("/api/equipment/{eid}", tags=["equipment"], dependencies=perm("equipment.write", scoped=True))
     def delete_equipment(eid: str, request: Request, db: Session = Depends(get_db),
                          catalog_revision: str | None = Header(None, alias="If-Match")):
         service.advance_catalog(db, catalog_revision)
         eq = db.get(Equipment, eid) or service.get_equipment(db, tag=eid)
-        if not eq:
+        if not eq or not request.state.principal.allows_scope(eq.site_id, eq.area_id):
             raise HTTPException(404, "Equipment not found")
         if db.query(Signoff).join(Record).filter(Record.equipment_id == eq.id).first():
             raise HTTPException(409, "Equipment is linked to signed evidence")
@@ -422,10 +453,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             paginate=page is not None, principal=getattr(request.state, "principal", None),
         )
 
-    @app.post("/api/records", tags=["records"], dependencies=write_rec, status_code=201)
+    @app.post("/api/records", tags=["records"], dependencies=perm("records.write", scoped=True), status_code=201)
     def create_record(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
-        require_signoff_permission(db, request.state.principal, body)
         service.advance_catalog(db)
+        require_record_scope(db, request.state.principal, body.get("id"), body.get("equipmentId"))
+        require_signoff_permission(db, request.state.principal, body)
         service.upsert_records(db, [body])
         rid = body.get("id")
         r = db.get(Record, rid) if rid else db.query(Record).order_by(Record.created_at.desc()).first()
@@ -433,13 +465,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return service.record_to_ui(r)
 
-    @app.delete("/api/records/{rid}", tags=["records"], dependencies=write_rec)
+    @app.delete("/api/records/{rid}", tags=["records"], dependencies=perm("records.write", scoped=True))
     def delete_record(rid: str, request: Request, db: Session = Depends(get_db),
                          catalog_revision: str | None = Header(None, alias="If-Match")):
         service.advance_catalog(db, catalog_revision)
         r = db.get(Record, rid)
         if not r:
             raise HTTPException(404, "Record not found")
+        require_record_scope(db, request.state.principal, rid)
         if r.signoff:
             raise HTTPException(409, "Signed records cannot be deleted")
         service.protect_document_links(db, Document.record_id, r.id)
@@ -458,15 +491,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Content-Disposition": "attachment; filename=logbook-backup.json"},
         )
 
-    @app.get("/api/export/readings.csv", tags=["export"], dependencies=read_rd)
+    @app.get("/api/export/readings.csv", tags=["export"], dependencies=perm("readings.read", scoped=True))
     def export_readings_csv(
+        request: Request,
         db: Session = Depends(get_db),
         tag: str | None = None,
         parameter: str | None = None,
         ts_from: str | None = Query(default=None, alias="from"),
         ts_to: str | None = Query(default=None, alias="to"),
     ):
-        rows = service.query_readings(db, tag=tag, parameter=parameter, ts_from=ts_from, ts_to=ts_to, limit=100000)
+        rows = service.query_readings(db, tag=tag, parameter=parameter, ts_from=ts_from, ts_to=ts_to, limit=100000, principal=request.state.principal)
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(["tag", "equipment_id", "date", "time", "ts", "parameter", "value", "min", "max",
@@ -487,14 +521,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Content-Disposition": "attachment; filename=logbook-readings.csv"},
         )
 
-    @app.get("/api/export/equipment.csv", tags=["export"], dependencies=read_eq)
-    def export_equipment_csv(db: Session = Depends(get_db)):
-        state = service.bootstrap(db, equipment_cap=10**9)
-        fields = state["equipmentFields"]
+    @app.get("/api/export/equipment.csv", tags=["export"], dependencies=perm("equipment.read", scoped=True))
+    def export_equipment_csv(request: Request, db: Session = Depends(get_db)):
+        fields = [service.field_to_ui(f) for f in db.query(FieldDefinition).order_by(FieldDefinition.sort_order)]
+        equipment = service.list_equipment(db, principal=request.state.principal)
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow([f["label"] for f in fields])
-        for e in state["equipment"]:
+        for e in equipment:
             w.writerow([e.get("values", {}).get(f["id"], "") for f in fields])
         data = buf.getvalue().encode("utf-8-sig")
         return StreamingResponse(
@@ -544,9 +578,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return [
             {"id": d.id, "webhook_id": d.webhook_id, "event": d.event, "ok": bool(d.ok),
              "status_code": d.status_code, "error": d.error, "created_at": d.created_at,
-             "state": d.state, "attempts": d.attempts}
+             "state": d.state, "attempts": d.attempts, "replays": d.replays}
             for d in rows
         ]
+
+    @app.post("/api/webhooks/deliveries/{delivery_id}/replay", tags=["integrations"],
+              dependencies=manage_hooks, status_code=202)
+    def replay_delivery(delivery_id: str, body: ReplayIn, request: Request, db: Session = Depends(get_db)):
+        if not db.get(WebhookDelivery, delivery_id):
+            raise HTTPException(404, "Delivery not found")
+        if not events.replay_dead_delivery(db, delivery_id):
+            raise HTTPException(409, "Delivery is not eligible for replay")
+        service.audit(db, "replay", actor=actor_name(request), user_id=actor_user_id(request),
+                      entity_type="webhook_delivery", entity_id=delivery_id, detail={"reason": body.reason.strip()})
+        db.commit()
+        return {"id": delivery_id, "state": "pending"}
 
     @app.get("/api/integrations/health", tags=["integrations"], dependencies=manage_hooks)
     def integration_health(db: Session = Depends(get_db)):

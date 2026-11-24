@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, exists, func, or_
+from sqlalchemy import and_, exists, func, literal_column, or_
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -152,7 +152,7 @@ def list_equipment(
     if not paginate and page is None:
         return [equipment_to_ui(e) for e in query.all()]
     page, page_size = clamp_page(page, page_size)
-    total = query.count()
+    total = query.order_by(None).count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
     return page_result([equipment_to_ui(e) for e in rows], total, page, page_size)
 
@@ -800,6 +800,7 @@ def ingest_readings(
     create_missing_equipment: bool = False,
     fire_webhooks: bool = True,
     commit: bool = True,
+    principal=None,
 ) -> dict[str, Any]:
     """Insert many readings. Each item: tag or equipment_id, parameter, value, optional ts/date/time, remarks, entered_by, entry_id, unit, label."""
     ensure_default_fields(db)
@@ -809,11 +810,15 @@ def ingest_readings(
     fields = db.query(FieldDefinition).all()
     tag_field = next((f for f in fields if f.key == "tag"), None)
     now = utcnow_iso()
+    if principal and principal.scoped and create_missing_equipment:
+        raise HTTPException(403, "Scoped ingestion requires existing equipment")
     for raw in items:
         tag = str(raw.get("tag") or raw.get("equipment") or "").strip()
         reading_id = raw.get("id") or uid("rd")
         eid = raw.get("equipment_id") or raw.get("equipmentId")
         eq = get_equipment(db, equipment_id=eid, tag=tag or None)
+        if principal and principal.scoped and (not eq or not principal.allows_scope(eq.site_id, eq.area_id)):
+            raise HTTPException(404, "Equipment not found")
         if not eq:
             if create_missing_equipment and tag:
                 advance_catalog(db)
@@ -836,6 +841,8 @@ def ingest_readings(
         )
         key = param.key if param else key_raw
         if not param:
+            if principal and principal.scoped:
+                principal.require("equipment.write")
             advance_catalog(db)
             param = ensure_parameter(db, eq.id, key, label=raw.get("label") or key_raw, unit=raw.get("unit"))
         value = as_float(raw.get("value") if "value" in raw else raw.get("reading"))
@@ -896,7 +903,13 @@ def ingest_readings(
         if out_of_range(value, param.min_value, param.max_value):
             oor_events.append((reading, eq.tag, param.label))
     audit(db, "ingest", actor=actor, entity_type="reading", detail={"created": len(created), "skipped": len(skipped), "source": source})
-    set_setting(db, "updated_at", now)
+    if db.query(Setting.value).filter_by(key="updated_at").scalar() != now:
+        dialect_insert = sqlite_insert if db.get_bind().dialect.name == "sqlite" else postgres_insert
+        statement = dialect_insert(Setting).values(key="updated_at", value=now, updated_at=now)
+        db.execute(statement.on_conflict_do_update(
+            index_elements=[Setting.key], set_={"value": now, "updated_at": now},
+            where=Setting.updated_at < now,
+        ))
     hook_results = []
     auto_wo: list[str] = []
     if oor_events:
@@ -999,11 +1012,15 @@ def query_events(
     ts_to: str | None = None,
     limit: int = 500,
     offset: int = 0,
+    principal=None,
 ) -> list[dict[str, Any]]:
     q = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment))
+    if principal and principal.scoped:
+        equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
+        q = q.filter(Reading.equipment_id.in_(equipment.statement))
     # Prefer the denormalised flag (indexed); also accept legacy rows if any slipped through.
     oor = or_(
-        Reading.out_of_range == 1,
+        Reading.out_of_range == literal_column("1"),
         and_(Reading.limit_min.isnot(None), Reading.value < Reading.limit_min),
         and_(Reading.limit_max.isnot(None), Reading.value > Reading.limit_max),
     )

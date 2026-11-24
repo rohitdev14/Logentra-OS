@@ -19,6 +19,8 @@ class MqttConfig(BaseModel):
     username: str = ""
     password: str = ""
     tls: bool = False
+    site_id: str | None = None
+    area_id: str | None = None
     client_id: str = "logentra"
     topics: list[str] = Field(default_factory=lambda: ["logentra/readings", "logentra/+/+", "logbook/readings", "logbook/+/+"])
     topic_pattern: str = "logentra/{tag}/{parameter}"
