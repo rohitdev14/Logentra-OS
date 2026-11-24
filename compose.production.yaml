@@ -1,0 +1,42 @@
+services:
+  app:
+    ports: !reset []
+    environment:
+      LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:?Set the dedicated PostgreSQL connection URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [ingress, database]
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${LOGENTRA_POSTGRES_PASSWORD:?Set the dedicated PostgreSQL password}
+    networks: [database]
+  nginx:
+    image: nginx:stable
+    depends_on:
+      app:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        sed 's@127.0.0.1:8787@app:8787@g' /etc/logentra/nginx.conf > /etc/nginx/nginx.conf
+        exec nginx -g 'daemon off;'
+    ports:
+      - "${LOGENTRA_TLS_BIND:-127.0.0.1}:${LOGENTRA_TLS_PORT:-8443}:443"
+    volumes:
+      - ./deployment/nginx.conf:/etc/logentra/nginx.conf:ro
+      - ${LOGENTRA_TLS_DIRECTORY:?Set the TLS certificate directory}:/etc/logentra/tls:ro
+    networks: [ingress]
+    healthcheck:
+      test: ["CMD", "nginx", "-t", "-q"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+networks:
+  ingress:
+  database:
+    internal: true

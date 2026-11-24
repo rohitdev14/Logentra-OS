@@ -179,7 +179,14 @@ def test_document_checksum(client):
 
 
 @pytest.mark.parametrize("backend", ["sqlite", "postgresql"])
-def test_checkpoint_upgrade_and_recovery(tmp_path, backend):
+def test_checkpoint_upgrade_and_recovery(tmp_path, backend, monkeypatch):
+    from scripts import verify_evidence
+
+    origin = tmp_path / "origin"
+    attachments = origin / "attachments"
+    monkeypatch.setattr(documents, "ROOT", origin)
+    monkeypatch.setattr(documents, "ATTACH_DIR", attachments / "documents")
+    monkeypatch.setattr(verify_evidence, "ATTACH_DIR", attachments / "documents")
     if backend == "sqlite":
         source = f"sqlite:///{tmp_path}/legacy.db"
         destination = f"sqlite:///{tmp_path}/restored.db"
@@ -197,6 +204,37 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend):
     with make_client(Settings(database_url=source)) as client:
         assert client.get("/api/equipment/old_asset").json()["id"] == "old_asset"
         assert client.post("/api/records", json={"id": "new_record", "notes": "preserve"}).status_code == 201
+        reading = client.post("/api/readings", json={
+            "id": "r-restored", "equipment_id": "old_asset", "parameter": "pressure", "value": 5,
+        })
+        assert reading.status_code == 201, reading.text
+        work_order = client.post("/api/work-orders", json={"title": "Restorable work", "equipment_id": "old_asset"}).json()
+        updated = client.post("/api/records", json={
+            "id": "new_record", "revision": 1, "notes": "preserve",
+            "signoffName": "Synthetic engineer", "signoffDate": "2026-01-02",
+        })
+        assert updated.status_code == 201, updated.text
+        assert client.post("/api/users", json={
+            "username": "recovery-viewer", "password": "synthetic-recovery-password", "role": "viewer",
+        }).status_code == 201
+        with client.app.state.SessionLocal.begin() as db:
+            db.add(OutboundWebhook(id="restore-hook", url="https://example.invalid/hook", events='["document.approved"]',
+                                   enabled=1, created_at="2026-01-01", secret=""))
+        hook_id = "restore-hook"
+        client.app.state.delivery_worker.stop()
+        uploaded = client.post("/api/documents", files={"file": ("proof.txt", b"approved evidence")},
+                               data={"equipment_id": "old_asset", "submit": "true"})
+        assert uploaded.status_code == 201, uploaded.text
+        did = uploaded.json()["id"]
+        for _ in range(2):
+            approved = client.post(f"/api/documents/{did}/approve")
+            assert approved.status_code == 200, approved.text
+        assert approved.json()["status"] == "approved"
+        with client.app.state.SessionLocal.begin() as db:
+            delivery = db.query(WebhookDelivery).one()
+            delivery.available_at = time.time() + 3600
+            pending_id = delivery.id
+            snapshot = verify_evidence.inspect_evidence(db)
     for statement in ("UPDATE audit_log SET detail = 'tampered'", "DELETE FROM audit_log"):
         with pytest.raises(DBAPIError), engine.begin() as conn:
             conn.execute(text(statement))
@@ -204,17 +242,39 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend):
         with pytest.raises(DBAPIError), engine.begin() as conn:
             conn.execute(text("TRUNCATE audit_log"))
     engine.dispose()
-    attachments = tmp_path / "attachments"
-    attachments.mkdir()
     (attachments / "evidence.txt").write_text("document evidence", encoding="utf-8")
     bundle = tmp_path / "bundle"
     backup(source, attachments, bundle)
-    restored_attachments = tmp_path / "restored-attachments"
+    restored_root = tmp_path / "recovered"
+    restored_attachments = restored_root / "attachments"
+    started = time.monotonic()
     restore(bundle, destination, restored_attachments)
     assert (restored_attachments / "evidence.txt").read_text(encoding="utf-8") == "document evidence"
+    monkeypatch.setattr(documents, "ROOT", restored_root)
+    monkeypatch.setattr(documents, "ATTACH_DIR", restored_attachments / "documents")
+    monkeypatch.setattr(verify_evidence, "ATTACH_DIR", restored_attachments / "documents")
     with make_client(Settings(database_url=destination)) as client:
         assert client.get("/api/equipment/old_asset").json()["id"] == "old_asset"
-        assert client.get("/api/records").json()[0]["notes"] == "preserve"
+        record = client.get("/api/records").json()[0]
+        assert record["notes"] == "preserve" and record["revision"] == 2
+        assert record["signoffName"] == "Synthetic engineer"
+        assert client.get("/api/readings").json()["readings"][0]["id"] == "r-restored"
+        assert client.get(f"/api/work-orders/{work_order['id']}").json()["title"] == "Restorable work"
+        assert client.get(f"/api/documents/{did}/file").content == b"approved evidence"
+        assert client.get(f"/api/documents/{did}").json()["status"] == "approved"
+        with client.app.state.SessionLocal() as db:
+            assert verify_evidence.inspect_evidence(db) == snapshot
+            assert db.get(WebhookDelivery, pending_id).state == "pending"
+            assert db.get(OutboundWebhook, hook_id).enabled
+    print(f"{backend} isolated recovery from restore start to verified evidence: {time.monotonic()-started:.3f} s")
+    with make_client(Settings(database_url=destination, auth_mode="users")) as client:
+        login = client.post("/api/auth/login", json={
+            "username": "recovery-viewer", "password": "synthetic-recovery-password",
+        })
+        assert login.status_code == 200
+        headers = {"Authorization": "Bearer " + login.json()["token"]}
+        assert client.get(f"/api/documents/{did}", headers=headers).status_code == 200
+        assert client.post(f"/api/documents/{did}/approve", headers=headers).status_code == 403
     (bundle / "attachments" / "evidence.txt").write_text("tampered", encoding="utf-8")
     with pytest.raises(ValueError, match="checksum"):
         restore(bundle, destination, tmp_path / "another-restore")
