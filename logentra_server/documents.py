@@ -569,6 +569,23 @@ def _validate_links(db: Session, body: dict[str, Any]) -> None:
         raise ValueError("work order not found")
 
 
+
+def inherit_location(
+    db: Session,
+    *,
+    site_id: str | None,
+    area_id: str | None,
+    equipment_id: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Fill a missing site_id or area_id from the linked equipment."""
+    if equipment_id and (not site_id or not area_id):
+        eq = db.get(Equipment, equipment_id)
+        if eq is not None:
+            site_id = site_id or eq.site_id
+            area_id = area_id or eq.area_id
+    return site_id, area_id
+
+
 def create_document(
     db: Session,
     *,
@@ -593,6 +610,9 @@ def create_document(
     _validate_links(db, {
         "equipment_id": equipment_id, "record_id": record_id, "work_order_id": work_order_id,
     })
+    site_id, area_id = inherit_location(
+        db, site_id=site_id, area_id=area_id, equipment_id=equipment_id,
+    )
     now = utcnow_iso()
     doc = Document(
         id=uid("doc"),

@@ -235,3 +235,54 @@ def test_dashboard_and_queue(client: TestClient):
     queue = client.get("/api/documents/queue").json()
     assert queue["total"] >= 1
     assert any(x["id"] == did or True for x in queue["items"])
+
+
+
+def test_document_inherits_area_from_equipment(users_client: TestClient):
+    admin = _login(users_client)
+    headers = _auth(admin["token"])
+    site = users_client.post(
+        "/api/sites",
+        headers=headers,
+        json={"id": "fab", "name": "Fab", "areas": [{"id": "pcw", "name": "PCW"}]},
+    )
+    assert site.status_code == 201, site.text
+    equipment = users_client.post(
+        "/api/equipment",
+        headers=headers,
+        json={"id": "eq-inherit", "values": {"fld_tag": "INH-1"}, "site_id": "fab", "area_id": "pcw"},
+    )
+    assert equipment.status_code == 201, equipment.text
+    created = users_client.post(
+        "/api/documents",
+        headers=headers,
+        files={"file": _pdf("inherit")},
+        data={"title": "Inherit location", "equipment_id": "eq-inherit"},
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["equipment_id"] == "eq-inherit"
+    assert body["site_id"] == "fab"
+    assert body["area_id"] == "pcw"
+
+    # An explicit area wins over the equipment default.
+    other = users_client.post(
+        "/api/sites",
+        headers=headers,
+        json={"id": "lab", "name": "Lab", "areas": [{"id": "metrology", "name": "Metrology"}]},
+    )
+    assert other.status_code == 201, other.text
+    override = users_client.post(
+        "/api/documents",
+        headers=headers,
+        files={"file": _pdf("override")},
+        data={
+            "title": "Explicit location",
+            "equipment_id": "eq-inherit",
+            "site_id": "lab",
+            "area_id": "metrology",
+        },
+    )
+    assert override.status_code == 201, override.text
+    assert override.json()["site_id"] == "lab"
+    assert override.json()["area_id"] == "metrology"

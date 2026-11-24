@@ -160,6 +160,9 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         submit: bool = Form(False),
     ):
         principal.require("documents.upload")
+        site_id, area_id = docs.inherit_location(
+            db, site_id=site_id, area_id=area_id, equipment_id=equipment_id,
+        )
         site_id, area_id = site_id or principal.site_id, area_id or principal.area_id
         if not principal.allows_scope(site_id, area_id):
             raise HTTPException(403, "Document location is outside your scope")
