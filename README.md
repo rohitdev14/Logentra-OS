@@ -1,5 +1,9 @@
 # Logentra OS
 
+[![Logentra OS](docs/assets/logentra-os-lockup-light.svg)](docs/assets/README.md)
+
+The logbook that stays yours.
+
 [![Tests](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml/badge.svg)](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 

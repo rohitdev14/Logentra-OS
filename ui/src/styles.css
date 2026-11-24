@@ -169,29 +169,36 @@ a { color: inherit; text-decoration: none; }
   width: 32px;
   height: 32px;
   border-radius: 9px;
-  background: linear-gradient(145deg, var(--accent) 0%, var(--accent-2) 100%);
-  color: #fff;
   display: grid;
   place-items: center;
   flex: 0 0 32px;
+  overflow: hidden;
   box-shadow: 0 4px 10px rgba(79, 70, 229, 0.28);
 }
 [data-theme="dark"] .brand-mark {
-  background: linear-gradient(145deg, #22d3ee 0%, #0891b2 100%);
-  color: #042f2e;
   box-shadow: 0 4px 12px rgba(34, 211, 238, 0.22);
 }
-.brand-mark svg { width: 18px; height: 18px; }
+.brand-mark svg,
+.brand-mark .brand-icon { width: 32px; height: 32px; display: block; }
+.brand-mark .brand-icon-dark { display: none; }
+[data-theme="dark"] .brand-mark .brand-icon-light { display: none; }
+[data-theme="dark"] .brand-mark .brand-icon-dark { display: block; }
 .brand h1 {
   font-size: 16px;
   font-weight: 650;
   letter-spacing: -0.04em;
   line-height: 1.1;
 }
-.brand .sub {
+.brand .sub,
+.brand .tagline {
   font-size: 11px;
   color: var(--sidebar-muted);
   letter-spacing: 0.01em;
+}
+.brand .tagline {
+  line-height: 1.25;
+  margin-top: 2px;
+  font-weight: 400;
 }
 .nav-label {
   font-size: 10.5px;

@@ -192,7 +192,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon():
+        icon = UI_DIR / "static" / "favicon.ico"
+        if icon.is_file():
+            return FileResponse(icon, media_type="image/x-icon")
         return PlainTextResponse("", status_code=204)
+
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    def apple_touch_icon():
+        icon = UI_DIR / "static" / "apple-touch-icon.png"
+        if icon.is_file():
+            return FileResponse(icon, media_type="image/png")
+        return PlainTextResponse("", status_code=404)
 
     @app.get("/", include_in_schema=False)
     def index():

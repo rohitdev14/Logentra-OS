@@ -6,6 +6,6 @@ from __future__ import annotations
 PRODUCT_NAME = "Logentra OS"
 PRODUCT_SHORT = "Logentra"
 PRODUCT_INITIALS = "LO"
-PRODUCT_TAGLINE = "Open-source logbook, engineering records & traceability for industrial plants"
+PRODUCT_TAGLINE = "The logbook that stays yours."
 APP_VERSION = "0.6.0"
 RELEASE_LABEL = "v0.6.0"
