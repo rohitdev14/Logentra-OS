@@ -17,6 +17,17 @@ SQLite uses its backup API and integrity check. PostgreSQL uses pg_dump in custo
 
        python scripts/recovery.py restore /path/to/bundle --attachments /path/to/fresh-attachments
 
+   Restore always chmods the attachment tree so the application can read it
+   (directories 0755 or 0750, files 0644 or 0640). When the restore process
+   runs as root, it also chowns the tree to UID/GID 10001, the UID used by the
+   container image. Override with ``--owner UID[:GID]`` or
+   ``LOGENTRA_ATTACHMENTS_OWNER``. A non-root restore that cannot chown still
+   makes files world-readable so the app user can open them; do not leave the
+   tree as root-owned mode 0600. If you pass ``--owner`` and chown is denied,
+   the command fails rather than publishing an unreadable tree. The running
+   application container drops capabilities, so it cannot repair ownership
+   itself.
+
 3. Place the restored attachment tree at data/attachments in the recovery instance. Preserve the old database and attachment tree until verification passes.
 4. Verify readiness, equipment, readings, record revisions and document downloads. Review pending outbound deliveries before restarting integrations. A restored pending event may be sent again.
 5. Resume application and ingestion writers with the recovered pair.

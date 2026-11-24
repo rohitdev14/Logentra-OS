@@ -32,6 +32,69 @@ def checksums(root: Path) -> dict[str, str]:
     return result
 
 
+
+DEFAULT_APP_UID = 10001
+DEFAULT_APP_GID = 10001
+
+
+def parse_owner(spec: str | None) -> tuple[int, int] | None:
+    """Parse UID, UID:GID, or name[:name] into numeric ids."""
+    if not spec or not str(spec).strip():
+        return None
+    value = str(spec).strip()
+    if ":" in value:
+        user_part, group_part = value.split(":", 1)
+    else:
+        user_part, group_part = value, value
+    def _id(part: str, *, group: bool) -> int:
+        part = part.strip()
+        if part.isdigit() or (part.startswith("-") and part[1:].isdigit()):
+            return int(part)
+        import grp
+        import pwd
+        return (grp.getgrnam(part).gr_gid if group else pwd.getpwnam(part).pw_uid)
+    return _id(user_part, group=False), _id(group_part, group=True)
+
+
+def default_owner_spec() -> str | None:
+    env = os.environ.get("LOGENTRA_ATTACHMENTS_OWNER") or os.environ.get("LOGENTRA_APP_OWNER")
+    if env:
+        return env
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return f"{DEFAULT_APP_UID}:{DEFAULT_APP_GID}"
+    return None
+
+
+def apply_attachment_ownership(root: Path, owner: str | None = None) -> dict:
+    """Chown/chmod a restored attachment tree so the application UID can read it.
+
+    Directories become 0o755 and files 0o644, or 0o750/0o640 after a successful
+    chown onto a dedicated owner. When *owner* is omitted, LOGENTRA_ATTACHMENTS_OWNER
+    is used, then 10001:10001 if this process is root. A non-root restore still
+    makes files world-readable so a later app process can open them. An explicit
+    --owner that cannot be applied raises PermissionError.
+    """
+    check_tree(root)
+    requested = owner if owner is not None else default_owner_spec()
+    target = parse_owner(requested) if requested else None
+    chowned = False
+    if target is not None:
+        uid, gid = target
+        try:
+            for path in [root, *sorted(root.rglob("*"))]:
+                os.chown(path, uid, gid)
+            chowned = True
+        except PermissionError:
+            if owner is not None:
+                raise
+            chowned = False
+    dir_mode = 0o750 if chowned else 0o755
+    file_mode = 0o640 if chowned else 0o644
+    for path in [root, *sorted(root.rglob("*"))]:
+        path.chmod(dir_mode if path.is_dir() else file_mode)
+    return {"owner": f"{target[0]}:{target[1]}" if chowned and target else None, "chowned": chowned}
+
+
 def sqlite_copy(source: Path, target: Path) -> None:
     with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as existing:
         with closing(sqlite3.connect(target)) as copy:
@@ -74,7 +137,7 @@ def backup(database_url: str, attachments: Path, destination: Path) -> None:
         raise
 
 
-def restore(source: Path, database_url: str, attachments: Path) -> None:
+def restore(source: Path, database_url: str, attachments: Path, owner: str | None = None) -> None:
     check_tree(source)
     manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
     if manifest["sha256"] != checksums(source):
@@ -105,6 +168,7 @@ def restore(source: Path, database_url: str, attachments: Path) -> None:
         else:
             raise ValueError("Unsupported database backend")
         staged.rename(attachments)
+        apply_attachment_ownership(attachments, owner=owner)
 
 
 def main() -> None:
@@ -112,6 +176,12 @@ def main() -> None:
     parser.add_argument("operation", choices=("backup", "restore"))
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--attachments", type=Path, default=Path("data/attachments"))
+    parser.add_argument(
+        "--owner",
+        default=None,
+        help="UID, UID:GID, or name[:name] for restored attachments. "
+             "Defaults to LOGENTRA_ATTACHMENTS_OWNER, or 10001:10001 when run as root.",
+    )
     args = parser.parse_args()
     database_url = os.environ.get("LOGENTRA_DATABASE_URL")
     if not database_url:
@@ -119,7 +189,7 @@ def main() -> None:
     if args.operation == "backup":
         backup(database_url, args.attachments, args.bundle)
     else:
-        restore(args.bundle, database_url, args.attachments)
+        restore(args.bundle, database_url, args.attachments, owner=args.owner)
 
 
 if __name__ == "__main__":
