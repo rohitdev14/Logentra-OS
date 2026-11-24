@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from unittest.mock import patch
+from time import monotonic, sleep
 
-import httpx
 from fastapi.testclient import TestClient
 
 
@@ -49,15 +49,21 @@ def test_outbound_webhook_on_oor(client: TestClient):
 
     captured = []
 
-    def fake_post(url, content=None, headers=None, timeout=None):
-        captured.append({"url": url, "body": content, "headers": headers})
-        return httpx.Response(200, text="ok")
+    def fake_post(url, event, event_id, body, secret, settings):
+        captured.append({"url": url, "body": body})
+        return 200
 
-    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.send_webhook", side_effect=fake_post):
         r = client.post("/api/readings", json={
             "tag": "P-101", "parameter": "vibration", "value": 9.1,
             "ts": "2026-11-22T12:00:00", "source": "api",
         })
+        deadline = monotonic() + 5
+        while monotonic() < deadline:
+            deliveries = client.get("/api/webhooks/deliveries").json()
+            if deliveries and deliveries[0]["ok"]:
+                break
+            sleep(0.05)
     assert r.status_code == 201, r.text
     assert r.json()["out_of_range"] == 1
     assert captured, "webhook should have been called"
@@ -71,7 +77,7 @@ def test_outbound_webhook_on_oor(client: TestClient):
 
     # in-range reading should not fire
     captured.clear()
-    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.send_webhook", side_effect=fake_post):
         r = client.post("/api/readings", json={
             "tag": "P-101", "parameter": "vibration", "value": 2.0, "ts": "2026-11-22T13:00:00",
         })

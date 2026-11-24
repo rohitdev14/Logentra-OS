@@ -17,7 +17,7 @@ def users_client(tmp_path) -> TestClient:
         bootstrap_admin_password="adminpass1",
     )
     app = create_app(settings)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as c:
         yield c
 
 

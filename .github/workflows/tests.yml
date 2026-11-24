@@ -5,22 +5,64 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: logentra
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: logentra_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U logentra"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      LOGENTRA_TEST_POSTGRES: postgresql+psycopg://logentra:ci-test-only@127.0.0.1:5432/logentra_test
+      LOGENTRA_TEST_POSTGRES_RESTORE: postgresql+psycopg://logentra:ci-test-only@127.0.0.1:5432/logentra_restore
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
+        run: pip install -r requirements-dev.txt -r requirements-postgres.txt
+      - name: Set up Chromium and restore database
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-      - name: Run API, ingest, and event tests
-        run: python -m pytest tests/test_api.py tests/test_ingest.py tests/test_oor.py tests/test_auth.py tests/test_workorders.py tests/test_pagination.py tests/test_migrations.py -q
+          python -m playwright install --with-deps chromium
+          python -c 'import os, psycopg; dsn = os.environ["LOGENTRA_TEST_POSTGRES"].replace("+psycopg", ""); db = psycopg.connect(dsn, autocommit=True); db.execute("CREATE DATABASE logentra_restore")'
+          pg_dump --version
+      - name: Run complete test suite
+        run: python -m pytest -q --cov=logentra_server --cov-report=term-missing --cov-report=xml
+      - name: Check Python and generated browser bundles
+        run: |
+          ruff check --select F401,F821,F822,F823 logentra_server scripts tests
+          python ui/build.py
+          git diff --exit-code -- ui/Logentra.html ui/Logbook.html ui/index.html
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+  dependencies:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m venv resolved
+          resolved/bin/pip install -r requirements-postgres.txt
+          resolved/bin/pip freeze > resolved.txt
+          pip install pip-audit==2.10.1
+          pip-audit --no-deps --disable-pip -r resolved.txt

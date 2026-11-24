@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 
 from fastapi.testclient import TestClient
 
@@ -73,7 +72,8 @@ def test_templates_and_records(client: TestClient):
     got = rec.json()
     assert got["signoffName"] == "A. Tester"
     assert got["items"][0]["values"]["c1"] == "Pass"
-    assert client.delete("/api/records/rec_1").status_code == 200
+    assert client.delete("/api/records/rec_1").status_code == 409
+    assert client.get("/api/records").json()[0]["signoffName"] == "A. Tester"
 
 
 def test_api_key_required(auth_client: TestClient):

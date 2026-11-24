@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 from unittest.mock import patch
+from time import monotonic, sleep
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -30,7 +30,7 @@ def users_client(tmp_path) -> TestClient:
         bootstrap_admin_password="adminpass1",
     )
     app = create_app(settings)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as c:
         yield c
 
 
@@ -184,30 +184,39 @@ def test_approval_webhooks(client: TestClient):
     assert wh.status_code == 201, wh.text
     captured = []
 
-    def fake_post(url, content=None, headers=None, timeout=None):
-        captured.append(json.loads(content.decode("utf-8")))
-        return httpx.Response(200, text="ok")
+    def fake_post(url, event, event_id, body, secret, settings):
+        captured.append(json.loads(body.decode("utf-8")))
+        return 200
 
     did = _upload(client, title="Hook sheet").json()["id"]
-    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.send_webhook", side_effect=fake_post):
         client.post(f"/api/documents/{did}/submit", json={"route_id": route_id})
         client.post(f"/api/documents/{did}/approve", json={})
         client.post(f"/api/documents/{did}/approve", json={})
+        deadline = monotonic() + 5
+        while len(captured) < 4 and monotonic() < deadline:
+            sleep(0.05)
     events = [c["event"] for c in captured]
     assert events == ["document.submitted", "document.step_approved", "document.step_approved", "document.approved"]
 
     captured.clear()
     did2 = _upload(client, title="Return hook").json()["id"]
-    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.send_webhook", side_effect=fake_post):
         client.post(f"/api/documents/{did2}/submit", json={"route_id": route_id})
         client.post(f"/api/documents/{did2}/return", json={"comment": "Revise section 2"})
+        deadline = monotonic() + 5
+        while len(captured) < 2 and monotonic() < deadline:
+            sleep(0.05)
     assert [c["event"] for c in captured] == ["document.submitted", "document.returned"]
 
     captured.clear()
     did3 = _upload(client, title="Reject hook").json()["id"]
-    with patch("logentra_server.events.httpx.post", side_effect=fake_post):
+    with patch("logentra_server.events.send_webhook", side_effect=fake_post):
         client.post(f"/api/documents/{did3}/submit", json={"route_id": route_id})
         client.post(f"/api/documents/{did3}/reject", json={"comment": "Wrong asset"})
+        deadline = monotonic() + 5
+        while len(captured) < 2 and monotonic() < deadline:
+            sleep(0.05)
     assert [c["event"] for c in captured] == ["document.submitted", "document.rejected"]
 
 

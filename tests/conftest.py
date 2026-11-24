@@ -21,13 +21,13 @@ def db_url(tmp_path) -> str:
 
 @pytest.fixture
 def settings(db_url) -> Settings:
-    return Settings(database_url=db_url, open_browser=False, api_key="", host="127.0.0.1", port=8787)
+    return Settings(database_url=db_url, open_browser=False, webhook_private_destinations=True, api_key="", host="127.0.0.1", port=8787)
 
 
 @pytest.fixture
 def client(settings) -> TestClient:
     app = create_app(settings)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as c:
         yield c
 
 
@@ -35,5 +35,5 @@ def client(settings) -> TestClient:
 def auth_client(db_url) -> TestClient:
     settings = Settings(database_url=db_url, open_browser=False, api_key="test-key-123")
     app = create_app(settings)
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as c:
         yield c

@@ -10,6 +10,9 @@ import argparse
 import json
 import os
 import statistics
+import platform
+import resource
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import time
 from pathlib import Path
@@ -20,7 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from logentra_server.config import Settings
-from logentra_server.database import init_db, make_engine, make_session_factory
+from logentra_server.database import init_db, make_engine
 from logentra_server.utils import utcnow_iso
 
 
@@ -163,6 +166,7 @@ def measure(client, method: str, path: str, repeats: int, warmup: int = 3) -> di
         "n": repeats,
         "p50_ms": round(_pct(times, 0.50), 2),
         "p95_ms": round(_pct(times, 0.95), 2),
+        "p99_ms": round(_pct(times, 0.99), 2),
         "mean_ms": round(statistics.mean(times), 2),
         "max_ms": round(max(times), 2),
         "status": last_status,
@@ -170,7 +174,41 @@ def measure(client, method: str, path: str, repeats: int, warmup: int = 3) -> di
     }
 
 
-def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: str) -> dict:
+def concurrent_measure(client, concurrency, endpoint, samples, body=None):
+    def send(index):
+        started = time.perf_counter()
+        try:
+            if body is None:
+                response = client.get(endpoint)
+            else:
+                response = client.post(endpoint, json={**body, "id": f"bench_{concurrency}_{index}"})
+            status = response.status_code
+        except Exception as error:
+            status = type(error).__name__
+        return (time.perf_counter() - started) * 1000, status
+
+    cpu_started = time.process_time()
+    started = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        outcomes = list(pool.map(send, range(samples)))
+    duration = time.perf_counter() - started
+    times = [elapsed for elapsed, _ in outcomes]
+    counts = {}
+    for _, status in outcomes:
+        counts[str(status)] = counts.get(str(status), 0) + 1
+    errors = sum(not isinstance(status, int) or status >= 400 for _, status in outcomes)
+    return {
+        "concurrency": concurrency, "endpoint": endpoint, "samples": samples,
+        "p50_ms": round(_pct(times, 0.50), 2), "p95_ms": round(_pct(times, 0.95), 2),
+        "p99_ms": round(_pct(times, 0.99), 2), "requests_per_second": round(samples / duration, 2),
+        "error_rate": round(errors / samples, 4), "statuses": counts,
+        "successful_requests_per_second": round((samples - errors) / duration, 2),
+        "process_cpu_percent": round(100 * (time.process_time() - cpu_started) / duration, 2),
+        "process_peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+    }
+
+
+def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: str, levels: list[int]) -> dict:
     from fastapi.testclient import TestClient
     from logentra_server.app import create_app
 
@@ -185,12 +223,24 @@ def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: 
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         seed(conn, n_eq, n_rd, n_wo)
+        query = "SELECT * FROM readings WHERE equipment_id = ? AND parameter_key = ? ORDER BY ts LIMIT 200"
+        parameters = (f"eq_lt_{n_eq // 2:05d}", "vibration")
+        samples = []
+        for _ in range(repeats):
+            started = time.perf_counter()
+            conn.execute(query, parameters).fetchall()
+            samples.append((time.perf_counter() - started) * 1000)
+        query_result = {
+            "sqlite_version": sqlite3.sqlite_version, "p95_ms": round(_pct(samples, 0.95), 3),
+            "plan": [row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + query, parameters)],
+        }
     finally:
         conn.close()
 
     app = create_app(settings)
     results = []
-    with TestClient(app) as client:
+    concurrency_results = []
+    with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as client:
         # pick a mid-range equipment that exists after seed
         mid = f"eq_lt_{n_eq // 2:05d}"
         mid_tag = f"E-{n_eq // 2:05d}"
@@ -206,35 +256,46 @@ def run(url: str, n_eq: int, n_rd: int, n_wo: int, repeats: int, backend_label: 
             row = measure(client, method, path, repeats=repeats)
             print(f"  p50={row['p50_ms']} ms  p95={row['p95_ms']} ms  mean={row['mean_ms']} ms")
             results.append(row)
+        for level in levels:
+            count = max(level * 3, repeats)
+            for _, path in endpoints:
+                concurrency_results.append(concurrent_measure(client, level, path, count))
+            concurrency_results.append(concurrent_measure(client, level, "/api/readings", count, {
+                "equipment_id": mid, "parameter": "vibration", "value": 3.0, "ts": "2026-10-10T12:00:00"
+            }))
+    engine.dispose()
+    app.state.engine.dispose()
     return {
         "backend": backend_label,
-        "database_url": url,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "logical_cpus": os.cpu_count(),
         "seed": {"equipment": n_eq, "readings_per_equipment": n_rd, "work_orders": n_wo},
         "endpoints": results,
+        "query": query_result,
+        "concurrent": concurrency_results,
     }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Logentra OS v0.5 load test")
+    parser = argparse.ArgumentParser(description="Logentra OS synthetic SQLite load test")
     parser.add_argument("--equipment", type=int, default=5000)
     parser.add_argument("--readings-per", type=int, default=100)
     parser.add_argument("--work-orders", type=int, default=2000)
     parser.add_argument("--repeats", type=int, default=30)
     parser.add_argument("--db", default=str(ROOT / "data" / "loadtest.db"))
-    parser.add_argument("--postgres-url", default=os.environ.get("LOGENTRA_LOADTEST_POSTGRES") or os.environ.get("LOGBOOK_LOADTEST_POSTGRES", ""))
+    parser.add_argument("--concurrency", default="", help="Comma-separated client concurrency levels")
     parser.add_argument("--out", default=str(ROOT / "docs" / "load-test-results.json"))
     args = parser.parse_args()
 
-    reports = []
-    sqlite_url = "sqlite:///" + str(Path(args.db).resolve())
-    print("=== SQLite ===")
-    reports.append(run(sqlite_url, args.equipment, args.readings_per, args.work_orders, args.repeats, "sqlite"))
-
-    if args.postgres_url:
-        print("=== PostgreSQL ===")
-        reports.append(run(args.postgres_url, args.equipment, args.readings_per, args.work_orders, args.repeats, "postgresql"))
-    else:
-        print("PostgreSQL skipped (no --postgres-url / LOGENTRA_LOADTEST_POSTGRES). The service was not running on this box.")
+    levels = [int(level) for level in args.concurrency.split(",") if level]
+    if min([args.equipment, args.repeats, *levels]) < 1:
+        parser.error("Asset count, samples and concurrency levels must be positive")
+    db_path = Path(args.db).resolve()
+    if db_path.exists():
+        parser.error("Benchmark requires a fresh SQLite file")
+    sqlite_url = "sqlite:///" + str(db_path)
+    reports = [run(sqlite_url, args.equipment, args.readings_per, args.work_orders, args.repeats, "sqlite", levels)]
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(reports, indent=2), encoding="utf-8")

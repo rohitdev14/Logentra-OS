@@ -51,14 +51,14 @@ def test_ui_smoke_and_swagger_screenshot(live_url):
 
     errors = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(channel="chrome", headless=True, args=["--disable-gpu"])
+        browser = p.chromium.launch(channel=os.getenv("LOGENTRA_TEST_BROWSER_CHANNEL"), headless=True, args=["--disable-gpu"])
         page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}") if msg.type == "error" else None)
         page.on("response", lambda res: print("HTTP", res.status, res.url) if res.status >= 400 else None)
         page.on("dialog", lambda d: d.accept())
 
-        docs_img = ROOT / "docs" / "images"
+        docs_img = SHOT / "docs"
         docs_img.mkdir(parents=True, exist_ok=True)
 
         def hide_toast():
@@ -232,7 +232,7 @@ def test_login_screenshot(tmp_path):
         time.sleep(0.1)
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(channel="chrome", headless=True, args=["--disable-gpu"])
+            browser = p.chromium.launch(channel=os.getenv("LOGENTRA_TEST_BROWSER_CHANNEL"), headless=True, args=["--disable-gpu"])
             page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
             page.goto(f"http://127.0.0.1:{port}/", wait_until="domcontentloaded")
             page.wait_for_selector("#login-gate:not([hidden]), #login-form", timeout=10000)
@@ -240,7 +240,7 @@ def test_login_screenshot(tmp_path):
             login_png = SHOT / "06-login.png"
             page.screenshot(path=str(login_png), full_page=True)
             (ROOT / "docs" / "images").mkdir(parents=True, exist_ok=True)
-            page.screenshot(path=str(ROOT / "docs" / "images" / "login.png"), full_page=True)
+            page.screenshot(path=str(SHOT / "login.png"), full_page=True)
             # successful login should reveal the app
             page.fill("#login-user", "admin")
             page.fill("#login-pass", "adminpass1")
