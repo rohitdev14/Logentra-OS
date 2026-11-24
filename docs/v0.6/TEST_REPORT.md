@@ -27,3 +27,7 @@ Docker, Podman and Buildah were unavailable locally. Container smoke jobs are de
 | Ruff, Python compilation and diff whitespace check | Passed |
 
 The final suite includes cross-site and cross-area denial, scoped imports and exports, approval progression, concurrent replay, SQL audit guards, file publication failure, reconciliation, and nginx TLS ingress. Recovery tests used native SQLite and PostgreSQL backups and verified migration from 0003_v05 through 0006_qualification. Four warnings remained in the final run, including Starlette's HTTPX test client deprecation. Local container execution remains unavailable. The coverage objective remains open, especially on administration and import branches.
+
+## Release completion update
+
+The release completion suite passed 63 tests in 57.44 seconds with four warnings and 80% backend line coverage. It included live Chromium, PostgreSQL, TLS ingress, MQTT restart, scoped evidence and paired recovery. Critical-business-rule coverage was not measured separately. The refreshed pip-audit inventory contained no known advisory matches.

@@ -18,3 +18,7 @@
 - Implemented scoped engineering routes, document area classification, audit protection, file reconciliation and controlled webhook replay.
 - Added instrumented SQLite and PostgreSQL benchmark runs. Fixed an observed concurrent PostgreSQL metadata insertion race.
 - Verified nginx TLS ingress locally and reran the recovery, Chromium and MQTT checks. Docker remains unavailable locally.
+
+## Release completion update
+
+Completion work verified Docker client and Compose availability, identified the socket and sudo restrictions, and added TLS Compose configuration without changing host permissions. Historical scope, scoped Chromium record edits, local authenticated load and paired recovery were exercised. All container gates remain open.

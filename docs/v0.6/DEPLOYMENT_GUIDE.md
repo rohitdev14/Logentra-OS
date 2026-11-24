@@ -38,3 +38,7 @@ Production catalog sync sends the bootstrap meta.catalogRevision value in If-Mat
 ## Qualified TLS ingress
 
 The example in deployment/nginx.conf terminates TLS 1.2 or 1.3, adds HSTS, throttles login and proxies to a loopback application port. Replace the host and certificate paths with deployment values. Run nginx -t before starting it. A local nginx smoke test exercised the example with a trusted temporary certificate and an unprivileged port. Production certificates, routing and container behavior still require environment-specific verification.
+
+## Release completion update
+
+For the nginx, app and PostgreSQL topology use compose.production.yaml together with compose.yaml and the postgres profile. Docker CLI and Compose are installed, but runtime verification still depends on authorized daemon access. See [container qualification](CONTAINER_QUALIFICATION.md).

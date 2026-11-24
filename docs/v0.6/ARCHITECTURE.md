@@ -23,3 +23,7 @@ Equipment tags remain globally unique because existing REST and MQTT tag lookups
 Migration 0006_qualification adds nullable document area classification, replay counters, a recent out-of-range index and database audit triggers. New scoped documents persist site and area at creation. Existing documents remain area-less pending review. Scoped MQTT configuration constrains access to existing assets. Global webhook management remains an unscoped operation.
 
 Document uploads use an exclusive atomic publication step with file and POSIX directory synchronization. Database commit and file publication are separate, so a read-only reconciliation command surfaces interrupted uploads. Replay updates the existing delivery row atomically, preserving payload and event ID.
+
+## Release completion update
+
+The production Compose overlay places PostgreSQL on an internal database network and nginx on ingress. The application connects to both networks, with no direct published app port. The overlay passed static validation. Runtime qualification remains blocked.

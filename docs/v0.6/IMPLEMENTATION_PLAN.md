@@ -9,3 +9,7 @@
 ## Qualification outcome
 
 Scoped operational APIs, replay, audit guards, nginx ingress and reconciliation were implemented and tested. Container execution remains blocked locally. PostgreSQL met the interactive target at 10 users and missed it at 50 and 100. The application stays at 0.5.0 and the remaining release gates are in the [final qualification report](FINAL_QUALIFICATION_REPORT.md).
+
+## Release completion update
+
+The additional host rehearsal closed covered historical-link regressions and the area-restricted record editing path. Container deployment and 50- and 100-user performance remain open. See [the acceptance matrix](RELEASE_ACCEPTANCE_MATRIX.md).

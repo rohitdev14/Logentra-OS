@@ -15,7 +15,7 @@ All paths below are relative to /api unless shown otherwise. An unscoped princip
 | POST /sites, POST /sites/{sid}/areas, DELETE /sites/{sid} | Unscoped users.manage. |
 | GET /dashboard | equipment.read, readings.read, workorders.read and documents.read. Scope filters each domain. |
 | GET /bootstrap | equipment.read. Records, logs and templates require their respective read permission. |
-| PUT /sync | Unscoped. Permissions checked per section. settings.manage for fields/presets, equipment.write for equipment, templates.write for templates, records.write plus signoff when applicable for records. Production requires If-Match. |
+| PUT /sync | Scoped callers may submit only equipment and records, with permission and object scope checked inside the catalog transaction. Permissions are checked per section. settings.manage for fields/presets, equipment.write for equipment, templates.write for templates, records.write plus signoff when applicable for records. Production requires If-Match. |
 | POST /demo, DELETE /data, POST /migrate/v2, POST /migrate/v2/file | Unscoped settings.manage. |
 | GET /fields, /equipment, /equipment/{eid} | equipment.read. Equipment lookups scoped. Fields are shared. |
 | POST /equipment, POST /equipment/bulk, PATCH/DELETE /equipment/{eid} | equipment.write. Existing asset and destination scope checked. Scoped users cannot move assets. |
@@ -50,4 +50,4 @@ All paths below are relative to /api unless shown otherwise. An unscoped princip
 | GET /audit | Unscoped audit.read. |
 | MQTT subscriber | Operator-configured broker connection. Optional site and area bind readings to existing assets. Broker ACL controls which publishers can reach ingress. |
 
-Remaining scope verification includes legacy cross-linked rows, mixed-scope browser catalog writes, and a negative test for each method and endpoint combination. Existing area-less documents keep their previous classification. Reclassification requires explicit administrative review.
+Historical evidence links are checked for scoped document and work-order access. A local scoped Chromium record workflow passed. Remaining verification includes the full containerized role and endpoint matrix. Existing area-less documents keep their previous classification. Reclassification requires explicit administrative review.

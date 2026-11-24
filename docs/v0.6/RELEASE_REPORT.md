@@ -45,3 +45,7 @@ Before tagging 0.6.0, qualify production access and recovery on the target topol
 ## Final qualification update
 
 Final qualification adds scoped operational workflows, protective audit triggers, evidence reconciliation, replay and a tested nginx example. PostgreSQL meets the provisional target at 10 users and misses it at 50 and 100. Container execution remains blocked locally. The updated decision and commit references are in the [final qualification report](FINAL_QUALIFICATION_REPORT.md).
+
+## Release completion update
+
+The release completion checks retain the 0.5.0 version. See [the final qualification report](FINAL_QUALIFICATION_REPORT.md) for current measurements and blocked criteria.

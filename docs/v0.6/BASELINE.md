@@ -17,3 +17,7 @@ FastAPI composes modular routers with a large remaining catalog/readings API. SQ
 ## Final qualification checkpoint
 
 The checkpoint at c9278a6 reproduced all 56 tests with 79% coverage in 45.10 s. The prior SQLite scale experiment was rerun from a detached worktree. PostgreSQL received a new baseline using the same harness and seed size. The reproducible before-and-after results are in [Performance report](PERFORMANCE_REPORT.md).
+
+## Release completion update
+
+The release completion checkpoint is a83562b. The first equivalent host TLS baseline uses distinct technician API keys and a mixed six-operation workload. See [the production benchmark](PRODUCTION_BENCHMARK.md).

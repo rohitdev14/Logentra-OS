@@ -145,3 +145,7 @@ The indexed raw readings query measured P95 0.886 / 0.458 ms.
 - Work-order listing replaced per-row equipment and user lookups with batched lookups. The qualified endpoint issued 3–4 SQL statements in the sequential open-mode sample. The authenticated sample issued 7–8 statements and moved median latency from 8.42 to 11.96 ms. At 50 users, the same profile measured 657.37 ms P95 open and 958.76 ms authenticated. The default pool size was five with overflow enabled. Pool queue time and serializer CPU were not isolated by this sample.
 - Concurrent first readings on PostgreSQL raced to insert a shared timestamp row. The checkpoint had six IntegrityError responses at 10 threads; an intermediate candidate still showed eight. A conditional atomic upsert fixed the conflict in the final rerun. One PostgreSQL rerun initially stopped when the temporary filesystem filled. Releasing completed synthetic datasets and rerunning against a fresh database resolved it.
 - PostgreSQL candidate interactive P95 was 123–160 ms at 10 users, 788–967 ms at 50, and 1,456–2,186 ms at 100. The 50- and 100-user targets remain unmet. This is an in-process qualification, and external HTTP load profiling of the production topology is still needed.
+
+## Release completion update
+
+The follow-up used authenticated real HTTPS traffic through local nginx. Results and the four-process experiment are in [the production benchmark](PRODUCTION_BENCHMARK.md).

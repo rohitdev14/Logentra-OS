@@ -20,3 +20,7 @@ Negative tests cover network access, invalid configuration, request size, thrott
 - SQLite and PostgreSQL block audit rewrites and deletion. PostgreSQL also blocks truncation with a trigger. Authorized user deletion can detach an audit account reference while retaining actor and evidence fields.
 - Audit snapshots can be fingerprinted for offline comparison. Store the trusted fingerprint separately. Database owners and filesystem administrators remain outside this guarantee.
 - Ran nginx with a test certificate and verified HTTPS readiness, HSTS, production anonymous denial and edge login throttling. Docker and target ingress remain unqualified.
+
+## Release completion update
+
+Historical document and work-order scope now checks linked operational evidence. The release security checks and limits are in [Security verification](SECURITY_VERIFICATION.md).

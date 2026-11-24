@@ -30,3 +30,7 @@ With writers stopped, run the following from the application root against the re
     python -m scripts.verify_evidence
 
 The JSON output reports the audit fingerprint, corrupt or missing referenced document versions, and unreferenced published or staged files. Compare a known snapshot with --expected-audit-sha256. Store the trusted fingerprint separately and compare matching snapshots because new audit entries change it. Preserve unreferenced files for investigation. Restore corrupt evidence only from a paired verified backup. Automated cleanup is deliberately absent so a live or historical file cannot be discarded by this check.
+
+## Release completion update
+
+The follow-up restored an actual approved document and its bytes, a signed record and its revision, a viewer account, a pending delivery and the audit fingerprint. See [the disaster recovery report](DISASTER_RECOVERY_REPORT.md).

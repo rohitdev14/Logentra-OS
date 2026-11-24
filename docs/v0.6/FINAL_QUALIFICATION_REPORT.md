@@ -2,56 +2,43 @@
 
 ## Executive summary
 
-Release acceptance remains open. The hardening branch now supports area-scoped operational APIs, database-level audit guards, verification of evidence files, bounded dead-letter replay and a locally verified TLS ingress example. The final suite passed 62 tests with 80% backend line coverage. PostgreSQL met the interactive latency target at 10 users and missed it at 50 and 100. Docker execution and target production deployment remain unverified. The application version stays at 0.5.0.
+Logentra OS remains a release candidate at 0.5.0. The completion work added a production Compose overlay, historical linked-evidence protections, scoped browser record editing, authenticated HTTPS benchmarking and a richer backup and recovery rehearsal. The Docker client is installed, but this WSL session still cannot access the daemon socket. The full local suite passed 63 tests with 80% backend line coverage. The 50- and 100-user PostgreSQL latency target remains unmet. No v0.6.0 tag was created.
 
-## Original acceptance criteria and disposition
+## Release gates
 
-| Gate | Status | Evidence |
+| Criterion | Status | Evidence |
 | --- | --- | --- |
-| Recoverable checkpoint and reproducible baseline | Verified | c9278a6 retained as checkpoint/v0.6-before-final-qualification. The 56-test baseline and SQLite scale run were reproduced. |
-| Endpoint permission review and scoped writes | Partial | Endpoint matrix and positive and negative cross-scope API tests. Legacy cross-linked rows, scoped browser catalog editing and route-by-route negative coverage remain open. |
-| PostgreSQL and SQLite benchmarks with 5,000 assets, 500,000 readings and 2,000 work orders | Measured | Separate before and after benchmarks at 10, 50 and 100 in-process users. PostgreSQL target missed at 50 and 100. |
-| Tamper-resistant audit and evidence recovery | Verified within tested boundaries | Triggers on both databases, PostgreSQL truncate denial, staged uploads, checksum and orphan reconciliation. Database-owner resistance and full production restore drills remain open. |
-| Webhook replay and MQTT recovery | Verified at local test scale | Replay preserves event ID and payload and does not rerun business writes. 100 local HTTP deliveries succeeded on their first attempt. Live MQTT reconnect and ingestion were verified. |
-| Production container and TLS qualification | Partial | Local nginx HTTPS, HSTS, anonymous denial and login throttle verified. No local container runtime and no target ingress certificate or environment. |
-| Full regression suite and coverage expansion | Verified, coverage short of objective | 62 passed, 80% backend line coverage. Repeat advisory scan found no known vulnerabilities in its inventory. |
+| Production container deployment verified | BLOCKED | Docker socket access denied. Combined production Compose configuration parsed successfully. |
+| Container persistence and restart recovery | BLOCKED | Local process recovery passed. Container lifetime and volume behavior require daemon access. |
+| PostgreSQL production performance qualified | FAIL | 50- and 100-user P95 exceeded 300 ms through host HTTPS ingress. Qualified container measurements are unavailable. |
+| Scoped browser workflows verified | BLOCKED | Local Chromium verified area-restricted record creation and update. Full containerized role coverage remains open. |
+| Historical cross-link authorization verified | PASS | Parent and linked-data scope checks cover documents and work orders. Regressions verify list, detail, download and mutation denial. |
+| Complete deployment recovery rehearsal | BLOCKED | SQLite and PostgreSQL paired restore passed on the host. Full container rehearsal remains open. |
+| Critical automated tests | PASS | 63 passed, including migration, browser, recovery, audit and integration checks. |
+| No unresolved critical security defects | BLOCKED | No critical defects were observed in tested paths. Image and target topology verification remain open. |
+| Existing functionality preserved | PASS | Existing automated coverage retained. |
+| Database migration compatibility | PASS | v0.5 migrations and native restore passed on SQLite and PostgreSQL. |
+| Release documentation | PASS | Completion reports and measurements committed. |
 
-## Before-and-after performance
+## Previous versus current evidence
 
-| PostgreSQL interactive endpoints | Checkpoint P95 range | Qualified P95 range |
-| --- | ---: | ---: |
-| 10 users | 153–558 ms | 123–160 ms |
-| 50 users | 869–3,082 ms | 788–967 ms |
-| 100 users | 1,379–5,218 ms | 1,456–2,186 ms |
+The previous suite had 62 passing tests and 80% backend line coverage. The current suite had 63 passing tests and 80% backend line coverage. This percentage measures backend lines. A critical-business-rule coverage metric was not captured, and the 90% objective remains open.
 
-At 100 users, work-order P95 fell from 5,218.19 to 1,455.54 ms. Indexed out-of-range sorting preserved the legacy fallback predicate. At 10 users, the candidate removed six PostgreSQL ingestion failures seen at the checkpoint. Both qualified backend runs had zero request errors. SQLite changed unevenly under concurrent load. The full report has P50, P95, P99, per-endpoint throughput and errors, CPU, memory and authentication profile results. [Performance report](PERFORMANCE_REPORT.md)
+The previous PostgreSQL runs were in-process. The new runs use real authenticated HTTP through host nginx TLS ingress with 5,000 assets, 500,000 readings and 2,000 work orders. All five interactive endpoints passed 300 ms P95 at 10 users, and all missed it at 50 and 100. At 100 users the single-process interactive P95 ranged from 1,476 to 1,507 ms, with zero errors. The sustained run verified 597 acknowledged writes. Four processes consumed more memory and connections and produced worse observed tail latency. [Production benchmark](PRODUCTION_BENCHMARK.md)
 
-## Security verification matrix
+## Security, deployment and recovery
 
-| Boundary | Verification |
-| --- | --- |
-| Equipment, records and work orders | Scoped allowed actions and rejected foreign-resource writes. Asset classification changes remain unscoped. |
-| Readings, exports and imports | Scoped CSV rows, rejected cross-site file ingestion and transactional rollback for a mixed-scope batch. Global backup exports and catalog synchronization remain unscoped. |
-| Document approvals | Same-area approval and cross-site denial, with step permission and checksum checks retained. Older documents have no inferred area. |
-| Integration control | Scoped access denied for delivery administration. Replay requires a reason, dead state and an enabled destination with a bounded replay count. Concurrent requests permit one replay. |
-| Audit and filesystem | Both databases deny direct audit rewrites and deletion. PostgreSQL denies truncate. Failed file publication removes staging. Reconciliation identifies unreferenced files without deleting them. |
-| TLS boundary | HTTPS readiness, HSTS, anonymous denial and login throttling tested against an unprivileged local nginx process. |
+The historical scope guard covers direct equipment links, records, readings, annotations and punches in work orders and transitive document links. Scoped catalog writes validate equipment and records inside the catalog transaction. The local Chromium workflow verified creation and revision of a record by an area-restricted technician and exclusion of the out-of-scope asset from selection. The dependency scan reported no known vulnerabilities in the resolved inventory. [Security verification](SECURITY_VERIFICATION.md)
 
-The [endpoint matrix](AUTHORIZATION_MATRIX.md) lists permissions and scope rules. External webhook consumers must deduplicate by delivery ID to prevent repeated consumer-side effects after transport failure.
+Docker Engine 29.1.3 and Compose 2.40.3 are installed, but docker ps and project build both failed on socket permissions. Non-interactive sudo requires authentication. No host permission change was made. Local nginx verified TLS, HSTS, anonymous denial and throttling. [Container qualification](CONTAINER_QUALIFICATION.md)
 
-## Test and deployment verification
+Separate SQLite and PostgreSQL restores preserved readings, work orders, a signed record, approved document bytes, audit fingerprints, viewer permissions and queued webhook delivery. Restoration to verified evidence took 0.213 seconds on SQLite and 0.400 seconds on PostgreSQL for the small fixture. Host process restart tests retained the committed proof reading. Those measurements exclude container provisioning and production operational recovery. [Disaster recovery report](DISASTER_RECOVERY_REPORT.md)
 
-The local SQLite and PostgreSQL suites exercised migrations, native backup and restoration, and data preservation. Chromium verified the existing workflows and save-conflict handling. Live Mosquitto verified reconnection and ingestion after restart. The suite retained the original regression tests and added qualification cases. Four warnings remained. See the [test report](TEST_REPORT.md).
+## Acceptance decision and local commits
 
-No Docker, Podman or Buildah executable was available. A PostgreSQL benchmark retry initially ran out of temporary storage. Completed synthetic datasets were removed and a fresh run finished. nginx, PostgreSQL, Chromium and Mosquitto ran from isolated local paths. The SQLite and PostgreSQL recovery checks verified restored records and attachment bytes. A deployment-sized paired restore with operator-managed certificates, mounts and broker credentials remains unverified. See the [deployment guide](DEPLOYMENT_GUIDE.md) and [recovery guide](RECOVERY_GUIDE.md).
+Retain 0.5.0. Before release, obtain authorized Docker daemon access, qualify the two container profiles and storage recovery, repeat authenticated ingress load on the production topology, and verify the complete scoped-browser role matrix there.
 
-## Outstanding limitations and decision
-
-The release candidate remains at 0.5.0. Before 0.6.0, verify PostgreSQL P95 under 50 and 100 users on the production HTTP topology, run both container profiles and exercise persistence and restart, complete scoped browser and historical cross-link verification, and rehearse full-system restoration on the target deployment. Extend critical-path coverage and isolate pool wait and serialization overhead during further profiling.
-
-## Git references
-
-- c9278a6 is the pre-qualification checkpoint.
-- de68861 adds scoped APIs, audit protections, reconciliation and replay.
-- 57fede4 adds the PostgreSQL benchmark path, nginx configuration and qualification tests.
-- This report and the updated engineering reports are committed locally on release/v0.6-production-hardening.
+- a83562b is the pre-completion checkpoint and remains referenced by checkpoint/v0.6-before-release-completion.
+- 8db073e adds historical evidence scope and the local scoped browser workflow.
+- a604a3d prepares the TLS Compose topology and exercises paired recovery.
+- The acceptance matrix records the exact remaining requirements. [Release acceptance matrix](RELEASE_ACCEPTANCE_MATRIX.md)
