@@ -1,0 +1,38 @@
+services:
+  app:
+    build: .
+    environment:
+      LOGENTRA_PROFILE: production
+      LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:-sqlite:////app/data/logentra.db}
+      LOGENTRA_CORS_ORIGINS: ${LOGENTRA_CORS_ORIGINS:-}
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - logentra-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/ready', timeout=3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+  postgres:
+    image: postgres:17
+    profiles: [postgres]
+    environment:
+      POSTGRES_DB: logentra
+      POSTGRES_USER: logentra
+      POSTGRES_PASSWORD: ${LOGENTRA_POSTGRES_PASSWORD:-}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "logentra", "-d", "logentra"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+volumes:
+  logentra-data:
+  postgres-data:

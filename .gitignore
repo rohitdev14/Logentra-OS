@@ -38,3 +38,7 @@ data/*.db
 data/attachments/
 loadtest-results.json
 *.pyc
+
+.env
+.env.*
+!.env.example
