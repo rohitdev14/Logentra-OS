@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -31,6 +31,8 @@ class OutboundWebhookConfig(BaseModel):
 
 
 class Settings(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     profile: Literal["standalone", "development", "production"] = "standalone"
     cors_origins: list[str] = Field(default_factory=list)
     request_limit_bytes: int = Field(30 * 1024 * 1024, ge=1024)

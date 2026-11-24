@@ -229,6 +229,19 @@
     });
   }
 
+  async function resumeAfterLogin(user) {
+    if (dirtyCatalog && user && state.me && user.id === state.me.id) {
+      state.me = user;
+      if (!blockedSave) persist();
+      return;
+    }
+    if (dirtyCatalog && !window.confirm("Discard the previous session's unsaved changes?")) {
+      window.LogbookAPI.setToken("");
+      throw new Error("Sign in with the previous account to retain its edits.");
+    }
+    await loadStore();
+  }
+
   async function deleteCatalog(kind, id, after) {
     await saveQueue;
     if (dirtyCatalog) {
@@ -2428,7 +2441,7 @@
     version: APP_VERSION,
     product: PRODUCT_NAME,
     getState: () => state,
-    loadDemo, persist, render, loadStore,
+    loadDemo, persist, render, loadStore, resumeAfterLogin,
     _ui: ui,
     _toast: toast,
     goto: (v, extra) => {

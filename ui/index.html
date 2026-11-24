@@ -1933,6 +1933,19 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     });
   }
 
+  async function resumeAfterLogin(user) {
+    if (dirtyCatalog && user && state.me && user.id === state.me.id) {
+      state.me = user;
+      if (!blockedSave) persist();
+      return;
+    }
+    if (dirtyCatalog && !window.confirm("Discard the previous session's unsaved changes?")) {
+      window.LogbookAPI.setToken("");
+      throw new Error("Sign in with the previous account to retain its edits.");
+    }
+    await loadStore();
+  }
+
   async function deleteCatalog(kind, id, after) {
     await saveQueue;
     if (dirtyCatalog) {
@@ -4132,7 +4145,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     version: APP_VERSION,
     product: PRODUCT_NAME,
     getState: () => state,
-    loadDemo, persist, render, loadStore,
+    loadDemo, persist, render, loadStore, resumeAfterLogin,
     _ui: ui,
     _toast: toast,
     goto: (v, extra) => {
@@ -4281,13 +4294,13 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       const pass = document.getElementById("login-pass").value;
       const err = document.getElementById("login-error");
       try {
-        await global.LogbookAPI.login(user, pass);
-        hideLogin();
-        if (global.Logbook && global.Logbook.loadStore) {
-          const s = await global.Logbook.loadStore();
-          // loadStore assigns state internally; re-render
+        const result = await global.LogbookAPI.login(user, pass);
+        if (global.Logbook) {
+          await global.Logbook.resumeAfterLogin(result.user);
           global.Logbook.render();
         }
+        document.getElementById("login-pass").value = "";
+        hideLogin();
       } catch (e) {
         if (err) { err.hidden = false; err.textContent = e.message || "Sign-in failed"; }
       }

@@ -52,6 +52,8 @@ def pg_command(name: str, url, *options: str) -> None:
 def backup(database_url: str, attachments: Path, destination: Path) -> None:
     url = make_url(database_url)
     backend = url.get_backend_name()
+    if destination.resolve().is_relative_to(attachments.resolve()):
+        raise ValueError("Backup directory must be outside the attachment tree")
     destination.mkdir(mode=0o700, parents=True)
     try:
         if backend == "sqlite":

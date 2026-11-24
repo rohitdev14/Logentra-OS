@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
 
 
 def make_engine(url: str):
-    kwargs = {"future": True}
+    kwargs = {"future": True, "hide_parameters": True}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     else:

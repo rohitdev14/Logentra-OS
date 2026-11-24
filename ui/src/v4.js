@@ -127,13 +127,13 @@
       const pass = document.getElementById("login-pass").value;
       const err = document.getElementById("login-error");
       try {
-        await global.LogbookAPI.login(user, pass);
-        hideLogin();
-        if (global.Logbook && global.Logbook.loadStore) {
-          const s = await global.Logbook.loadStore();
-          // loadStore assigns state internally; re-render
+        const result = await global.LogbookAPI.login(user, pass);
+        if (global.Logbook) {
+          await global.Logbook.resumeAfterLogin(result.user);
           global.Logbook.render();
         }
+        document.getElementById("login-pass").value = "";
+        hideLogin();
       } catch (e) {
         if (err) { err.hidden = false; err.textContent = e.message || "Sign-in failed"; }
       }
