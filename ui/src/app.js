@@ -165,6 +165,23 @@
     el.classList.toggle("err", !ok);
   }
 
+  const catalogSections = ["equipmentFields", "equipment", "templates", "records", "paramPresets"];
+  let savedCatalog = {};
+  let dirtyCatalog = false;
+  let saveQueue = Promise.resolve();
+  let blockedSave = false;
+
+  function catalogSnapshot() {
+    return Object.fromEntries(catalogSections.map((key) => [key, JSON.stringify(state[key])]));
+  }
+
+  window.addEventListener("beforeunload", (event) => {
+    if (dirtyCatalog) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
+
   function persist() {
     state.meta.updatedAt = new Date().toISOString();
     state.meta.version = 4;
@@ -173,9 +190,41 @@
       try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (err) { toast("Could not save: " + err.message); }
       return;
     }
-    api.sync(state).then(() => setApiBadge(true, "Database connected")).catch((err) => {
-      setApiBadge(false, "Save failed");
-      toast("Could not save to the database: " + err.message);
+    const current = state;
+    dirtyCatalog = true;
+    setApiBadge(true, "Saving…");
+    saveQueue = saveQueue.then(async () => {
+      if (state !== current || blockedSave) return;
+      const snapshot = catalogSnapshot();
+      const payload = Object.fromEntries(catalogSections.filter((key) => snapshot[key] !== savedCatalog[key])
+        .map((key) => [key, JSON.parse(snapshot[key])]));
+      if (!Object.keys(payload).length) {
+        dirtyCatalog = false;
+        setApiBadge(true, "Database connected");
+        return;
+      }
+      try {
+        const saved = await api.sync(payload, current.meta.catalogRevision);
+        if (state !== current) return;
+        const revisions = saved.recordRevisions || {};
+        current.meta.catalogRevision = saved.catalogRevision;
+        for (const record of current.records) {
+          if (revisions[record.id]) record.revision = revisions[record.id];
+        }
+        if (payload.records) {
+          for (const record of payload.records) {
+            if (revisions[record.id]) record.revision = revisions[record.id];
+          }
+          snapshot.records = JSON.stringify(payload.records);
+        }
+        savedCatalog = snapshot;
+        dirtyCatalog = catalogSections.some((key) => JSON.stringify(current[key]) !== savedCatalog[key]);
+        setApiBadge(true, dirtyCatalog ? "Unsaved changes" : "Database connected");
+      } catch (err) {
+        blockedSave = err.status === 409 || err.status === 428;
+        setApiBadge(false, blockedSave ? "Save conflict · changes unsaved" : "Save failed · changes unsaved");
+        toast("Could not save to the database: " + err.message);
+      }
     });
   }
 
@@ -268,6 +317,9 @@
         next.auth_mode = data.auth_mode || (data.me && data.me.mode) || "open";
         next.equipmentIndex = data.equipmentIndex || (next.equipment || []).map((e) => ({ id: e.id, tag: e.tag }));
         state = next;
+        savedCatalog = catalogSnapshot();
+        dirtyCatalog = false;
+        blockedSave = false;
         return state;
       } catch (err) {
         if (err.status === 401) {
@@ -2183,7 +2235,7 @@
       const after = () => { state = emptyState(); render(); toast("All data cleared."); };
       if (window.LogbookAPI) {
         window.LogbookAPI.clear().then(async () => {
-          state = normalize(await window.LogbookAPI.bootstrap());
+          await loadStore();
           render(); toast("All data cleared.");
         }).catch((err) => toast("Clear failed: " + err.message));
       } else after();
@@ -2257,7 +2309,7 @@
             const replace = mode === "replace";
             window.LogbookAPI.migrateV2(data).then(async () => {
               if (!replace) { /* server default is replace; catalog already in DB */ }
-              state = normalize(await window.LogbookAPI.bootstrap());
+              await loadStore();
               renderSoon(); toast("JSON import complete.");
             }).catch((err) => toast("Import failed: " + err.message));
           } else {

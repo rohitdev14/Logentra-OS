@@ -49,16 +49,6 @@
     return res;
   }
 
-  function catalogPayload(state) {
-    return {
-      equipmentFields: state.equipmentFields,
-      equipment: state.equipment,
-      templates: state.templates,
-      records: state.records,
-      paramPresets: state.paramPresets
-    };
-  }
-
   function logToReadings(entry) {
     const readings = entry.readings || {};
     const anns = entry.annotations || {};
@@ -89,7 +79,7 @@
   const api = {
     health: () => req("GET", "/health"),
     bootstrap: () => req("GET", "/bootstrap"),
-    sync: (state) => req("PUT", "/sync", catalogPayload(state)),
+    sync: (payload, revision) => req("PUT", "/sync", payload, { headers: revision ? { "If-Match": revision } : {} }),
     loadDemo: () => req("POST", "/demo"),
     clear: () => req("DELETE", "/data"),
     migrateV2: (data) => req("POST", "/migrate/v2", data),
