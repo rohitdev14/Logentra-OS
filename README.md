@@ -75,6 +75,15 @@ The display name lives in [`logentra_server/branding.py`](logentra_server/brandi
 
 The offline single-file app needs no install: open `standalone/Logbook.html` in a browser.
 
+## v0.6 hardening branch
+
+The development branch adds configuration profiles, engineering write protections, queued integrations and native recovery tooling. The application reports v0.5.0 until the release gates are met.
+
+- [Deployment and upgrade guide](docs/v0.6/DEPLOYMENT_GUIDE.md)
+- [Backup and recovery guide](docs/v0.6/RECOVERY_GUIDE.md)
+- [Release verification](docs/v0.6/RELEASE_REPORT.md)
+- [Roadmap](docs/ROADMAP.md)
+
 ## Architecture
 
 ```

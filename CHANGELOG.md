@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased v0.6 hardening
+
+- Added production profiles, loopback standalone limits, CORS configuration, login throttling, API key expiry and scoped data guards.
+- Added catalog generations, record and document concurrency checks, checksum verification and signed evidence protections.
+- Added queued webhook delivery, retry and dead-letter states, MQTT reconnect and integration health.
+- Added non-root deployment definitions, native recovery, regression coverage and browser save-conflict feedback.
+
+See the [release report](docs/v0.6/RELEASE_REPORT.md) for compatibility changes and outstanding gates.
+
 ## 0.5.0 – early release
 
 The product is named **Logentra OS** (Logbook + Engineering + Traceability). Display name, short name, and tagline live in [`logentra_server/branding.py`](logentra_server/branding.py). The Python package directory is now `logentra_server` (a `logbook_server` import shim remains). User-facing environment variables are `LOGENTRA_*`; the older `LOGBOOK_*` names are still accepted as a deprecated fallback.

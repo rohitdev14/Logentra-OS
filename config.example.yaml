@@ -1,6 +1,18 @@
 # Copy this file to config.yaml (same folder as run.py) or set LOGENTRA_* environment variables
 # (deprecated LOGBOOK_* names are still accepted).
 
+# standalone (default), development, or production.
+# For production defaults, omit standalone-specific auth_mode and session_days below.
+profile: standalone
+cors_origins: []
+request_limit_bytes: 31457280
+upload_limit_bytes: 26214400
+login_attempts_per_minute: 10
+api_key_days: 90
+webhook_attempts: 5
+webhook_backoff_seconds: 5
+webhook_private_destinations: false
+
 host: 127.0.0.1
 port: 8787
 open_browser: true
@@ -24,7 +36,7 @@ session_days: 7
 
 # Optional legacy / global API key. When set in open mode, every /api route except
 # /api/health requires  X-API-Key: <key>  or  Authorization: Bearer <key>.
-# In users mode it is also accepted as an admin credential.
+# In non-production users mode it is also accepted as an admin credential.
 api_key: ""
 
 # Optional MQTT subscriber. Leave enabled: false if you have no broker.
@@ -32,6 +44,7 @@ mqtt:
   enabled: false
   host: 127.0.0.1
   port: 1883
+  tls: false
   username: ""
   password: ""
   client_id: logentra
@@ -46,6 +59,6 @@ mqtt:
 
 # Optional outbound webhooks registered at first start (you can also POST /api/webhooks).
 # outbound_webhooks:
-#   - url: http://127.0.0.1:9000/hook
+#   - url: https://example.com/hook
 #     events: [out_of_range]
 #     secret: ""
