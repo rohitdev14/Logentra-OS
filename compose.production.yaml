@@ -3,7 +3,7 @@ services:
     ports: !reset []
     environment:
       LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:?Set the dedicated PostgreSQL connection URL}
-      LOGENTRA_WORKERS: ${LOGENTRA_WORKERS:-2}
+      LOGENTRA_WORKERS: ${LOGENTRA_WORKERS:-0}  # 0 = automatic (3 with 4+ CPUs, else 2)
       # The app is reachable only from the nginx container on the private ingress
       # network, and nginx overwrites X-Forwarded-For, so private ranges are safe here.
       LOGENTRA_TRUSTED_PROXIES: ${LOGENTRA_TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}

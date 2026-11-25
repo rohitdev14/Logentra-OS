@@ -34,3 +34,14 @@ def test_login_throttle_settings_from_environment(monkeypatch):
     settings = load_settings(None)
     assert settings.trusted_proxies == ["172.16.0.0/12", "10.0.0.5"]
     assert settings.login_attempts_per_minute == 7
+
+
+def test_default_worker_count(monkeypatch):
+    import run
+    from logentra_server.config import Settings
+    pg = "postgresql+psycopg://u:p@db/x"
+    monkeypatch.setattr(run.os, "sched_getaffinity", lambda _pid: set(range(8)), raising=False)
+    assert run.default_workers(Settings(profile="production", database_url=pg)) == 3
+    monkeypatch.setattr(run.os, "sched_getaffinity", lambda _pid: {0}, raising=False)
+    assert run.default_workers(Settings(profile="production", database_url=pg)) == 2
+    assert run.default_workers(Settings(database_url="sqlite:///x.db")) == 1
