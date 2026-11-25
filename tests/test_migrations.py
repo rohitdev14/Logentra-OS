@@ -46,7 +46,7 @@ def test_alembic_upgrade_from_empty(tmp_path):
     assert "ix_readings_eq_ts" in reading_indexes
     with engine.begin() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0008_qr_tags"
+        assert version == "0009_shift_handover"
 
 
 def test_alembic_upgrade_from_v03(tmp_path):
@@ -88,7 +88,7 @@ def test_alembic_stamp_legacy_v03_file(tmp_path):
         tag = conn.execute(text("SELECT tag FROM equipment WHERE id='eq_1'")).scalar()
         assert tag == "LEG-1"
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0008_qr_tags"
+        assert version == "0009_shift_handover"
 
 
 def test_qr_migration_round_trip(tmp_path):
