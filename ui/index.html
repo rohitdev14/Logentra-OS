@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <title>Logentra OS v0.6.1 — The logbook that stays yours.</title>
+  <title>Logentra OS v0.7.0 — The logbook that stays yours.</title>
   <script>
     (function () {
       try {
@@ -1095,6 +1095,28 @@ body.login-open .app { display: none; }
 #qr-storage:not([hidden]) {margin-bottom:1rem}
 @media(max-width:900px){.qr-desktop{grid-template-columns:1fr}}
 
+/* Shift log and handover timeline */
+.shift-layout {display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr);gap:1rem;align-items:start}
+.shift-context {margin:0 0 1rem}
+.shift-context select {min-width:12rem}
+.shift-handover .btn[type="submit"] {width:100%}
+.shift-timeline {display:grid;gap:.6rem;margin:.75rem 0}
+.shift-entry {border-left:3px solid var(--line);margin:.55rem 0}
+.shift-meta,.shift-steps {font-size:.86rem}
+.shift-body {white-space:pre-wrap;overflow-wrap:anywhere}
+.shift-item {padding:.35rem 0}
+.shift-item-group {margin:0 0 .75rem}
+.shift-item small {margin-left:.4rem}
+.shift-banner {padding:.8rem 1rem;border:1px solid var(--line);border-radius:.5rem;margin:0 0 1rem;font-size:1rem}
+.shift-layout code {overflow-wrap:anywhere}
+.shift-dialog {max-width:min(520px,92vw);width:100%;border:1px solid var(--line);border-radius:.7rem;padding:1.3rem;background:var(--bg);color:var(--ink)}
+.shift-dialog::backdrop {background:#0007}
+.shift-admin-form {max-width:42rem;margin:1rem 0}
+.shift-later label {display:block;margin:.4rem 0}
+.shift-table {overflow:auto;margin:.7rem 0}
+#handover-dashboard:not([hidden]) {margin-bottom:1rem}
+@media(max-width:880px){.shift-layout{grid-template-columns:minmax(0,1fr)}}
+
   </style>
 </head>
 <body>
@@ -1114,7 +1136,7 @@ body.login-open .app { display: none; }
         <p id="login-error" class="form-error" hidden></p>
         <button type="submit" class="btn btn-primary" style="width:100%;margin-top:.6rem">Sign in</button>
       </form>
-      <p class="tiny" style="margin-top:1rem">On-prem v0.6.1. Create the first admin with <code>python run.py create-admin</code>.</p>
+      <p class="tiny" style="margin-top:1rem">On-prem v0.7.0. Create the first admin with <code>python run.py create-admin</code>.</p>
     </div>
   </div>
   <div class="app" id="app-shell">
@@ -1124,7 +1146,7 @@ body.login-open .app { display: none; }
         <div>
           <h1 data-product-name>Logentra OS</h1>
           <div class="tagline">The logbook that stays yours.</div>
-          <div class="sub">v0.6.1</div>
+          <div class="sub">v0.7.0</div>
         </div>
       </div>
       <div class="nav-label">Operations</div>
@@ -1132,6 +1154,8 @@ body.login-open .app { display: none; }
         <button type="button" data-view="dashboard"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span class="lbl">Dashboard</span></button>
         <button type="button" data-view="equipment"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg><span class="lbl">Equipment</span></button>
         <button type="button" data-view="workorders"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="lbl">Work orders</span><span class="count" id="nav-wo-count" hidden></span></button>
+        <button type="button" data-view="shiftLog" data-need-perm="shiftlog.read"><span class="icon" aria-hidden="true">◷</span><span class="lbl">Shift log</span></button>
+        <button type="button" data-view="handover" data-need-perm="shiftlog.read"><span class="icon" aria-hidden="true">↔</span><span class="lbl">Handover</span><span class="count" id="nav-handover-count" hidden></span></button>
         <button type="button" data-view="approvals" data-need-perm="documents.read"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 15 2 2 4-4"/></svg><span class="lbl">Approvals</span><span class="count" id="nav-appr-count" hidden></span></button>
         <button type="button" data-view="trends"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><span class="lbl">Trends</span></button>
         <button type="button" data-view="logbook"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg><span class="lbl">Logs</span></button>
@@ -1143,6 +1167,7 @@ body.login-open .app { display: none; }
         <button type="button" data-view="users" data-need-perm="users.manage"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="lbl">Users &amp; roles</span></button>
         <button type="button" data-view="routes" data-need-perm="routes.manage"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 15 2 2 4-4"/></svg><span class="lbl">Approval routes</span></button>
         <button type="button" data-view="import"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg><span class="lbl">Import</span></button>
+        <button type="button" data-view="rosters" data-need-perm="shifts.manage"><span class="icon" aria-hidden="true">▦</span><span class="lbl">Shifts &amp; rosters</span></button>
         <button type="button" data-view="backup"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg><span class="lbl">Backup</span></button>
       </nav>
       <div class="sidebar-foot">
@@ -1178,7 +1203,7 @@ body.login-open .app { display: none; }
     </div>
   </div>
   <script>
-window.LOGENTRA_PRODUCT = { name: "Logentra OS", short: "Logentra", initials: "LO", version: "0.6.1", label: "v0.6.1", tagline: "The logbook that stays yours." };
+window.LOGENTRA_PRODUCT = { name: "Logentra OS", short: "Logentra", initials: "LO", version: "0.7.0", label: "v0.7.0", tagline: "The logbook that stays yours." };
 window.LOGBOOK_PRODUCT = window.LOGENTRA_PRODUCT;
 /* Light / dark theme: localStorage wins, otherwise prefers-color-scheme. */
 (function (global) {
@@ -1634,6 +1659,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   }
 
   const api = {
+    shiftRequest: (method, path, body) => req(method, path, body),
     issueQRCodes: (ids, reprint) => req("POST", "/equipment/qr-codes", {ids, reprint}),
     getPublicURL: () => req("GET", "/settings/public-url"),
     setPublicURL: (public_base_url) => req("PUT", "/settings/public-url", {public_base_url}),
@@ -1750,9 +1776,9 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
   const _prod = window.LOGENTRA_PRODUCT || window.LOGBOOK_PRODUCT || {};
-  const APP_VERSION = _prod.version || "0.6.1";
+  const APP_VERSION = _prod.version || "0.7.0";
   const PRODUCT_NAME = _prod.name || "Logentra OS";
-  const RELEASE_LABEL = _prod.label || "v0.6.1";
+  const RELEASE_LABEL = _prod.label || "v0.7.0";
 
   const FIELD_TYPES = [
     { id: "text", label: "Text" },
@@ -2804,8 +2830,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       trends: viewTrends, import: viewImport, backup: viewBackup
     };
     if (v4 && v4.views) Object.assign(views, v4.views);
-    Object.assign(views, window.LogentraQR?.views || {});
-    const groupMap = { qrTags: "equipment", recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
+    Object.assign(views, window.LogentraQR?.views || {}, window.LogentraShifts?.views || {});
+    const groupMap = { handoverDetail: "handover", shiftHistory: "shiftLog", qrTags: "equipment", recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
     root.innerHTML = (views[ui.view] || viewDashboard)();
     document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
       const group = groupMap[ui.view] || ui.view;
@@ -2817,6 +2843,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       v4.bindFilters();
     }
     window.LogentraQR?.bind(ui.view);
+    window.LogentraShifts?.bind(ui.view);
   }
   function openPunches() {
     const list = [];
@@ -2841,6 +2868,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       });
     });
     return `
+      <div id="handover-dashboard" hidden></div>
       <div class="row spread">
         <div>
           <h2>Dashboard</h2>
@@ -4184,12 +4212,6 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       if (v4) v4.showLogin(err.message || "Please sign in.");
       return;
     }
-    const qrWorkOrder = new URLSearchParams(location.search).get("qr_work_order");
-    if (qrWorkOrder && v4?.can("workorders.create")) {
-      ui.view = "woNew";
-      ui.woEquipment = qrWorkOrder;
-      history.replaceState({}, "", location.pathname);
-    }
     if (v4 && v4.beforeView) {
       try { await v4.beforeView(ui.view || "dashboard", ui); } catch (e) { /* first paint still useful */ }
     }
@@ -4632,7 +4654,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         <div class="form-grid">
           <label class="fld"><span>Priority</span><select id="wo-n-prio">${prioOptions("medium")}</select></label>
           <label class="fld"><span>Due</span><input type="date" id="wo-n-due"></label>
-          <label class="fld"><span>Equipment</span><select id="wo-n-eq">${eqOptions(state, global.Logbook._ui.woEquipment || "")}</select></label>
+          <label class="fld"><span>Equipment</span><select id="wo-n-eq">${eqOptions(state, "")}</select></label>
           <label class="fld"><span>Assignee</span><select id="wo-n-assignee">${userOptions("")}</select></label>
         </div>
         <button class="btn btn-primary" data-act="wo-create">Create work order</button>
@@ -4769,7 +4791,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const L = global.Logbook;
     const ui = L._ui || (L._ui = {});
     try {
-      if (act === "wo-new") { ui.woEquipment = ""; ui.view = "woNew"; if (cache.users.length === 0) await refreshUsers(); L.render(); return true; }
+      if (act === "wo-new") { ui.view = "woNew"; if (cache.users.length === 0) await refreshUsers(); L.render(); return true; }
       if (act === "wo-open") {
         cache.detail = await api.getWorkOrder(el.dataset.id);
         if (cache.users.length === 0) await refreshUsers();
@@ -5921,6 +5943,652 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       });
     }
   };
+})();
+
+/* Shift timeline, roster administration and handover review. */
+(function () {
+  "use strict";
+  const api = window.LogbookAPI;
+  const book = () => window.Logbook;
+  const can = permission => window.LogbookV4.can(permission);
+  const request = (method, path, body) => api.shiftRequest(method, path, body);
+  const withQuery = (path, filters) => path + "?" + new URLSearchParams(
+    Object.entries(filters).filter(([, value]) => value !== "" && value != null)
+  );
+  const get = (path, filters) => request("GET", filters ? withQuery(path, filters) : path);
+  const esc = value => String(value ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+  const id = encodeURIComponent;
+  const me = () => book().getState().me;
+  const isOpen = () => me()?.mode === "open" || book().getState().auth_mode === "open" && !me();
+  let rememberedName = "";
+  try { rememberedName = localStorage.getItem("logentra-shift-operator") || ""; } catch (_) {}
+  function nameField() {
+    return isOpen() ? input("Your name", "author_name", "text", rememberedName, 'required maxlength="250"') : "";
+  }
+  function actor(form) {
+    if (!isOpen()) return {};
+    const name = form?.elements?.author_name?.value.trim() || rememberedName;
+    if (!name) throw new Error("Enter your name to record this action.");
+    rememberedName = name;
+    try { localStorage.setItem("logentra-shift-operator", name); } catch (_) {}
+    return {author_name:name};
+  }
+  function lead(row, incoming = false, manager = true) {
+    return incoming ? (manager ? row.can_acknowledge : row.can_return) : row.can_edit;
+  }
+  const btn = (label, attrs = "", main = false) =>
+    `<button type="button" class="btn ${main ? "btn-primary" : ""}" ${attrs}>${esc(label)}</button>`;
+  const submit = label => `<button type="submit" class="btn btn-primary">${esc(label)}</button>`;
+  const input = (label, name, type = "text", value = "", attrs = "") =>
+    `<label class="fld"><span>${esc(label)}</span><input name="${name}" type="${type}" value="${esc(value)}" ${attrs}></label>`;
+  const textarea = (label, name, value = "", attrs = "") =>
+    `<label class="fld"><span>${esc(label)}</span><textarea name="${name}" rows="3" ${attrs}>${esc(value)}</textarea></label>`;
+  const options = (rows, selected) => rows.map(([value, label]) =>
+    `<option value="${esc(value)}"${String(value) === String(selected) ? " selected" : ""}>${esc(label)}</option>`).join("");
+  const select = (label, name, rows, value = "", attrs = "") =>
+    `<label class="fld"><span>${esc(label)}</span><select name="${name}" ${attrs}>${options(rows, value)}</select></label>`;
+  const pairs = rows => rows.map(row => [row.id, row.name]);
+  const local = (time, timezone) => time ? new Date(time).toLocaleString(undefined,
+    {timeZone:timezone || "UTC", year:"numeric", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}) : "—";
+  const dateString = value => value.toISOString().slice(0,10);
+  const labelStatus = value => String(value || "").replaceAll("_", " ");
+  const formData = form => Object.fromEntries(new FormData(form));
+  const hostHTML = (title, subtitle, extra = "") => `<div class="row spread"><div><h2>${title}</h2>
+    <p class="page-lead">${subtitle}</p></div>${extra}</div><div id="shift-view" aria-live="polite">Loading…</div>`;
+  const severityChoices = ["info","low","medium","high","critical"].map(value => [value, value]);
+  const kinds = {oor_reading:"Out-of-range readings", work_order:"Work orders", punch:"Punch items", log_entry:"Shift log", note:"Notes"};
+  const ui = {current:"", logPage:1, category:"", revisions:false, tab:"patterns", site:"",
+    historyPage:1, historyQuery:{}, handoverPage:1, handoverQuery:{}};
+  const bind = (host, target, fn) => host.querySelectorAll(target).forEach(element => {
+    element.onclick = async () => {
+      const original = element.disabled;
+      element.disabled = element.tagName === "BUTTON";
+      try { await fn(element); }
+      catch (error) { book()._toast(error.message); }
+      finally { if (element.isConnected) element.disabled = original; }
+    };
+  });
+  function onForm(host, selector, handler) {
+    const form = host.querySelector(selector);
+    if (!form) return;
+    form.onsubmit = async event => {
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      try { await handler(form); }
+      catch (error) { book()._toast(error.message); }
+      finally { if (button.isConnected) button.disabled = false; }
+    };
+  }
+  function pager(page, pages) {
+    return `<div class="row"><button type="button" class="btn btn-sm" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>Previous</button>
+      <span>Page ${page} of ${Math.max(1,pages)}</span>
+      <button type="button" class="btn btn-sm" data-page="${page + 1}" ${page >= pages ? "disabled" : ""}>Next</button></div>`;
+  }
+  async function fileFetch(path, filename, print = false) {
+    const popup = print ? window.open("about:blank","_blank") : null;
+    if (print && !popup) throw new Error("Allow popups to open the print report.");
+    try {
+      const response = await api.authenticatedFetch(path);
+      if (popup) {
+        const html = await response.text();
+        popup.document.open(); popup.document.write(html); popup.document.close();
+      } else {
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement("a");
+        link.href = url; link.download = filename; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      }
+    } catch (error) { popup?.close(); throw error; }
+  }
+
+  function recordCard(entry, row, timezone, editable) {
+    const heading = esc(entry.title);
+    const evidence = entry.equipment_id ? btn("Equipment", `data-equipment="${esc(entry.equipment_id)}"`) : "";
+    const work = entry.work_order_id ? btn("Work order", `data-work="${esc(entry.work_order_id)}"`) : "";
+    const attachments = entry.attachments.map(item => btn(item.filename,
+      `data-attachment="${esc(item.id)}" data-filename="${esc(item.filename)}"`)).join("");
+    const comments = entry.comments.map(msg => `<p><strong>${esc(msg.author_name)}</strong> ${esc(msg.body)}</p>`).join("");
+    const included = row?.items.some(item => item.kind === "log_entry" && item.ref_id === entry.id);
+    const controls = editable && !entry.voided_at ? [
+      included ? "<small>In handover</small>" : row?.status === "draft" && lead(row) ? btn("Add to handover", `data-pin="${esc(entry.id)}"`) : "",
+      btn("Comment", `data-comment="${esc(entry.id)}"`),
+      btn("Amend", `data-amend="${esc(entry.id)}"`),
+      btn("Void", `data-void="${esc(entry.id)}"`),
+      btn("Attach", `data-attach="${esc(entry.id)}"`)
+    ].join("") : "";
+    return `<article class="card shift-entry"><div class="row spread"><strong>${heading}</strong>
+      <small>${esc(local(entry.event_at,timezone))}</small></div>
+      <p class="shift-meta">${esc(entry.category)} · ${esc(entry.severity)} · ${esc(entry.author_name)}
+      ${entry.after_handover ? " · After handover" : ""}${entry.version > 1 ? " · Version " + entry.version : ""}</p>
+      <p class="shift-body">${esc(entry.body)}</p>
+      ${entry.voided_at ? `<p>Voided: ${esc(entry.void_reason)}</p>` : ""}
+      ${comments}<div class="row">${evidence}${work}${attachments}${controls}</div></article>`;
+  }
+
+  function composer(categories, entry = {}) {
+    return `<form id="shift-entry-form" class="stack">${nameField()}
+      ${input("Title","title","text",entry.title,'required maxlength="250"')}
+      ${textarea("Shift entry","body",entry.body,'placeholder="Include #P-101 or WO-0001 to link evidence" maxlength="20000"')}
+      <div class="row">${select("Category","category_id",pairs(categories),entry.category_id || "shift_cat_7")}
+      ${select("Severity","severity",severityChoices, entry.severity || "info")}</div>
+      <label><input type="checkbox" name="in_handover" ${entry.in_handover ? "checked" : ""}> Add to handover</label>
+      ${input("Attachments","files","file","","multiple")}
+      ${submit(entry.id ? "Save amendment" : "Add entry")}</form>`;
+  }
+
+  function captureEntry(form, entry) {
+    const values = formData(form);
+    delete values.files;
+    return {...(entry ? Object.fromEntries(["equipment_id","work_order_id","reading_id","punch_id","event_at"]
+      .map(key => [key,entry[key]])) : {}), ...values,
+      ...actor(form), in_handover:form.elements.in_handover.checked};
+  }
+  async function uploadFiles(entry, files) {
+    for (const file of files) {
+      const data = new FormData();
+      data.append("file",file);
+      await request("POST", "/shift-log-entries/" + id(entry) + "/attachments", data);
+    }
+  }
+
+  function dialogForm(title, contents, handler) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "shift-dialog";
+    dialog.innerHTML = `<h3>${esc(title)}</h3><form class="stack">${contents}
+      <div class="row">${submit("Save")}${btn("Cancel","data-cancel")}</div></form>`;
+    document.body.append(dialog);
+    dialog.addEventListener("close", () => dialog.remove(), {once:true});
+    dialog.querySelector("[data-cancel]").onclick = () => dialog.close();
+    onForm(dialog,"form",async form => { await handler(form); dialog.close(); });
+    dialog.showModal();
+  }
+
+  function outgoingPanel(row) {
+    const editable = row.status === "draft" && lead(row);
+    const groups = Object.entries(kinds).map(([kind, label]) => {
+      const items = row.items.filter(item => item.kind === kind);
+      if (!items.length) return "";
+      return `<section class="shift-item-group"><h4>${esc(label)} · ${items.length}</h4>${items.map(item =>
+        `<div class="row spread shift-item"><span>${esc(item.title)} ${item.auto ? "<small>Auto</small>" : ""}</span>
+        ${editable ? btn("×", `data-remove="${esc(item.id)}" aria-label="Remove ${esc(item.title)}"`) : ""}</div>`).join("")}</section>`;
+    }).join("");
+    const returned = [...row.versions].reverse().find(item => item.return_reason);
+    return `<section class="card shift-handover"><div class="row spread"><h3>In handover</h3><span>${row.items.length} items</span></div>
+      <p class="shift-steps">Draft → Signed off → Acknowledged</p>
+      <p><strong>${esc(labelStatus(row.status))}</strong> · Version ${row.version}</p>
+      ${returned ? `<p class="shift-banner">Returned: ${esc(returned.return_reason)}</p>` : ""}
+      ${groups || "<p>No items included.</p>"}
+      ${editable ? `<form id="shift-sign-form" class="stack">${nameField()}
+        ${textarea("Outgoing summary","summary",row.summary,'maxlength="20000"')}
+        <div class="row">${btn("Add note","data-add-note")}${btn("Save draft","data-save-summary")}</div>
+        ${submit("Sign off and hand over")}</form>`
+        : `<p class="shift-body">${esc(row.summary)}</p>${btn("Open handover",`data-open="${esc(row.id)}"`)}`}
+      </section>`;
+  }
+
+  async function renderLog(host) {
+    const [current, notices] = await Promise.all([get("/shifts/current"),get("/handovers/notifications")]);
+    if (!host.isConnected) return;
+    const choices = new Map([...current.items, ...current.recent].map(row => [row.id,row]));
+    notices.items.filter(item => item.kind === "returned").forEach(item => choices.set(item.shift.id,item.shift));
+    if (!choices.size) {
+      host.innerHTML = `<section class="card"><h3>No shift scheduled now</h3>
+        <p>Add a roster entry for the area to start logging.</p>
+        ${can("shifts.manage") ? btn("Shifts & rosters",'data-act="goto" data-view="rosters"') : ""}</section>`;
+      return;
+    }
+    const shift = choices.get(ui.current) || choices.values().next().value;
+    ui.current = shift.id;
+    const path = "/shifts/" + id(shift.id);
+    const [entries, row, categories] = await Promise.all([
+      get(path + "/entries",{page:ui.logPage,page_size:25,revisions:ui.revisions}),
+      get(path + "/handover"), get("/shift-log-categories",{site:shift.site_id})
+    ]);
+    if (!host.isConnected || ui.current !== shift.id) return;
+    const visibleCategories = categories.filter(category => category.active);
+    const shown = entries.items.filter(entry => !ui.category || entry.category_id === ui.category);
+    host.innerHTML = `<div class="row shift-context">
+      ${select("Shift","selection",[...choices.values()].map(item => [item.id,
+        [item.area_name,item.name,item.crew_name].filter(Boolean).join(" · ")]),shift.id)}
+      <p>${esc(local(shift.starts_at,shift.timezone))} – ${esc(local(shift.ends_at,shift.timezone))} · ${esc(shift.timezone)}
+      ${shift.lead_name ? " · Lead " + esc(shift.lead_name) : ""}</p></div>
+      <div class="shift-layout"><div class="stack">
+       ${can("shiftlog.write") ? `<section class="card"><h3>Add log entry</h3>${composer(visibleCategories)}</section>` : ""}
+       <section class="card"><div class="row spread"><h3>Shift timeline</h3>
+       ${select("Category","filter",[["","All categories"],...pairs(categories)],ui.category)}
+       <label><input type="checkbox" name="revisions" ${ui.revisions ? "checked" : ""}> Show revisions</label></div>
+       <div class="shift-timeline">${shown.map(entry => recordCard(entry,row,shift.timezone,can("shiftlog.write"))).join("") || "<p>No log entries match.</p>"}</div>
+       ${pager(entries.page,entries.pages)}</section></div>${outgoingPanel(row)}</div>`;
+    host.querySelector("[name=selection]").onchange = event => { ui.current = event.target.value; ui.logPage = 1; refresh(host,renderLog); };
+    host.querySelector("[name=filter]").onchange = event => { ui.category = event.target.value; refresh(host,renderLog); };
+    host.querySelector("[name=revisions]").onchange = event => { ui.revisions = event.target.checked; ui.logPage = 1; refresh(host,renderLog); };
+    bind(host,"[data-page]", button => { ui.logPage = Number(button.dataset.page); return renderLog(host); });
+    bind(host,"[data-open]",button => openHandover(button.dataset.open));
+    bindEvidence(host);
+    onForm(host,"#shift-entry-form",async form => {
+      const result = await request("POST",path + "/entries",captureEntry(form));
+      try { await uploadFiles(result.id,form.elements.files.files); }
+      finally { await renderLog(host); }
+    });
+    bind(host,"[data-comment]",button => dialogForm("Comment on entry", nameField() + textarea("Comment","body","", "required"), async form => {
+      await request("POST","/shift-log-entries/" + id(button.dataset.comment) + "/comments",{...formData(form),...actor(form)});
+      await renderLog(host);
+    }));
+    bind(host,"[data-void]",button => dialogForm("Void entry", nameField() + textarea("Reason","reason","", "required"), async form => {
+      await request("POST","/shift-log-entries/" + id(button.dataset.void) + "/void",{...formData(form),...actor(form)});
+      await renderLog(host);
+    }));
+    bind(host,"[data-amend]",button => {
+      const entry = entries.items.find(item => item.id === button.dataset.amend);
+      const markup = composer(visibleCategories,entry);
+      dialogForm("Amend entry",new DOMParser().parseFromString(markup,"text/html").querySelector("form").innerHTML
+        .replace(/<button type="submit".*?<\/button>/,""),async form => {
+        const result = await request("POST","/shift-log-entries/" + id(entry.id) + "/amend",captureEntry(form,entry));
+        try { await uploadFiles(result.id,form.elements.files.files); }
+        finally { await renderLog(host); }
+      });
+    });
+    bind(host,"[data-attach]",button => dialogForm("Attach to log entry",input("Attachment","files","file","","required multiple"),async form => {
+      await uploadFiles(button.dataset.attach,form.elements.files.files);
+      await renderLog(host);
+    }));
+    const handoverPath = "/handovers/" + id(row.id);
+    const sign = host.querySelector("#shift-sign-form");
+    let savedSummary = row.summary;
+    async function preserveSummary() {
+      if (sign && sign.summary.value !== savedSummary) {
+        savedSummary = sign.summary.value;
+        await request("PATCH",handoverPath,{summary:savedSummary,...actor(sign)});
+      }
+    }
+    bind(host,"[data-remove]",async button => {
+      await preserveSummary();
+      await request("DELETE", handoverPath + "/items/" + id(button.dataset.remove),actor(sign));
+      await renderLog(host);
+    });
+    bind(host,"[data-pin]",async button => {
+      await preserveSummary();
+      await request("POST",handoverPath + "/items",{kind:"log_entry",ref_id:button.dataset.pin,...actor(sign)});
+      await renderLog(host);
+    });
+    bind(host,"[data-add-note]",() => dialogForm("Add handover note",nameField() +
+      input("Title","title","text","","required") + textarea("Details","detail"),async form => {
+      const who = actor(form);
+      await preserveSummary();
+      await request("POST",handoverPath + "/items",{...formData(form),...who});
+      await renderLog(host);
+    }));
+    bind(host,"[data-save-summary]",async () => { await preserveSummary(); book()._toast("Handover draft saved."); });
+    onForm(host,"#shift-sign-form",async form => {
+      const result = await request("POST",handoverPath + "/sign-off",{summary:form.summary.value,...actor(form)});
+      openHandover(result.id);
+    });
+  }
+
+  function bindEvidence(host) {
+    bind(host,"[data-attachment]",button => fileFetch("/api/shift-log-attachments/" + id(button.dataset.attachment), button.dataset.filename));
+    bind(host,"[data-equipment]",button => book().goto("equipment",{q:book().eqTag(book().eqById(button.dataset.equipment) || {})}));
+    bind(host,"[data-work]",button => book().goto("workorders",{woQ:button.dataset.work}));
+  }
+
+  function openHandover(identifier) {
+    book().goto("handoverDetail",{handoverId:identifier});
+  }
+
+  async function renderHandover(host) {
+    const identifier = book()._ui.handoverId;
+    const path = "/handovers/" + id(identifier);
+    const row = await get(path);
+    if (!host.isConnected) return;
+    const editable = row.status === "signed_off" && lead(row,true);
+    const canReturn = row.status === "signed_off" && lead(row,true,false);
+    const outgoing = row.outgoing;
+    host.innerHTML = `<section class="shift-banner"><strong>${esc(labelStatus(row.status))}</strong> ·
+      ${esc(outgoing.area_name)} · ${esc(outgoing.name)} · ${esc(outgoing.crew_name)} · Version ${row.version}
+      ${row.ack_due_at ? " · Acknowledge by " + esc(local(row.ack_due_at,outgoing.timezone)) : ""}</section>
+      <div class="shift-layout"><div class="stack">
+      <section class="card"><h3>Outgoing summary</h3><p class="shift-body">${esc(row.summary || "No summary entered.")}</p></section>
+      <section class="card"><h3>Handover items · ${row.items.length}</h3>
+      ${row.items.map(item => `<article class="card shift-entry"><h4>${esc(item.title)}</h4>
+        <p class="shift-meta">${esc(kinds[item.kind])} · ${esc(item.severity)} · ${item.seen_at ? "Seen" : "Unseen"}</p><p class="shift-body">${esc(item.detail)}</p>
+        ${row.comments.filter(msg => msg.item_id === item.id).map(msg =>
+          `<p><strong>${esc(msg.kind)} · ${esc(msg.author_name)}</strong> ${esc(msg.body)}
+          ${msg.kind === "question" && lead(row) ? btn("Answer",`data-answer="${esc(msg.id)}"`) : ""}</p>`).join("")}
+        ${editable ? `<div class="row">${!item.seen_at ? btn("Seen",`data-seen="${esc(item.id)}"`) : ""}
+          ${btn("Ask a question",`data-question="${esc(item.id)}"`)}</div>` : ""}</article>`).join("") || "<p>No items included.</p>"}
+      </section></div><div class="stack"><section class="card"><h3>Handover record</h3>
+      ${row.signed_off_at ? `<p>Signed off by ${esc(row.signed_off_name)} · ${esc(local(row.signed_off_at,outgoing.timezone))}</p>` : ""}
+      ${row.acknowledged_at ? `<p>Acknowledged by ${esc(row.acknowledged_name)} · ${esc(local(row.acknowledged_at,outgoing.timezone))}
+      ${row.late ? " · Late" : ""}${row.acknowledged_after_start ? " · After incoming shift start" : ""}</p><p>Unseen at acknowledgement · ${row.unseen_count}</p><p>${esc(row.ack_comment)}</p>` : ""}
+      ${row.return_reason ? `<p>Returned by ${esc(row.returned_name)} · ${esc(row.return_reason)}</p>` : ""}
+      ${row.snapshot_sha256 ? `<p>Snapshot SHA-256 <code>${esc(row.snapshot_sha256)}</code></p>` : ""}
+      <div class="row">${btn("Print report","data-report")}${row.status === "draft" ? btn("Open shift log","data-outgoing") : ""}</div>
+      <h4>Versions</h4>${row.versions.map(version => `<p>${btn("Version " + version.version + " · " +
+        labelStatus(version.status), `data-version="${esc(version.id)}"`)} ${esc(version.return_reason || "")}</p>`).join("")}
+      </section>
+      ${editable ? `<section class="card"><h3>Acknowledge handover</h3>
+      <p>${row.items.filter(item => !item.seen_at).length} unseen items. Unseen items are recorded at acknowledgement.</p>
+      <form id="shift-ack-form" class="stack">${nameField()}${textarea("Comment (optional)","comment")}
+      <div class="row">${submit("Acknowledge")}${canReturn ? btn("Return","data-return") : ""}</div></form></section>` : ""}
+      </div></div>`;
+    bind(host,"[data-report]",() => fileFetch("/api" + path + "/report","",true));
+    bind(host,"[data-version]",button => openHandover(button.dataset.version));
+    bind(host,"[data-outgoing]",() => { ui.current = row.outgoing_shift_id; book().goto("shiftLog"); });
+    const ackForm = host.querySelector("#shift-ack-form");
+    bind(host,"[data-seen]",async button => {
+      await request("POST",path + "/items/" + id(button.dataset.seen) + "/seen",actor(ackForm));
+      await renderHandover(host);
+    });
+    bind(host,"[data-question]",button => dialogForm("Ask a question",nameField() + textarea("Question","body","", "required"),async form => {
+      await request("POST",path + "/items/" + id(button.dataset.question) + "/questions",{...formData(form),...actor(form)});
+      await renderHandover(host);
+    }));
+    bind(host,"[data-answer]",button => dialogForm("Answer question",nameField() + textarea("Answer","body","", "required"),async form => {
+      await request("POST","/handover-comments/" + id(button.dataset.answer) + "/answer",{...formData(form),...actor(form)});
+      await renderHandover(host);
+    }));
+    bind(host,"[data-return]",() => dialogForm("Return handover",nameField() + textarea("Return reason","reason","", "required"),async form => {
+      const draft = await request("POST",path + "/return",{...formData(form),...actor(form)});
+      openHandover(draft.id);
+    }));
+    onForm(host,"#shift-ack-form",async form => {
+      await request("POST",path + "/acknowledge",{...formData(form),...actor(form)});
+      await renderHandover(host);
+      refreshNotifications();
+    });
+  }
+
+  async function renderHistory(host, logs) {
+    const page = logs ? ui.historyPage : ui.handoverPage;
+    const filters = logs ? ui.historyQuery : ui.handoverQuery;
+    const path = logs ? "/shift-log-entries" : "/handovers";
+    const [result, sites, categories, crews] = await Promise.all([
+      get(path,{...filters,page,page_size:25}),api.listSites(),
+      logs ? get("/shift-log-categories") : Promise.resolve([]),
+      can("shifts.manage") ? get("/crews") : Promise.resolve([])
+    ]);
+    if (!host.isConnected) return;
+    const areas = sites.flatMap(site => site.areas || []);
+    const crewChoices = crews.length ? pairs(crews) : (logs ? [] : [...new Map(result.items.map(row =>
+      [row.outgoing.crew_id,row.outgoing.crew_name])).entries()]);
+    host.innerHTML = `<section class="card"><form id="shift-search" class="row">
+      ${input("From","from","date",filters.from)}${input("To","to","date",filters.to)}
+      ${select("Area","area",[["","All areas"],...pairs(areas)],filters.area)}
+      ${select("Crew","crew",[["","All crews"],...crewChoices],filters.crew)}
+      ${logs ? select("Category","category",[["","All categories"],...pairs(categories)],filters.category) +
+        select("Severity","severity",[["","All severities"],...severityChoices],filters.severity) +
+        select("Equipment","equipment",[["","All equipment"],...book().getState().equipmentIndex.map(row => [row.id,row.tag])],filters.equipment)
+        : select("Status","status",[["","All statuses"],...["draft","signed_off","acknowledged","returned"].map(value => [value,labelStatus(value)])],filters.status)}
+      ${input("Search","q","search",filters.q)}${submit("Search")}
+      ${logs ? "" : btn("Export CSV","data-export")}</form></section>
+      <div class="shift-timeline">${logs ? result.items.map(entry => recordCard(entry,null,"UTC",false)).join("")
+        : result.items.map(row => `<article class="card row spread"><div><strong>${esc(row.outgoing.name)} · ${esc(row.outgoing.area_name)}</strong>
+          <p>${esc(row.outgoing.date)} · ${esc(row.outgoing.crew_name)} · ${esc(labelStatus(row.status))} · Version ${row.version}</p>
+          <p>${esc(row.summary)}</p></div>${btn("Open handover",`data-open="${esc(row.id)}"`)}</article>`).join("")}
+      ${result.items.length ? "" : "<p>No entries match the selected filters.</p>"}</div>
+      ${pager(result.page,result.pages)}`;
+    bindEvidence(host);
+    bind(host,"[data-open]",button => openHandover(button.dataset.open));
+    bind(host,"[data-export]",() => fileFetch(withQuery("/api/handovers/export.csv",filters),"handovers.csv"));
+    bind(host,"[data-page]",button => {
+      if (logs) ui.historyPage = Number(button.dataset.page); else ui.handoverPage = Number(button.dataset.page);
+      return renderHistory(host,logs);
+    });
+    onForm(host,"#shift-search",async form => {
+      if (logs) { ui.historyQuery = formData(form); ui.historyPage = 1; }
+      else { ui.handoverQuery = formData(form); ui.handoverPage = 1; }
+      await renderHistory(host,logs);
+    });
+  }
+
+  const adminTabs = [["patterns","Shift pattern"],["crews","Crews"],["roster","Roster"],
+    ["escalation","Handover & escalation"],["categories","Log categories"]];
+  const adminState = {pattern:"",crew:"",start:"",end:""};
+  const setupForm = (key, fields, label) => `<form id="${key}" class="shift-admin-form stack">${fields}${submit(label)}</form>`;
+  const section = (title, contents) => `<section class="card"><h3>${esc(title)}</h3>${contents}</section>`;
+
+  async function renderAdmin(host) {
+    const sites = await api.listSites();
+    if (!host.isConnected) return;
+    const site = sites.find(row => row.id === ui.site) || sites[0];
+    ui.site = site?.id || "";
+    host.innerHTML = `<div class="row shift-context">${select("Site","site",pairs(sites),ui.site)}
+      <div role="group" aria-label="Shift administration" class="row">${adminTabs.map(([key,label]) =>
+        btn(label,`data-tab="${key}" aria-pressed="${ui.tab === key}"`, ui.tab === key)).join("")}</div></div>
+      <div id="shift-admin-content"></div>`;
+    const designated = host.querySelector("#shift-admin-content");
+    bind(host,"[data-tab]",button => { ui.tab = button.dataset.tab; return renderAdmin(host); });
+    host.querySelector("[name=site]").onchange = event => {
+      ui.site = event.target.value; adminState.pattern = adminState.crew = ""; refresh(host,renderAdmin);
+    };
+    if (!site) {
+      designated.innerHTML = section("Create a site", can("users.manage")
+        ? setupForm("shift-site-create", input("Site name","name","text","","required"), "Create site")
+        : "<p>Ask an administrator to create a site.</p>");
+      onForm(designated,"#shift-site-create",async form => { await api.createSite(formData(form)); await renderAdmin(host); });
+      return;
+    }
+    const rerender = () => renderAdmin(host);
+    if (ui.tab === "patterns") {
+      const rows = (await get("/shift-patterns")).filter(row => row.site_id === site.id);
+      const pattern = rows.find(row => row.id === adminState.pattern) || rows[0];
+      adminState.pattern = pattern?.id || "";
+      const path = pattern ? "/shift-patterns/" + id(pattern.id) : "";
+      const definitions = pattern ? await get(path + "/definitions") : [];
+      const patternFields = row => input("Pattern name","name","text",row?.name,"required") +
+        input("IANA timezone","timezone","text",row?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,"required");
+      const definitionFields = row => input("Code","code","text",row?.code,"required") +
+        input("Shift name","name","text",row?.name,"required") + input("Start time","start_time","time",row?.start_time,"required") +
+        input("Duration in minutes","duration_minutes","number",row?.duration_minutes || 720,'required min="1" max="1440"');
+      designated.innerHTML = `<div class="grid-2">
+        ${section("Add shift pattern",setupForm("new-pattern",patternFields(),"Create pattern"))}
+        ${section("Shift definitions",pattern ? select("Pattern","pattern",pairs(rows),pattern.id) +
+          `<p>${esc(pattern.timezone)} ${btn("Edit pattern","data-edit-pattern")}</p>
+          <div class="shift-table"><table class="sheet"><thead><tr><th>Code</th><th>Name</th><th>Start</th><th>Minutes</th><th></th></tr></thead>
+          <tbody>${definitions.map(row => `<tr><td>${esc(row.code)}</td><td>${esc(row.name)}</td><td>${esc(row.start_time)}</td>
+            <td>${row.duration_minutes}</td><td>${btn("Edit",`data-definition="${esc(row.id)}"`)}</td></tr>`).join("")}</tbody></table></div>` +
+          setupForm("new-definition",definitionFields(),"Add shift") : "<p>Create a shift pattern first.</p>")}
+        </div>`;
+      onForm(designated,"#new-pattern",async form => {
+        adminState.pattern = (await request("POST","/shift-patterns",{...formData(form),site_id:site.id})).id;
+        await rerender();
+      });
+      if (!pattern) return;
+      designated.querySelector("[name=pattern]").onchange = event => { adminState.pattern = event.target.value; refresh(host,renderAdmin); };
+      bind(designated,"[data-edit-pattern]",() => dialogForm("Edit shift pattern",patternFields(pattern),async form => {
+        await request("PATCH",path,formData(form)); await rerender();
+      }));
+      onForm(designated,"#new-definition",async form => {
+        await request("POST",path + "/definitions",formData(form)); await rerender();
+      });
+      bind(designated,"[data-definition]",button => {
+        const row = definitions.find(item => item.id === button.dataset.definition);
+        dialogForm("Edit shift",definitionFields(row),async form => {
+          await request("PATCH",path + "/definitions/" + id(row.id),formData(form)); await rerender();
+        });
+      });
+    } else if (ui.tab === "crews") {
+      const [all, users] = await Promise.all([get("/crews"),get("/shift-roster-users",{site:site.id})]);
+      const rows = all.filter(row => row.site_id === site.id);
+      const crew = rows.find(row => row.id === adminState.crew) || rows[0];
+      adminState.crew = crew?.id || "";
+      const path = crew ? "/crews/" + id(crew.id) : "";
+      const members = crew ? await get(path + "/members") : [];
+      const userNames = new Map(users.map(user => [user.id,user.name]));
+      const memberFields = row => select("User","user_id",pairs(users),row?.user_id,"required") +
+        `<label><input type="checkbox" name="is_lead" ${row?.is_lead ? "checked" : ""}> Shift lead</label>`;
+      designated.innerHTML = `<div class="grid-2">
+        ${section("Add crew",setupForm("new-crew",input("Crew name","name","text","","required"),"Create crew"))}
+        ${section("Crew members",crew ? select("Crew","crew",pairs(rows),crew.id) +
+          btn("Rename crew","data-edit-crew") + members.map(row => `<div class="row spread">
+          <span>${esc(userNames.get(row.user_id) || row.user_id)}${row.is_lead ? " · Lead" : ""}</span><div class="row">
+          ${btn("Edit",`data-member="${esc(row.user_id)}"`)}${btn("Remove",`data-unmember="${esc(row.user_id)}"`)}</div></div>`).join("") +
+          (users.length ? setupForm("crew-member",memberFields(),"Save crew member") : "<p>No user accounts are available for this site.</p>")
+          : "<p>Create a crew first.</p>")}</div>`;
+      onForm(designated,"#new-crew",async form => {
+        adminState.crew = (await request("POST","/crews",{...formData(form),site_id:site.id})).id; await rerender();
+      });
+      if (!crew) return;
+      designated.querySelector("[name=crew]").onchange = event => { adminState.crew = event.target.value; refresh(host,renderAdmin); };
+      bind(designated,"[data-edit-crew]",() => dialogForm("Rename crew",input("Crew name","name","text",crew.name,"required"),async form => {
+        await request("PATCH",path,formData(form)); await rerender();
+      }));
+      const saveMember = async form => {
+        await request("POST",path + "/members",{user_id:form.elements.user_id.value,is_lead:form.elements.is_lead.checked});
+        await rerender();
+      };
+      onForm(designated,"#crew-member",saveMember);
+      bind(designated,"[data-member]",button => dialogForm("Crew member",
+        memberFields(members.find(row => row.user_id === button.dataset.member)),saveMember));
+      bind(designated,"[data-unmember]",async button => {
+        await request("DELETE",path + "/members/" + id(button.dataset.unmember)); await rerender();
+      });
+    } else if (ui.tab === "roster") {
+      await renderRoster(host,designated,site);
+    } else if (ui.tab === "escalation") {
+      const path = "/sites/" + id(site.id) + "/handover-settings";
+      const [config, roles] = await Promise.all([get(path),get("/shift-escalation-roles")]);
+      designated.innerHTML = section("Handover & escalation",setupForm("handover-settings",
+        input("Acknowledge within (minutes)","ack_within_minutes","number",config.ack_within_minutes,'min="1" max="1440" required') +
+        select("First escalation role","escalate_to_role",roles.map(role => [role,role]),config.escalate_to_role) +
+        input("Sign-off reminder before shift end (minutes)","signoff_reminder_minutes","number",config.signoff_reminder_minutes,
+          'min="0" max="1440" required'),"Save settings") +
+        `<fieldset disabled class="shift-later"><legend>Coming later</legend>
+        <label><input type="checkbox"> Second escalation level</label>
+        <label><input type="checkbox"> Escalate when sign-off is overdue</label>
+        <label><input type="checkbox"> Per-area timer overrides</label></fieldset>`);
+      onForm(designated,"#handover-settings",async form => {
+        await request("PUT",path,formData(form)); book()._toast("Handover settings saved.");
+      });
+    } else {
+      const rows = await get("/shift-log-categories",{site:site.id});
+      const fields = row => input("Category name","name","text",row?.name,"required") +
+        input("Sort order","sort_order","number",row?.sort_order || 0) +
+        `<label><input type="checkbox" name="active" ${row?.active === false ? "" : "checked"}> Active</label>`;
+      designated.innerHTML = `<div class="grid-2">
+      ${section("Log categories",rows.map(row => `<div class="row spread"><span>${esc(row.name)}
+        ${row.active ? "" : " · Inactive"}${row.site_id ? "" : " · All sites"}</span>
+        ${row.site_id || can("users.manage") ? btn("Edit",`data-category="${esc(row.id)}"`) : ""}</div>`).join(""))}
+      ${section("Add category",setupForm("new-category",fields(),"Create category"))}</div>`;
+      const data = form => ({...formData(form),active:form.elements.active.checked});
+      onForm(designated,"#new-category",async form => {
+        await request("POST","/shift-log-categories",{...data(form),site_id:site.id}); await rerender();
+      });
+      bind(designated,"[data-category]",button => {
+        const row = rows.find(item => item.id === button.dataset.category);
+        dialogForm("Edit category",fields(row),async form => {
+          await request("PATCH","/shift-log-categories/" + id(row.id),data(form)); await rerender();
+        });
+      });
+    }
+  }
+
+  async function renderRoster(host, target, site) {
+    const today = new Date();
+    adminState.start ||= dateString(today);
+    adminState.end ||= dateString(new Date(today.getTime() + 6 * 86400000));
+    const [roster, allCrews, patterns, users] = await Promise.all([
+      get("/roster",{from:adminState.start,to:adminState.end}), get("/crews"),
+      get("/shift-patterns"),get("/shift-roster-users",{site:site.id})
+    ]);
+    const crews = allCrews.filter(row => row.site_id === site.id);
+    const shifts = (await Promise.all(patterns.filter(row => row.site_id === site.id).map(
+      row => get("/shift-patterns/" + id(row.id) + "/definitions")
+    ))).flat();
+    const byId = (rows,key) => rows.find(row => row.id === key)?.name || "—";
+    const areas = site.areas || [];
+    const rosterFields = row => input("Date","date","date",row?.date || adminState.start,"required") +
+      select("Shift","shift_definition_id",pairs(shifts),row?.shift_definition_id,"required") +
+      select("Area","area_id",[["","Whole site"],...pairs(areas)],row?.area_id) +
+      select("Crew","crew_id",pairs(crews),row?.crew_id,"required") +
+      select("Lead override","lead_user_id",[["","Crew lead"],...pairs(users)],row?.lead_user_id);
+    const selected = roster.filter(row => shifts.some(shift => shift.id === row.shift_definition_id));
+    target.innerHTML = section("Roster grid",`<form id="roster-range" class="row">
+      ${input("From","start","date",adminState.start,"required")}${input("To","end","date",adminState.end,"required")}${submit("Show roster")}</form>
+      <div class="table-wrap"><table class="sheet"><thead><tr><th>Date</th><th>Shift</th><th>Area</th><th>Crew</th><th>Lead override</th><th></th></tr></thead>
+      <tbody>${selected.map(row => `<tr><td>${esc(row.date)}</td><td>${esc(byId(shifts,row.shift_definition_id))}</td>
+      <td>${row.area_id ? esc(byId(areas,row.area_id)) : "Whole site"}</td><td>${esc(byId(crews,row.crew_id))}</td>
+      <td>${esc(byId(users,row.lead_user_id))}</td><td>${btn("Edit",`data-roster="${esc(row.id)}"`)}</td></tr>`).join("")
+      || '<tr><td colspan="6">No roster entries in this range.</td></tr>'}</tbody></table></div>` +
+      (can("users.manage") ? btn("Add area","data-add-area") : "")) +
+      `<div class="grid-2">${section("Assign crew",shifts.length && crews.length ?
+        setupForm("roster-assign",rosterFields(),"Save roster entry") : "<p>Create a shift definition and a crew first.</p>")}
+        ${section("Repeat pattern",setupForm("roster-repeat",input("First source date","first_date","date",adminState.start,"required") +
+        input("Last source date","last_date","date",adminState.end,"required") +
+        select("Area","area_id",[["","All areas"],...pairs(areas)]) +
+        input("Interval in days","interval_days","number",7,'required min="1" max="90"') +
+        input("Repetitions","repetitions","number",1,'required min="1" max="52"'),"Repeat roster"))}</div>`;
+    onForm(target,"#roster-range",async form => {
+      adminState.start = form.start.value; adminState.end = form.end.value; await renderAdmin(host);
+    });
+    const save = async form => {
+      const values = formData(form);
+      values.area_id ||= null; values.lead_user_id ||= null;
+      await request("PUT","/roster",[values]); await renderAdmin(host);
+    };
+    onForm(target,"#roster-assign",save);
+    bind(target,"[data-roster]",button => dialogForm("Edit roster slot",
+      rosterFields(selected.find(row => row.id === button.dataset.roster)),save));
+    bind(target,"[data-add-area]",() => dialogForm("Add roster area",input("Area name","name","text","","required"),async form => {
+      await request("POST","/sites/" + id(site.id) + "/areas",formData(form)); await renderAdmin(host);
+    }));
+    onForm(target,"#roster-repeat",async form => {
+      const values = formData(form);
+      values.area_id ||= null;
+      const result = await request("POST","/roster/repeat",{...values,site_id:site.id});
+      book()._toast(result.count + " roster entries saved."); await renderAdmin(host);
+    });
+  }
+
+  async function refreshNotifications() {
+    const badge = document.getElementById("nav-handover-count");
+    if (!can("shiftlog.read")) { badge.hidden = true; return; }
+    try {
+      const notices = await get("/handovers/notifications");
+      badge.hidden = !notices.items.length;
+      badge.textContent = notices.items.length;
+      const dashboard = document.getElementById("handover-dashboard");
+      if (!dashboard) return;
+      dashboard.hidden = !notices.items.length;
+      dashboard.innerHTML = section("Handover waiting / overdue",`<p>${notices.waiting} waiting · ${notices.overdue} overdue</p>
+        ${notices.items.map(item => `<div class="row spread"><span>${esc(item.shift.area_name)} · ${esc(item.shift.name)} ·
+           ${esc(labelStatus(item.kind))}</span>${btn("View",`data-notice="${esc(item.id)}" data-kind="${item.kind}" data-shift="${esc(item.shift.id)}"`)}</div>`).join("")}`);
+      bind(dashboard,"[data-notice]",button => {
+        if (["reminder","returned"].includes(button.dataset.kind)) { ui.current = button.dataset.shift; book().goto("shiftLog"); }
+        else openHandover(button.dataset.notice);
+      });
+    } catch (_) { badge.hidden = true; }
+  }
+
+  function refresh(host, render) {
+    render(host).catch(error => { if (host.isConnected) host.textContent = error.message; });
+  }
+
+  window.LogentraShifts = {
+    views:{
+      shiftLog:() => hostHTML("Shift log","Record operations and prepare the outgoing handover.",
+        btn("Shift log history",'data-act="goto" data-view="shiftHistory"')),
+      shiftHistory:() => hostHTML("Shift log history","Find entries, amendments and voided records.",
+        btn("Current shift",'data-act="goto" data-view="shiftLog"')),
+      handover:() => hostHTML("Handover","Find current and past shift handovers."),
+      handoverDetail:() => hostHTML("Handover review","Review the signed package and record acknowledgement.",
+        btn("Handover history",'data-act="goto" data-view="handover"')),
+      rosters:() => hostHTML("Shifts & rosters","Set up shift patterns, crews and handover rules.")
+    },
+    bind(view) {
+      const host = document.getElementById("shift-view");
+      if (host) {
+        const views = {shiftLog:renderLog, shiftHistory:element => renderHistory(element,true),
+          handover:element => renderHistory(element,false), handoverDetail:renderHandover, rosters:renderAdmin};
+        if (can(view === "rosters" ? "shifts.manage" : "shiftlog.read")) refresh(host,views[view]);
+        else host.textContent = "You do not have permission to access this view.";
+      }
+      refreshNotifications();
+    }
+  };
+  setInterval(() => { if (book()?.getState()) refreshNotifications(); },60000);
 })();
 
   </script>

@@ -5,9 +5,9 @@
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
   const _prod = window.LOGENTRA_PRODUCT || window.LOGBOOK_PRODUCT || {};
-  const APP_VERSION = _prod.version || "0.6.1";
+  const APP_VERSION = _prod.version || "0.7.0";
   const PRODUCT_NAME = _prod.name || "Logentra OS";
-  const RELEASE_LABEL = _prod.label || "v0.6.1";
+  const RELEASE_LABEL = _prod.label || "v0.7.0";
 
   const FIELD_TYPES = [
     { id: "text", label: "Text" },
@@ -1059,8 +1059,8 @@
       trends: viewTrends, import: viewImport, backup: viewBackup
     };
     if (v4 && v4.views) Object.assign(views, v4.views);
-    Object.assign(views, window.LogentraQR?.views || {});
-    const groupMap = { qrTags: "equipment", recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
+    Object.assign(views, window.LogentraQR?.views || {}, window.LogentraShifts?.views || {});
+    const groupMap = { handoverDetail: "handover", shiftHistory: "shiftLog", qrTags: "equipment", recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
     root.innerHTML = (views[ui.view] || viewDashboard)();
     document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
       const group = groupMap[ui.view] || ui.view;
@@ -1072,6 +1072,7 @@
       v4.bindFilters();
     }
     window.LogentraQR?.bind(ui.view);
+    window.LogentraShifts?.bind(ui.view);
   }
   function openPunches() {
     const list = [];
@@ -1096,6 +1097,7 @@
       });
     });
     return `
+      <div id="handover-dashboard" hidden></div>
       <div class="row spread">
         <div>
           <h2>Dashboard</h2>
@@ -2438,12 +2440,6 @@
     } catch (err) {
       if (v4) v4.showLogin(err.message || "Please sign in.");
       return;
-    }
-    const qrWorkOrder = new URLSearchParams(location.search).get("qr_work_order");
-    if (qrWorkOrder && v4?.can("workorders.create")) {
-      ui.view = "woNew";
-      ui.woEquipment = qrWorkOrder;
-      history.replaceState({}, "", location.pathname);
     }
     if (v4 && v4.beforeView) {
       try { await v4.beforeView(ui.view || "dashboard", ui); } catch (e) { /* first paint still useful */ }
