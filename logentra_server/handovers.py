@@ -82,6 +82,21 @@ def audit(db, principal, name, action, handover, detail=None):
                   entity_type="handover", entity_id=handover.id, detail=detail)
 
 
+def audit_opened(db, principal, name, handover, *, locked=False):
+    query = db.query(AuditLog.id).filter_by(
+        action="handover.opened", entity_type="handover", entity_id=handover.id, user_id=principal.user_id,
+    )
+    if principal.user_id is None:
+        query = query.filter_by(actor=name)
+    if query.first():
+        return
+    if not locked:
+        lock_shift(db, handover.outgoing_shift_id)
+        if query.first():
+            return
+    audit(db, principal, name, "opened", handover)
+
+
 def notify(db, handover, event, **detail):
     events.enqueue(db, f"handover.{event}", {
         "handover_id": handover.id, "version": handover.version, "site_id": handover.site_id,

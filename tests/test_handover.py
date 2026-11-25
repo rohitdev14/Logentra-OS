@@ -61,6 +61,10 @@ def test_frozen_handover_return_then_acknowledge(client):
     replacement = post(client, endpoint + "/return", {"reason":"Clarify set point"}, 200)
     assert replacement["status"] == "draft" and replacement["version"] == 2
     original = client.get(f"/api{endpoint}").json()
+    assert sum(event["action"] == "handover.opened" for event in original["audit_events"]) == 1
+    for _ in range(2):
+        opened = client.get(f"/api/handovers/{replacement['id']}").json()
+        assert sum(event["action"] == "handover.opened" for event in opened["audit_events"]) == 1
     assert original["status"] == "returned"
     assert original["snapshot_json"] == signed["snapshot_json"]
     report = client.get(f"/api{endpoint}/report")
@@ -139,6 +143,12 @@ def test_rostered_leads_and_area_permissions(client):
                                                 date=incoming.date, area_id=incoming.area_id).one()
         slot.lead_user_id = users["incoming"]
     path = "/api/handovers/" + draft["id"]
+    for person in ("viewer", "crew"):
+        for _ in range(2):
+            assert client.get(path, headers=tokens[person]).status_code == 200
+    openings = [event["actor"] for event in client.get(path, headers=tokens["viewer"]).json()["audit_events"]
+                if event["action"] == "handover.opened"]
+    assert sorted(openings) == ["crew", "viewer"]
     assert client.post(path + "/sign-off", headers=tokens["crew"]).status_code == 403
     signed = client.post(path + "/sign-off", headers=tokens["outgoing"])
     assert signed.status_code == 200, signed.text

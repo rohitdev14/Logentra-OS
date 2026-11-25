@@ -129,7 +129,7 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
         row = handovers.draft(db, shift, clock(), principal)
         if row.status == "draft":
             handovers.sync_items(db, row, shift, clock())
-        handovers.audit(db, principal, actor(principal), "opened", row)
+        handovers.audit_opened(db, principal, actor(principal), row, locked=True)
         return finish(db, row, principal)
 
     @router.get("/handovers/notifications")
@@ -211,7 +211,7 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
     @router.get("/handovers/{identifier}")
     def detail(identifier: str, db: Session = Depends(get_db), principal=Depends(reader)):
         row = get_handover(db, identifier, principal)
-        handovers.audit(db, principal, actor(principal), "opened", row)
+        handovers.audit_opened(db, principal, actor(principal), row)
         return finish(db, row, principal)
 
     @router.patch("/handovers/{identifier}")
