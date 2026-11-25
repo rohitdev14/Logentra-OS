@@ -42,8 +42,11 @@ services:
       - no-new-privileges:true
     cap_drop: [ALL]
   postgres:
-    image: postgres:17.12-alpine3.24
+    # Pinned by digest. Runs as the image's postgres user (70) so the entrypoint
+    # never needs to step down from root; see docs/v0.6/KNOWN_ISSUES.md.
+    image: postgres:17.12-alpine3.24@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
     profiles: [postgres]
+    user: "70:70"
     environment:
       POSTGRES_DB: logentra
       POSTGRES_USER: logentra

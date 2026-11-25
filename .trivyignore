@@ -1,0 +1,7 @@
+# Reviewed findings that do not affect Logentra OS. Re-check monthly and remove
+# an entry as soon as the upstream image ships a fix. Details: docs/v0.6/KNOWN_ISSUES.md
+
+# Go crypto/tls session-resumption flaw in the gosu binary of the official
+# postgres image (stdlib 1.24.6). gosu never opens TLS connections, and Compose
+# runs postgres as UID 70 so gosu is not executed. Reviewed 2026-11-25.
+CVE-2025-68121
