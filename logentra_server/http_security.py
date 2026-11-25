@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import re
 import time
 from uuid import uuid4
@@ -23,11 +24,62 @@ def loopback(host: str) -> bool:
         return False
 
 
+LOGIN_WINDOW_SECONDS = 60
+LOGIN_TABLE_LIMIT = 4096
+
+
 class HTTPSecurity:
     def __init__(self, app, settings):
         self.app = app
         self.settings = settings
-        self.attempts = {}
+        # client -> (window start, failed attempts). Only failed sign-ins count;
+        # a successful sign-in clears the client's counter.
+        self.attempts: dict[str, tuple[float, int]] = {}
+        self.trusted = [ipaddress.ip_network(p, strict=False) for p in getattr(settings, "trusted_proxies", []) or []]
+
+    def client_key(self, peer: str, headers: Headers) -> str:
+        """Identify the real client: the peer, or the proxy-reported address when the peer is trusted."""
+        if not self.trusted or not peer:
+            return peer
+        try:
+            address = ipaddress.ip_address(peer)
+        except ValueError:
+            return peer
+        if not any(address in network for network in self.trusted):
+            return peer
+        forwarded = [part.strip() for part in headers.get("x-forwarded-for", "").split(",") if part.strip()]
+        if not forwarded:
+            return peer
+        try:
+            return str(ipaddress.ip_address(forwarded[-1]))
+        except ValueError:
+            return peer
+
+    def login_retry_after(self, key: str, now: float) -> int | None:
+        window = self.attempts.get(key)
+        if window is None:
+            return None
+        start, count = window
+        if now - start >= LOGIN_WINDOW_SECONDS:
+            del self.attempts[key]
+            return None
+        if count < self.settings.login_attempts_per_minute:
+            return None
+        return max(1, math.ceil(start + LOGIN_WINDOW_SECONDS - now))
+
+    def count_attempt(self, key: str, now: float) -> None:
+        """Count a sign-in attempt when it starts, so parallel guesses are limited too."""
+        if len(self.attempts) >= LOGIN_TABLE_LIMIT:
+            self.attempts = {k: v for k, v in self.attempts.items() if now - v[0] < LOGIN_WINDOW_SECONDS}
+        start, count = self.attempts.get(key, (now, 0))
+        if now - start >= LOGIN_WINDOW_SECONDS:
+            start, count = now, 0
+        self.attempts[key] = start, count + 1
+
+    def record_login(self, key: str, status: int) -> None:
+        """A successful sign-in clears the counter; only failed attempts add up."""
+        if status == 200:
+            self.attempts.pop(key, None)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -39,9 +91,14 @@ class HTTPSecurity:
             request_id = uuid4().hex
         scope.setdefault("state", {})["request_id"] = request_id
         started = time.monotonic()
+        peer = (scope.get("client") or ("",))[0]
+        is_login = scope["path"].rstrip("/") == "/api/auth/login" and scope["method"] == "POST"
+        login_key = self.client_key(peer, headers) if is_login else ""
 
         async def secured_send(message):
             if message["type"] == "http.response.start":
+                if is_login:
+                    self.record_login(login_key, message["status"])
                 response = MutableHeaders(scope=message)
                 response["X-Request-ID"] = request_id
                 response["X-Content-Type-Options"] = "nosniff"
@@ -58,7 +115,6 @@ class HTTPSecurity:
         async def reject(status, detail, extra_headers=None):
             await JSONResponse({"detail": detail}, status, headers=extra_headers)(scope, receive, secured_send)
 
-        peer = (scope.get("client") or ("",))[0]
         if self.settings.auth_mode == "open" and not self.settings.api_key:
             try:
                 host = urlsplit("//" + headers.get("host", "")).hostname
@@ -69,16 +125,21 @@ class HTTPSecurity:
             if not loopback(peer) or not host or not (host == "localhost" or loopback(host)) or not local_origin:
                 await reject(403, "Standalone access requires a loopback client")
                 return
-        if scope["path"].rstrip("/") == "/api/auth/login" and scope["method"] == "POST":
-            minute = int(started // 60)
-            if len(self.attempts) >= 4096:
-                self.attempts = {key: val for key, val in self.attempts.items() if val[0] == minute}
-            window, count = self.attempts.get(peer, (minute, 0))
-            count = count if window == minute else 0
-            if count >= self.settings.login_attempts_per_minute or (peer not in self.attempts and len(self.attempts) >= 4096):
-                await reject(429, "Too many login attempts", {"Retry-After": "60"})
+        if is_login:
+            now = time.monotonic()
+            retry_after = self.login_retry_after(login_key, now)
+            if retry_after is None and login_key not in self.attempts and len(self.attempts) >= LOGIN_TABLE_LIMIT:
+                self.attempts = {k: v for k, v in self.attempts.items() if now - v[0] < LOGIN_WINDOW_SECONDS}
+                if len(self.attempts) >= LOGIN_TABLE_LIMIT:
+                    retry_after = LOGIN_WINDOW_SECONDS
+            if retry_after is not None:
+                await reject(
+                    429,
+                    f"Too many sign-in attempts. Please wait {retry_after} seconds and try again.",
+                    {"Retry-After": str(retry_after)},
+                )
                 return
-            self.attempts[peer] = minute, count + 1
+            self.count_attempt(login_key, now)
 
         limit = self.settings.request_limit_bytes
         length = headers.get("content-length")

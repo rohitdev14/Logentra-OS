@@ -41,6 +41,8 @@
       }
       const err = new Error(detail);
       err.status = res.status;
+      const retry = parseInt(res.headers.get("Retry-After") || "", 10);
+      if (retry > 0) err.retryAfter = retry;
       throw err;
     }
     if (res.status === 204) return null;

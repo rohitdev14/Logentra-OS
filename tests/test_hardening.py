@@ -53,7 +53,8 @@ def test_request_limits_and_login_rate_limit(db_url):
             assert client.post("/api/auth/login", json={"username": "nobody", "password": "invalid"}).status_code == 401
         limited = client.post("/api/auth/login", json={"username": "nobody", "password": "invalid"})
         assert limited.status_code == 429
-        assert limited.headers["retry-after"] == "60"
+        assert 1 <= int(limited.headers["retry-after"]) <= 60
+        assert "Too many sign-in attempts" in limited.json()["detail"]
         assert limited.headers["x-content-type-options"] == "nosniff"
         assert limited.headers["x-request-id"]
 
@@ -424,3 +425,51 @@ def test_fresh_production_admin_cli(db_url):
         login = client.post("/api/auth/login", json={"username": "cli-admin", "password": env["LOGENTRA_BOOTSTRAP_ADMIN_PASSWORD"]})
         assert login.status_code == 200
         assert client.get("/api/bootstrap", headers={"Authorization": "Bearer " + login.json()["token"]}).status_code == 200
+
+
+def _users_settings(db_url, **extra):
+    return Settings(database_url=db_url, auth_mode="users", bootstrap_admin_username="admin",
+                    bootstrap_admin_password="adminpass1", **extra)
+
+
+def test_successful_sign_ins_do_not_lock_anyone_out(db_url):
+    with make_client(_users_settings(db_url, login_attempts_per_minute=3)) as client:
+        for _ in range(10):
+            ok = client.post("/api/auth/login", json={"username": "admin", "password": "adminpass1"})
+            assert ok.status_code == 200
+        for _ in range(2):
+            assert client.post("/api/auth/login", json={"username": "admin", "password": "wrong"}).status_code == 401
+        # A success clears the failed-attempt counter.
+        assert client.post("/api/auth/login", json={"username": "admin", "password": "adminpass1"}).status_code == 200
+        for _ in range(3):
+            assert client.post("/api/auth/login", json={"username": "admin", "password": "wrong"}).status_code == 401
+        assert client.post("/api/auth/login", json={"username": "admin", "password": "adminpass1"}).status_code == 429
+
+
+def test_trusted_proxy_throttles_each_client_separately(db_url):
+    settings = _users_settings(db_url, login_attempts_per_minute=2, trusted_proxies=["127.0.0.0/8"])
+    with make_client(settings) as client:
+        bad = {"username": "admin", "password": "wrong"}
+        alice = {"X-Forwarded-For": "203.0.113.10"}
+        bob = {"X-Forwarded-For": "203.0.113.20"}
+        for _ in range(2):
+            assert client.post("/api/auth/login", json=bad, headers=alice).status_code == 401
+        assert client.post("/api/auth/login", json=bad, headers=alice).status_code == 429
+        # Another person behind the same proxy is not affected.
+        assert client.post("/api/auth/login", json={"username": "admin", "password": "adminpass1"},
+                           headers=bob).status_code == 200
+
+
+def test_forwarded_header_ignored_from_untrusted_peer(db_url):
+    with make_client(_users_settings(db_url, login_attempts_per_minute=2)) as client:
+        bad = {"username": "admin", "password": "wrong"}
+        for n in range(2):
+            headers = {"X-Forwarded-For": f"198.51.100.{n}"}
+            assert client.post("/api/auth/login", json=bad, headers=headers).status_code == 401
+        spoofed = client.post("/api/auth/login", json=bad, headers={"X-Forwarded-For": "198.51.100.99"})
+        assert spoofed.status_code == 429
+
+
+def test_invalid_trusted_proxy_is_rejected(db_url):
+    with pytest.raises(ValidationError):
+        Settings(database_url=db_url, trusted_proxies=["not-an-ip"])

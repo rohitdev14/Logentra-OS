@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -40,6 +41,9 @@ class Settings(BaseModel):
     request_limit_bytes: int = Field(30 * 1024 * 1024, ge=1024)
     upload_limit_bytes: int = Field(25 * 1024 * 1024, ge=1)
     login_attempts_per_minute: int = Field(10, ge=1, le=1000)
+    # Reverse proxies (IPs or CIDR ranges) whose X-Forwarded-For is trusted for
+    # per-client login throttling, e.g. the nginx container network.
+    trusted_proxies: list[str] = Field(default_factory=list)
     api_key_days: int = Field(90, ge=1, le=365)
     webhook_attempts: int = Field(5, ge=1, le=20)
     webhook_backoff_seconds: int = Field(5, ge=1, le=300)
@@ -83,6 +87,11 @@ class Settings(BaseModel):
         self.validate_bind(self.host)
         if "*" in self.cors_origins:
             raise ValueError("CORS requires explicit origins")
+        for proxy in self.trusted_proxies:
+            try:
+                ipaddress.ip_network(proxy, strict=False)
+            except ValueError:
+                raise ValueError(f"Invalid trusted proxy address: {proxy!r}") from None
         if self.profile == "production" and (
             self.auth_mode != "users" or self.api_key or self.webhook_private_destinations
         ):
@@ -109,6 +118,8 @@ class Settings(BaseModel):
 _ENV_FIELDS: list[tuple[str, tuple[str, ...], str]] = [
     ("profile", ("LOGENTRA_PROFILE",), "str"),
     ("cors_origins", ("LOGENTRA_CORS_ORIGINS",), "list"),
+    ("trusted_proxies", ("LOGENTRA_TRUSTED_PROXIES",), "list"),
+    ("login_attempts_per_minute", ("LOGENTRA_LOGIN_ATTEMPTS_PER_MINUTE",), "int"),
     ("request_limit_bytes", ("LOGENTRA_REQUEST_LIMIT_BYTES",), "int"),
     ("upload_limit_bytes", ("LOGENTRA_UPLOAD_LIMIT_BYTES",), "int"),
     ("host", ("LOGENTRA_HOST", "LOGBOOK_HOST"), "str"),

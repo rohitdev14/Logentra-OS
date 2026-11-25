@@ -197,8 +197,11 @@ def test_tls_proxy_qualification(tmp_path, db_url):
             response = client.get("/api/bootstrap")
             assert response.status_code == 401
             assert response.headers["strict-transport-security"] == "max-age=31536000"
-            statuses = [client.post("/api/auth/login", json={}).status_code for _ in range(8)]
-            assert 429 in statuses
+            responses = [client.post("/api/auth/login", json={}) for _ in range(25)]
+            limited = [r for r in responses if r.status_code == 429]
+            assert limited, [r.status_code for r in responses]
+            assert "Too many sign-in attempts" in limited[0].json()["detail"]
+            assert 1 <= int(limited[0].headers["retry-after"]) <= 60
     finally:
         for process in reversed(processes):
             process.terminate()

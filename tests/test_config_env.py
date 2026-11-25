@@ -25,3 +25,12 @@ def test_env_value_prefers_first(monkeypatch):
     assert env_value("LOGENTRA_API_KEY", "LOGBOOK_API_KEY") == "new"
     monkeypatch.delenv("LOGENTRA_API_KEY")
     assert env_value("LOGENTRA_API_KEY", "LOGBOOK_API_KEY") == "old"
+
+
+def test_login_throttle_settings_from_environment(monkeypatch):
+    from logentra_server.config import load_settings
+    monkeypatch.setenv("LOGENTRA_TRUSTED_PROXIES", "172.16.0.0/12,10.0.0.5")
+    monkeypatch.setenv("LOGENTRA_LOGIN_ATTEMPTS_PER_MINUTE", "7")
+    settings = load_settings(None)
+    assert settings.trusted_proxies == ["172.16.0.0/12", "10.0.0.5"]
+    assert settings.login_attempts_per_minute == 7

@@ -117,6 +117,29 @@
     return false;
   }
 
+  /* Too many attempts: say how long to wait and re-enable Sign in when it is over. */
+  function throttleLogin(form, err, seconds) {
+    const button = form.querySelector('button[type="submit"]');
+    let left = Math.max(1, Math.min(600, Math.round(seconds)));
+    clearInterval(form._throttle);
+    const tick = () => {
+      if (err) {
+        err.hidden = false;
+        err.textContent = "Too many sign-in attempts. Please wait " + left + (left === 1 ? " second" : " seconds") + " and try again.";
+      }
+      if (button) button.disabled = true;
+      if (left <= 0) {
+        clearInterval(form._throttle);
+        if (button) button.disabled = false;
+        if (err) { err.textContent = "You can try signing in again now."; }
+        return;
+      }
+      left -= 1;
+    };
+    tick();
+    form._throttle = setInterval(tick, 1000);
+  }
+
   function bindLogin() {
     const form = document.getElementById("login-form");
     if (!form || form._bound) return;
@@ -135,7 +158,12 @@
         document.getElementById("login-pass").value = "";
         hideLogin();
       } catch (e) {
-        if (err) { err.hidden = false; err.textContent = e.message || "Sign-in failed"; }
+        if (e && e.status === 429) {
+          throttleLogin(form, err, e.retryAfter || 60);
+        } else if (err) {
+          err.hidden = false;
+          err.textContent = e.message || "Sign-in failed";
+        }
       }
     });
     const out = document.getElementById("logout-btn");

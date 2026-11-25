@@ -240,6 +240,18 @@ def test_login_screenshot(tmp_path):
             login_png = SHOT / "06-login.png"
             page.screenshot(path=str(login_png), full_page=True)
             page.screenshot(path=str(SHOT / "login.png"), full_page=True)
+            # a throttled sign-in shows a friendly wait message and disables the button
+            page.route("**/api/auth/login", lambda route: route.fulfill(
+                status=429, headers={"Retry-After": "3", "Content-Type": "application/json"},
+                body='{"detail":"Too many sign-in attempts. Please wait 3 seconds and try again."}'))
+            page.fill("#login-user", "admin")
+            page.fill("#login-pass", "adminpass1")
+            page.get_by_role("button", name="Sign in").click()
+            page.wait_for_function(
+                "document.querySelector('#login-error').textContent.includes('Please wait')", timeout=5000)
+            assert page.get_by_role("button", name="Sign in").is_disabled()
+            page.unroute("**/api/auth/login")
+            page.wait_for_function("!document.querySelector('#login-form button[type=submit]').disabled", timeout=8000)
             # successful login should reveal the app
             page.fill("#login-user", "admin")
             page.fill("#login-pass", "adminpass1")
