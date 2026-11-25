@@ -30,8 +30,8 @@ jobs:
       LOGENTRA_TEST_POSTGRES: postgresql+psycopg://logentra:ci-test-only@127.0.0.1:5432/logentra_test
       LOGENTRA_TEST_POSTGRES_RESTORE: postgresql+psycopg://logentra:ci-test-only@127.0.0.1:5432/logentra_restore
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -49,15 +49,15 @@ jobs:
           python ui/build.py
           git diff --exit-code -- ui/Logentra.html ui/Logbook.html ui/index.html
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.python-version }}
           path: coverage.xml
   dependencies:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: |
@@ -69,7 +69,7 @@ jobs:
   containers:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify SQLite image startup and non-root UID
         run: |
           docker compose build app
