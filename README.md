@@ -7,7 +7,7 @@ The logbook that stays yours.
 [![Tests](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml/badge.svg)](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**v0.6.0.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
+**v0.6.1.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
 
 **Logentra OS** is **Log**book + **Eng**ineering + **Tra**ceability. It is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
 
@@ -97,9 +97,11 @@ curl -s -X POST http://127.0.0.1:8787/api/migrate/v2 \
 
 Then open **Trends**, choose equipment **P-210** and parameter **Vibration**. You should see four daily points from 10–13 March 2026. The 12 March 08:00 point sits above the 4.5 mm/s max line, is flagged out of range, and shows the operator note (cause, action, initials, and time) in the annotations table under the chart.
 
-## v0.6.0
+## v0.6.1
 
-This release adds configuration profiles, engineering write protections, queued integrations, native recovery tooling, PostgreSQL performance indexes, and pinned production container images. The application reports v0.6.0.
+A maintenance update to v0.6.0: one-command backup and restore with Docker Compose, friendlier sign-in limits, clear "already exists" messages, and faster lists on larger servers. The application reports v0.6.1. See the [changelog](CHANGELOG.md).
+
+v0.6.0 added configuration profiles, engineering write protections, queued integrations, native recovery tooling, PostgreSQL performance indexes, and pinned production container images.
 
 - [Deployment and upgrade guide](docs/v0.6/DEPLOYMENT_GUIDE.md)
 - [Backup and recovery guide](docs/v0.6/RECOVERY_GUIDE.md)

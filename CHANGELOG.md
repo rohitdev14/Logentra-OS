@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.6.1 – maintenance update
+
+Upgrading from 0.6.0 needs no database changes: pull the new version, rebuild, and run `docker compose up -d` as before.
+
+- **Backup and restore in one command.** A new `recovery` service in Docker Compose backs up and restores your data as the normal app user, with no special Docker permissions. Restoring over an existing installation keeps your previous files as a safety copy. See the [recovery guide](docs/v0.6/RECOVERY_GUIDE.md).
+- **Friendlier sign-in limits.** Only wrong passwords count towards the limit, and a successful sign-in resets it. People signing in through the same server no longer share one limit. If someone does hit it, the sign-in screen says how many seconds to wait and lets them try again when the time is up.
+- **Clear "already exists" messages.** Adding a site, area, role, user, work order or work-order rule that already exists now says so, instead of showing a server error.
+- **Faster on larger servers.** Production installs on PostgreSQL use three app workers on machines with four or more CPUs, so lists and search stay quick with more people online.
+- **Updated images and build tooling.** The database and web proxy images are pinned to exact builds, the database runs under its own user, and the automated checks use the latest GitHub Actions.
+
+Engineering notes for this release are in [docs/v0.6/KNOWN_ISSUES.md](docs/v0.6/KNOWN_ISSUES.md).
+
 ## 0.6.0 – production hardening
 
 Production Compose overlay, scoped authorization, recovery tooling, and performance and operations fixes for a first 0.6 stable candidate. This commit does not create a git tag.

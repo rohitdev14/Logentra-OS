@@ -49,3 +49,7 @@ Final qualification adds scoped operational workflows, protective audit triggers
 ## Release completion update
 
 The application version is 0.6.0. See [the final qualification report](FINAL_QUALIFICATION_REPORT.md) for the earlier candidate measurements and [CHANGELOG](../../CHANGELOG.md) for the 0.6.0 contents.
+
+## 0.6.1 maintenance update
+
+The application version is 0.6.1. It fixes restore privileges, duplicate-create errors and sign-in throttling behind nginx, tunes production workers, pins the PostgreSQL and nginx images by digest and updates CI actions. Measurements, remaining limits and the PostgreSQL image finding are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
