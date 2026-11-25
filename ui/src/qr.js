@@ -3,6 +3,7 @@
   "use strict";
   const api = window.LogbookAPI;
   const selected = new Map();
+  let previewObserver;
   const esc = value => String(value ?? "").replace(/[&<>"']/g, char =>
     ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[char]);
 
@@ -41,16 +42,13 @@
     let rows = [], sites = [], page = 1, pages = 1, searchTimer, loadVersion = 0, previewVersion = 0;
     const start = () => Math.max(1, Math.min(21, Number(get("start").value) || 1));
     const feedback = text => { if (host.isConnected) get("feedback").textContent = text; };
-    const fields = window.Logbook.getState().equipmentFields;
-    const nameKey = fields.find(field => field.key === "name")?.id;
-    const areaName = row => sites.flatMap(site => site.areas || []).find(area => area.id === row.area_id)?.name || "";
     const url = (ids, preview) => "/tags/print?" + new URLSearchParams({ids:[...ids].join(","), start:start(), preview});
     const renderRows = () => {
       if (!host.isConnected) return;
       host.innerHTML = rows.map(row => `<tr><td><input type="checkbox" aria-label="Select ${esc(row.tag)}"
         data-equipment="${esc(row.id)}" ${selected.has(row.id) ? "checked" : ""}></td>
-        <td><strong>${esc(row.tag)}</strong></td><td>${esc(row.values[nameKey])}</td>
-        <td>${esc(areaName(row))}</td><td>${row.qr_code_issued ? "Reprint" : "New"}</td></tr>`).join("")
+        <td><strong>${esc(row.tag)}</strong></td><td>${esc(row.name)}</td>
+        <td>${esc(row.area)}</td><td>${row.qr_code_issued ? "Reprint" : "New"}</td></tr>`).join("")
         || '<tr><td colspan="5">No equipment matches.</td></tr>';
       get("page").textContent = page + " / " + pages;
       get("prev").disabled = page <= 1;
@@ -58,6 +56,7 @@
     };
     async function preview() {
       const version = ++previewVersion;
+      previewObserver?.disconnect();
       const count = selected.size;
       get("selected").textContent = count + " selected";
       get("print").disabled = !count;
@@ -74,13 +73,29 @@
         frame.title = "Label sheet preview";
         frame.setAttribute("sandbox", "");
         frame.srcdoc = html;
-        get("preview").replaceChildren(frame);
+        const stage = document.createElement("div");
+        stage.className = "qr-preview-stage";
+        stage.append(frame);
+        get("preview").replaceChildren(stage);
+        const sheets = Math.ceil((count + start() - 1) / 21);
+        const width = 210 * 96 / 25.4;
+        const height = Math.ceil(297 * 96 / 25.4 * sheets);
+        frame.style.height = height + "px";
+        const fit = () => {
+          const scale = Math.min(1, stage.clientWidth / width);
+          frame.style.transform = "scale(" + scale + ")";
+          stage.style.height = Math.ceil(height * scale) + "px";
+        };
+        previewObserver?.disconnect();
+        previewObserver = new ResizeObserver(fit);
+        previewObserver.observe(stage);
+        fit();
       } catch (error) { feedback(error.message); }
     }
     async function load() {
       const version = ++loadVersion;
       try {
-        const result = await api.listEquipment({page, page_size:50, q:get("query").value,
+        const result = await api.listQRLabels({page, page_size:50, q:get("query").value,
           site_id:get("site").value, area_id:get("area").value});
         if (version !== loadVersion || !host.isConnected) return;
         rows = result.items;
@@ -211,12 +226,37 @@
     } catch (error) { host.textContent = error.message; }
   }
 
+  function bindReadingPhotos() {
+    document.querySelectorAll("[data-reading-photo]").forEach(button => {
+      const path = "/api/readings/photos/" + encodeURIComponent(button.dataset.readingPhoto);
+      const image = button.querySelector("img");
+      const load = () => api.authenticatedFetch(path).then(response => response.blob());
+      load().then(blob => {
+        if (!button.isConnected) return;
+        const url = URL.createObjectURL(blob);
+        image.onload = image.onerror = () => URL.revokeObjectURL(url);
+        image.src = url;
+      }).catch(() => { image.alt = "Photo unavailable"; });
+      button.onclick = async () => {
+        const tab = window.open("about:blank", "_blank");
+        if (!tab) { window.Logbook._toast("Allow popups to open the photo."); return; }
+        try {
+          const url = URL.createObjectURL(await load());
+          tab.location.replace(url);
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+        } catch (error) { tab.close(); window.Logbook._toast(error.message); }
+      };
+    });
+  }
+
   window.LogentraQR = {
     views:{qrTags:viewTags, settings:viewSettings, profile:() =>
       '<h2>Profile</h2><section class="card"><h3>Phone sessions</h3><div id="qr-own-sessions"></div></section>'},
     bind(view) {
+      previewObserver?.disconnect();
       document.getElementById("qr-profile").hidden = window.Logbook.getState().me?.mode !== "user";
       if (view === "qrTags") bindTags();
+      if (view === "logbook") bindReadingPhotos();
       if (view === "settings") bindSettings(document.getElementById("qr-url-form"));
       if (view === "profile") sessions(document.getElementById("qr-own-sessions"));
       if (view === "backup" && window.LogbookV4.can("settings.manage")) storage(document.getElementById("qr-storage"));

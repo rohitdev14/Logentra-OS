@@ -80,6 +80,7 @@
 
   const api = {
     shiftRequest: (method, path, body) => req(method, path, body),
+    listQRLabels: params => req("GET", "/equipment/qr-labels" + qs(params)),
     issueQRCodes: (ids, reprint) => req("POST", "/equipment/qr-codes", {ids, reprint}),
     getPublicURL: () => req("GET", "/settings/public-url"),
     setPublicURL: (public_base_url) => req("PUT", "/settings/public-url", {public_base_url}),

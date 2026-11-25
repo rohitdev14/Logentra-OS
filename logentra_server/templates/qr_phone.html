@@ -7,15 +7,35 @@
 :root{color-scheme:light dark;--bg:#f2f3f7;--panel:#fff;--ink:#191b27;--soft:#566173;--line:#d8dce6;--brand:#28236b;--action:#5245db;--danger:#993c20;--ok:#166045}
 @media(prefers-color-scheme:dark){:root{--bg:#151c25;--panel:#202b36;--ink:#eef5fa;--soft:#b5c7d8;--line:#415466;--brand:#122943;--action:#5147bd;--danger:#ffb18a;--ok:#72d8ae}}
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--ink);font:16px system-ui,sans-serif}
-header{background:var(--brand);color:#fff;padding:16px max(16px,calc((100% - 500px)/2));display:flex;justify-content:space-between;gap:1em}
+header{background:var(--panel);color:var(--ink);border-bottom:1px solid var(--line);align-items:center;padding:16px max(16px,calc((100% - 500px)/2));display:flex;justify-content:space-between;gap:1em}
 main{max-width:532px;padding:16px;margin:auto}section,fieldset{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:16px;min-width:0}
 h1,h2,p{margin:0 0 .65em}h1{font-size:24px}h2{font-size:18px}small,.muted{color:var(--soft)}
 label{display:block;font-weight:600;margin-bottom:5px}input,textarea,button,.button{font:inherit;border-radius:8px}input:not([type=checkbox]),textarea{width:100%;min-height:44px;padding:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);margin-bottom:8px}
 textarea{resize:vertical}select{font:inherit;margin-bottom:12px;padding:8px}details{margin:12px 0}summary{cursor:pointer}#saved-values{padding-left:1.2em}button,.button{display:inline-block;min-height:44px;padding:10px 14px;border:1px solid transparent;background:var(--action);color:#fff;font-weight:650;cursor:pointer;text-decoration:none}
-button[type=submit]{width:100%}button:disabled{opacity:.65}header button{min-height:auto;padding:0;background:transparent;text-decoration:underline}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:6px 3px;text-align:left;border-bottom:1px solid var(--line)}td:last-child{width:34%}
+button[type=submit]{width:100%}button:disabled{opacity:.65}header .session{display:flex;gap:.8em;align-items:center;font-size:.85em}header button{min-height:auto;padding:0;background:transparent;text-decoration:underline;color:var(--soft)}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:6px 3px;text-align:left;border-bottom:1px solid var(--line)}td:last-child{width:34%}
 .flag{font-size:13px;color:var(--ok)}.flag[data-warn],.error{color:var(--danger)}.error{white-space:pre-wrap}.values{margin-bottom:12px}
+
+.phone-brand{display:flex;align-items:center;gap:.45rem}.phone-brand span{display:grid;place-items:center;width:26px;height:26px;background:var(--action);color:#fff;border-radius:6px}
+.equipment-card h1{margin-bottom:.25em;font-family:ui-monospace,monospace}
+.reading-heading{font-size:.82rem;color:var(--soft);text-transform:uppercase}
+.reading-meta{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:.3rem}
+.reading-meta:first-child{margin-bottom:.4rem}.reading-meta:last-child{margin-top:.4rem}
+.reading-meta label{margin:0}.reading-input input{font-size:1.12rem;font-weight:650}
+.reading-row[data-warn] input{border-color:var(--danger)}
+.table-alert{border-color:var(--danger);color:var(--danger);background:color-mix(in srgb,var(--danger) 10%,var(--panel))}
+.equipment-card p{margin:0 0 .3em}
+.reading-input{display:flex;gap:.35rem;align-items:center}.reading-input input{min-width:0;margin:0}
+.reading-row[data-warn]{background:color-mix(in srgb,var(--danger) 11%,var(--panel));border-color:var(--danger)}
+.flag:not(:empty){display:inline-block;padding:.18em .5em;border-radius:1em;background:color-mix(in srgb,var(--ok) 13%,var(--panel));font-weight:700;margin-top:.35rem}
+.flag[data-warn]{background:color-mix(in srgb,var(--danger) 16%,var(--panel))}
+.save-bar{position:sticky;bottom:0;background:var(--bg);padding:.6rem 0;text-align:center}
+#reading-warning{display:block;margin-top:.3rem;color:var(--danger)}
+.photo-list{display:flex;gap:.55rem;flex-wrap:wrap;margin-bottom:.55rem}
+.photo-list figure{margin:0;width:85px}.photo-list img{width:100%;height:66px;object-fit:cover;border-radius:.45rem}
+.photo-list button,.secondary{background:var(--panel);color:var(--ink);border-color:var(--line)}
+.photo-list button{font-size:.75rem;padding:.2rem .35rem;min-height:32px;margin-top:.15rem}
 </style>
-<header><strong>Logentra OS</strong><button type="button" id="signout" hidden>Sign out</button></header>
+<header><strong class="phone-brand"><span aria-hidden="true">L</span> Logentra OS</strong><div id="session" class="session" hidden><span id="operator"></span><button type="button" id="signout">Sign out</button></div></header>
 <main>@@CONTENT@@</main>
 <script type="application/json" id="phone-data">@@DATA@@</script>
 <script>
@@ -23,6 +43,11 @@ const data = JSON.parse(document.getElementById("phone-data").textContent);
 const form = document.querySelector("form");
 const error = document.getElementById("error");
 const csrf = {"X-CSRF-Token": data.csrf};
+document.querySelectorAll(".equipment-card time").forEach(time => {
+  const raw = time.dateTime;
+  const value = new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(raw) ? raw : raw + "Z");
+  if (!Number.isNaN(value.getTime())) time.textContent = value.toLocaleString();
+});
 
 async function post(url, body, headers = {}) {
   const response = await fetch(url, {method:"POST", body, headers:{...csrf, ...headers}});
@@ -102,23 +127,102 @@ if (data.screen === "entry") {
     try { form.entered_by.value = localStorage.getItem("logentra-phone-name") || ""; } catch (_) {}
   } else {
     const logout = document.getElementById("signout");
-    logout.hidden = false;
+    document.getElementById("operator").textContent = data.user;
+    document.getElementById("session").hidden = false;
     logout.onclick = async () => {
       try { await post("/q/logout"); location.reload(); }
       catch (failure) { error.textContent = failure.message; }
     };
   }
   const inputs = [...form.querySelectorAll("[data-parameter]")];
-  inputs.forEach(input => input.addEventListener("input", () => {
-    const parameter = data.parameters[Number(input.dataset.parameter)];
-    const flag = document.getElementById("flag-" + input.dataset.parameter);
-    const value = Number(input.value.trim().replace(",", "."));
-    const valid = input.value.trim() && Number.isFinite(value);
-    const warn = valid && ((parameter.min !== "" && value < parameter.min)
-      || (parameter.max !== "" && value > parameter.max));
-    flag.textContent = valid ? (warn ? "Out of range" : "OK") : "";
-    flag.toggleAttribute("data-warn", Boolean(warn));
-  }));
+  const save = form.querySelector("button[type=submit]");
+  const warning = document.getElementById("reading-warning");
+  function updateFlags() {
+    const alerts = [];
+    let count = 0, flagged = 0;
+    for (const input of inputs) {
+      const parameter = data.parameters[Number(input.dataset.parameter)];
+      const flag = document.getElementById("flag-" + input.dataset.parameter);
+      const value = Number(input.value.trim().replace(",", "."));
+      const valid = Boolean(input.value.trim()) && Number.isFinite(value);
+      const warn = valid && ((parameter.min !== "" && value < parameter.min)
+        || (parameter.max !== "" && value > parameter.max));
+      if (valid) count++;
+      if (warn) {
+        flagged++;
+        const below = parameter.min !== "" && value < parameter.min;
+        alerts.push(parameter.label + " " + value + (parameter.unit ? " " + parameter.unit : "") +
+          (below ? " is below min " + parameter.min : " is above max " + parameter.max));
+      }
+      flag.textContent = valid ? (warn ? "Out of range" : "OK") : "";
+      flag.toggleAttribute("data-warn", warn);
+      input.closest(".reading-row").toggleAttribute("data-warn", warn);
+    }
+    const tableAlert = document.getElementById("table-alert");
+    if (tableAlert) {
+      tableAlert.hidden = !flagged;
+      tableAlert.textContent = alerts.join(" · ");
+    }
+    save.textContent = count ? "Save " + count + (count === 1 ? " reading" : " readings") : "Save entry";
+    warning.hidden = !flagged;
+    warning.textContent = flagged + " out of range · " + (flagged === 1 ? "it will" : "they will") + " be flagged on the dashboard";
+  }
+  inputs.forEach(input => input.addEventListener("input", updateFlags));
+  updateFlags();
+  const picker = document.getElementById("photos");
+  const addPhoto = document.getElementById("add-photo");
+  const photoList = document.getElementById("photo-list");
+  const photos = [];
+  let replacing = null;
+  function renderPhotos() {
+    photoList.replaceChildren(...photos.map((photo, index) => {
+      const item = document.createElement("figure");
+      const image = document.createElement("img");
+      image.src = photo.url;
+      image.alt = photo.name;
+      const size = document.createElement("figcaption");
+      size.textContent = Math.max(1, Math.round(photo.blob.size / 1024)) + " KB";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove";
+      remove.setAttribute("aria-label", "Remove photo " + (index + 1));
+      remove.onclick = () => { URL.revokeObjectURL(photo.url); photos.splice(index, 1); renderPhotos(); };
+      const replace = document.createElement("button");
+      replace.type = "button";
+      replace.textContent = "Replace";
+      replace.setAttribute("aria-label", "Replace photo " + (index + 1));
+      replace.onclick = () => { replacing = index; picker.multiple = false; picker.click(); };
+      item.append(image, size, remove, replace);
+      return item;
+    }));
+    addPhoto.textContent = "Add photo (" + photos.length + " of " + data.photoLimit + ")";
+    addPhoto.disabled = photos.length >= data.photoLimit;
+  }
+  addPhoto.onclick = () => { replacing = null; picker.multiple = true; picker.click(); };
+  picker.onchange = async () => {
+    const files = [...picker.files];
+    picker.value = "";
+    const index = replacing;
+    if (!files.length) return;
+    if (index === null && files.length + photos.length > data.photoLimit) {
+      error.textContent = "Attach at most " + data.photoLimit + " photos";
+      return;
+    }
+    save.disabled = addPhoto.disabled = true;
+    photoList.inert = true;
+    error.textContent = "";
+    try {
+      const processed = [];
+      for (const file of files) {
+        const blob = await shrink(file);
+        processed.push({blob, name:file.name.replace(/\.[^.]+$/, "") + ".jpg"});
+      }
+      for (const photo of processed) photo.url = URL.createObjectURL(photo.blob);
+      if (index === null) photos.push(...processed);
+      else { URL.revokeObjectURL(photos[index].url); photos[index] = processed[0]; }
+    } catch (failure) { error.textContent = failure.message; }
+    finally { save.disabled = false; photoList.inert = false; renderPhotos(); }
+  };
   bindSubmit(async () => {
     const body = new FormData();
     body.set("entry_id", entryId);
@@ -129,10 +233,9 @@ if (data.screen === "entry") {
     }
     body.set("values", JSON.stringify(Object.fromEntries(inputs.map(input =>
       [data.parameters[Number(input.dataset.parameter)].key, input.value]))));
-    const photos = [...form.photos.files];
-    if (photos.length > data.photoLimit) throw new Error("Attach at most " + data.photoLimit + " photos");
-    for (const file of photos) body.append("photos", await shrink(file), file.name.replace(/\.[^.]+$/, "") + ".jpg");
+    for (const photo of photos) body.append("photos", photo.blob, photo.name);
     const saved = await post("/api/qr/" + data.code + "/entry", body);
+    photos.forEach(photo => URL.revokeObjectURL(photo.url));
     form.hidden = true;
     document.getElementById("done").hidden = false;
     document.getElementById("saved-summary").textContent =

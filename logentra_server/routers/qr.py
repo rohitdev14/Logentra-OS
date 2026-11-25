@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from logentra_server import qr_entries, qr_phone, service, workorders
 from logentra_server.auth import Principal, create_session, hash_token
-from logentra_server.models import Area, Equipment, QREntry, QRRetiredCode, Reading, ReadingPhoto, SessionToken, Setting, User
+from logentra_server.models import Area, Equipment, QREntry, QRRetiredCode, Reading, ReadingPhoto, SessionToken, Setting, Site, User
 from logentra_server.phone_auth import PHONE_COOKIE, phone_principal, require_csrf
 from logentra_server.routers.auth_users import LoginIn, verify_login
 from logentra_server.utils import utcnow_iso
@@ -79,16 +79,25 @@ def public_url(db, settings):
     return (row.value if row else settings.public_base_url).rstrip("/")
 
 
-def qr_summary(db, equipment):
+def equipment_label(db, equipment):
+    fields = {item.field.key: (item.value or "").strip() for item in equipment.values}
+    name = next((fields[key] for key in ("name", "description", "category", "location") if fields.get(key)), "")
+    site = db.get(Site, equipment.site_id) if equipment.site_id else None
     area = db.get(Area, equipment.area_id) if equipment.area_id else None
-    name = next((item.value for item in equipment.values if item.field.key == "name"), "") or ""
+    return {"name": name, "site": site.name if site else "", "area": area.name if area else (site.name if site else "")}
+
+
+def qr_summary(db, equipment):
+    label = equipment_label(db, equipment)
+    latest = db.query(Reading).filter_by(equipment_id=equipment.id).order_by(Reading.ts.desc(), Reading.id.desc()).first()
     params = []
     for param in sorted(equipment.parameters, key=lambda item: (item.sort_order, item.key)):
         last = db.query(Reading.value).filter_by(equipment_id=equipment.id, parameter_key=param.key).order_by(
             Reading.ts.desc(), Reading.id.desc()
         ).first()
         params.append({**service.param_to_ui(param), "last": last[0] if last else None})
-    return {"id": equipment.id, "tag": equipment.tag, "name": name, "area": area.name if area else "",
+    return {"id": equipment.id, "tag": equipment.tag, **label,
+            "last_logged_at": latest.ts if latest else None, "last_logged_by": latest.entered_by if latest else None,
             "code": equipment.qr_code, "parameters": params,
             "layout": "form" if len(params) <= QUICK_FORM_MAX_PARAMS else "table"}
 
@@ -109,20 +118,20 @@ def current_equipment(db, code, principal):
     return equipment
 
 
-def render_label(equipment, area, base_url, *, preview=False):
+def render_label(db, equipment, base_url, *, preview=False):
     address = f"{base_url}/q/{equipment.qr_code}" if not preview else "https://example.invalid/label-preview"
     stream = BytesIO()
     segno.make_qr(address, error="m").save(stream, kind="svg", xmldecl=False, svgns=False, border=4, omitsize=True)
     svg = stream.getvalue().decode()
-    name = next((field.value for field in equipment.values if field.field.key == "name"), "") or ""
+    label = equipment_label(db, equipment)
     return (
         f'<div class="label">{svg}<div><strong>{escape(equipment.tag)}</strong>'
-        f'<div>{escape(name)}</div><div>{escape(area)}</div>'
+        f'<div>{escape(label["name"])}</div><div>{escape(label["area"])}</div>'
         f'<small>Scan to log readings<br>{escape("Preview" if preview else address.split("://", 1)[-1])}</small></div></div>'
     )
 
 
-def render_sheet(labels, start):
+def render_sheet(labels, start, *, preview=False):
     blank = '<div class="label blank"></div>'
     slots = [blank] * (start - 1) + labels
     slots.extend([blank] * (-len(slots) % LABELS_PER_SHEET))
@@ -130,6 +139,7 @@ def render_sheet(labels, start):
         '<section class="sheet">' + "".join(slots[index:index + LABELS_PER_SHEET]) + "</section>"
         for index in range(0, len(slots), LABELS_PER_SHEET)
     )
+    preview_style = "<style>.sheet{margin:0 auto;outline:1px solid #d7e0eb;outline-offset:-1px}</style>" if preview else ""
     return """<!doctype html><html lang="en"><meta charset="utf-8"><title>Logentra OS QR tags</title>
 <style>
 @page{size:A4;margin:0}
@@ -141,7 +151,7 @@ display:grid;grid-template-columns:repeat(3,63.5mm);grid-template-rows:repeat(7,
 .label svg{width:28mm;height:28mm;flex:none}.label div{min-width:0;overflow-wrap:anywhere}
 .label small{font-size:7pt;line-height:1.2;display:block;margin-top:1mm}
 @media print{body{background:white}.sheet{margin:0;break-after:page}.sheet:last-child{break-after:auto}.label{outline:none}}
-</style>""" + sheets + "</html>"
+</style>""" + preview_style + sheets + "</html>"
 
 
 class PhoneWorkOrder(BaseModel):
@@ -157,6 +167,17 @@ class PhoneLogin(LoginIn):
 
 def build_router(get_db, get_principal, settings):
     router = APIRouter(tags=["qr"])
+
+    @router.get("/api/equipment/qr-labels")
+    def list_labels(q: str | None = None, site_id: str | None = None, area_id: str | None = None,
+                    page: int = 1, page_size: int = 50, db: Session = Depends(get_db),
+                    principal: Principal = Depends(get_principal)):
+        principal.require("equipment.read")
+        return service.list_equipment(
+            db, q=q, site_id=site_id, area_id=area_id, page=page, page_size=page_size, principal=principal,
+            serialize=lambda equipment: {**service.equipment_index_row(equipment), **equipment_label(db, equipment),
+                                         "qr_code_issued": bool(equipment.qr_code)},
+        )
 
     @router.post("/api/equipment/qr-codes")
     def generate(body: EquipmentSelection, db: Session = Depends(get_db),
@@ -231,14 +252,13 @@ def build_router(get_db, get_principal, settings):
             equipment = equipment_for(db, eid, principal)
             if not equipment.qr_code and not preview:
                 raise HTTPException(409, f"Generate a QR code for {equipment.tag} first")
-            area = db.get(Area, equipment.area_id) if equipment.area_id else None
-            labels.append(render_label(equipment, area.name if area else "", base, preview=preview))
+            labels.append(render_label(db, equipment, base, preview=preview))
         if not preview:
             set_setting(db, "qr_labels_printed", "1")
             service.audit(db, "qr.sheet_printed", actor=principal.username, user_id=principal.user_id,
                           entity_type="equipment", detail={"ids": selected, "count": len(selected), "start": start})
             db.commit()
-        return HTMLResponse(render_sheet(labels, start), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(render_sheet(labels, start, preview=preview), headers={"Cache-Control": "no-store"})
 
     @router.get("/q/{code}", response_class=HTMLResponse)
     def scan(code: str, request: Request, db: Session = Depends(get_db)):
@@ -260,7 +280,7 @@ def build_router(get_db, get_principal, settings):
         except HTTPException as error:
             if error.status_code == 401:
                 return qr_phone.render_phone(
-                    request, qr_phone.equipment_card(equipment.tag, "", "") + qr_phone.login_form(settings.phone_session_days, request.url.scheme == "https"),
+                    request, qr_phone.equipment_card({"tag": equipment.tag, **equipment_label(db, equipment)}) + qr_phone.login_form(settings.phone_session_days, request.url.scheme == "https"),
                     {"screen": "login"},
                 )
             return qr_phone.render_phone(
@@ -270,12 +290,12 @@ def build_router(get_db, get_principal, settings):
         summary = qr_summary(db, equipment)
         db.commit()
         open_mode = principal.mode == "open"
-        content = qr_phone.equipment_card(summary["tag"], summary["name"], summary["area"])
+        content = qr_phone.equipment_card(summary)
         content += qr_phone.reading_form(summary, open_mode=open_mode, photo_limit=settings.photos_per_entry,
                                          can_create_work=principal.can("workorders.create"))
         return qr_phone.render_phone(
             request, content, {**summary, "screen": "entry", "open": open_mode,
-                               "photoLimit": settings.photos_per_entry},
+                               "photoLimit": settings.photos_per_entry, "user": None if open_mode else principal.username},
         )
 
     @router.get("/api/qr/{code}")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, exists, func, or_
+from sqlalchemy import and_, exists, func, or_, tuple_
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -23,6 +23,7 @@ from logentra_server.models import (
     Parameter,
     Punch,
     Reading,
+    ReadingPhoto,
     Record,
     RecordColumn,
     RecordItem,
@@ -168,6 +169,7 @@ def list_equipment(
     page_size: int | None = None,
     principal=None,
     paginate: bool = False,
+    serialize=equipment_to_ui,
 ) -> Any:
     query = db.query(Equipment).options(selectinload(Equipment.values), selectinload(Equipment.parameters))
     query = apply_scope(query, Equipment, principal)
@@ -195,11 +197,11 @@ def list_equipment(
         query = query.filter(cat_exists)
     query = query.order_by(Equipment.tag, Equipment.id)
     if not paginate and page is None:
-        return [equipment_to_ui(e) for e in query.all()]
+        return [serialize(e) for e in query.all()]
     page, page_size = clamp_page(page, page_size)
     total = count_rows(query, Equipment.id)
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
-    return page_result([equipment_to_ui(e) for e in rows], total, page, page_size)
+    return page_result([serialize(e) for e in rows], total, page, page_size)
 
 
 def list_templates(db: Session, *, q: str | None = None, page: int | None = None, page_size: int | None = None, paginate: bool = False):
@@ -245,6 +247,20 @@ def list_records(
     total = count_rows(query, Record.id)
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
     return page_result([record_to_ui(r) for r in rows], total, page, page_size)
+
+
+def add_log_photos(db, entries):
+    by_key = {(entry["id"], entry["equipmentId"]): entry for entry in entries}
+    keys = list(by_key)
+    for offset in range(0, len(keys), 400):
+        photos = db.query(ReadingPhoto).filter(
+            tuple_(ReadingPhoto.entry_id, ReadingPhoto.equipment_id).in_(keys[offset:offset + 400])
+        ).order_by(ReadingPhoto.created_at, ReadingPhoto.id)
+        for photo in photos:
+            by_key[(photo.entry_id, photo.equipment_id)].setdefault("photos", []).append(
+                {"id": photo.id, "filename": photo.filename}
+            )
+    return entries
 
 
 def list_logs(
@@ -326,6 +342,8 @@ def list_logs(
                 "at": r.annotation.annotated_at or "",
             }
     items = [groups[i] for i in ids if i in groups]
+    if principal is None or principal.can("readings.read"):
+        add_log_photos(db, items)
     return page_result(items, total, page, page_size)
 
 
@@ -366,7 +384,7 @@ def record_to_ui(r: Record) -> dict[str, Any]:
     }
 
 
-def logs_to_ui(db: Session) -> list[dict[str, Any]]:
+def logs_to_ui(db: Session, *, include_photos: bool = True) -> list[dict[str, Any]]:
     q = (
         db.query(Reading)
         .options(selectinload(Reading.annotation))
@@ -401,7 +419,8 @@ def logs_to_ui(db: Session) -> list[dict[str, Any]]:
                 "by": r.annotation.annotated_by or "",
                 "at": r.annotation.annotated_at or "",
             }
-    return [groups[k] for k in order]
+    entries = [groups[k] for k in order]
+    return add_log_photos(db, entries) if include_photos else entries
 
 
 def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500, principal=None) -> dict[str, Any]:
@@ -441,7 +460,7 @@ def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500
         )
         records = [record_to_ui(r) for r in rec_query.all()]
         record_total = len(records)
-        logs = logs_to_ui(db)
+        logs = logs_to_ui(db, include_photos=principal is None or principal.can("readings.read"))
     templates = db.query(Template).options(
         selectinload(Template.columns), selectinload(Template.items)
     ).all()

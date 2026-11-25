@@ -66,6 +66,10 @@ def test_quick_entry_photo_and_idempotency(client, tmp_path, monkeypatch):
     assert invalid.status_code == 422
     assert "value_0" in invalid.json()["detail"]
     files = [("photos", ("photo.png", photo, "image/png"))]
+    gif = BytesIO()
+    Image.new("RGB", (10, 10)).save(gif, "GIF")
+    assert client.post(path, data=body, files={"photos": ("photo.gif", gif.getvalue(), "image/gif")},
+                       headers=csrf(client, code)).status_code == 422
     assert client.post(path, data=body, files=files * 4, headers=csrf(client, code)).status_code == 422
     assert client.post(path, data=body, files={"photos": ("bad.png", b"invalid", "image/png")},
                        headers=csrf(client, code)).status_code == 422
@@ -105,6 +109,9 @@ def test_phone_login_and_revocation(db_url):
         assert 6.99 < (expiry - datetime.now(timezone.utc)).total_seconds() / 86400 <= 7
         assert "Quick entry" in client.get("/q/ABCDEFGH").text
         assert client.get("/api/bootstrap").status_code == 401
+        bearer = {"Authorization": "Bearer " + client.cookies["logentra_phone"]}
+        assert client.get("/api/bootstrap", headers=bearer).status_code == 401
+        assert client.get("/api/qr/ABCDEFGH", headers=bearer).status_code == 200
         session, = client.get("/api/auth/sessions", headers=headers).json()
         assert client.delete(f"/api/auth/sessions/{session['id']}", headers=headers).status_code == 200
         assert "Sign in to log readings" in client.get("/q/ABCDEFGH").text
@@ -142,3 +149,60 @@ def test_phone_login_sets_secure_cookie_behind_trusted_proxy(db_url):
                             json={"username":"operator", "password":"test-password"})
         assert phone.status_code == 200, phone.text
         assert "Secure" in phone.headers["set-cookie"]
+
+
+def test_demo_equipment_name_and_form_layout(client):
+    assert client.post("/api/demo").status_code == 200
+    code = client.post("/api/equipment/qr-codes", json={"ids": ["eq_p101"]}).json()["codes"]["eq_p101"]
+    summary = client.get(f"/api/qr/{code}").json()
+    assert summary["layout"] == "form"
+    assert summary["name"] == "Pump"
+    assert summary["last_logged_at"] and summary["last_logged_by"]
+    rows = client.get("/api/equipment/qr-labels", params={"q": "P-101"}).json()["items"]
+    row = next(item for item in rows if item["id"] == "eq_p101")
+    assert (row["name"], row["area"]) == (summary["name"], summary["area"])
+    assert "<div>Pump</div>" in client.get("/tags/print", params={"ids": "eq_p101"}).text
+    assert "<p>Pump</p>" in client.get(f"/q/{code}").text
+
+
+def test_quick_entry_and_photos_respect_area_scope(client, monkeypatch, tmp_path):
+    from logentra_server import qr_entries
+    from logentra_server.auth import create_session
+    from logentra_server.models import Area, Role, Site, User
+
+    monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path)
+    eq_id, code = equipment(client)
+    now = utcnow_iso()
+    headers = {}
+    with client.app.state.SessionLocal.begin() as db:
+        db.add(Site(id="site_training", name="Northbrook Works", created_at=now))
+        db.flush()
+        db.add_all([Area(id=area, name=area, site_id="site_training", created_at=now)
+                    for area in ("Utilities", "Workshop")])
+        db.flush()
+        eq = db.get(Equipment, eq_id)
+        eq.site_id, eq.area_id = "site_training", "Utilities"
+        technician = db.query(Role).filter_by(name="technician").one()
+        for area in ("Utilities", "Workshop"):
+            user = User(id=area, username=area, role_id=technician.id, site_id="site_training", area_id=area,
+                        is_active=1, password_hash="unused", created_at=now, updated_at=now)
+            db.add(user)
+            db.flush()
+            headers[area] = {"Authorization": "Bearer " + create_session(db, user.id, kind="phone")[0]}
+        browser = {"Authorization": "Bearer " + create_session(db, "Workshop")[0]}
+    path = f"/api/qr/{code}/entry"
+    body = {"entry_id": str(uuid4()), "values": '{"value_0": "2"}'}
+    assert client.post(path, data=body, headers=headers["Workshop"]).status_code == 403
+    page = client.get(f"/q/{code}", headers=headers["Workshop"])
+    assert page.status_code == 403 and "not allowed to log readings for this area" in page.text
+    image = BytesIO()
+    Image.new("RGB", (8, 8)).save(image, "PNG")
+    saved = client.post(path, data=body, files={"photos": ("pump.png", image.getvalue())},
+                        headers=headers["Utilities"])
+    assert saved.status_code == 200, saved.text
+    photo, = saved.json()["photos"]
+    assert client.get(f"/api/readings/photos/{photo}", headers=headers["Workshop"]).status_code == 403
+    assert client.get(f"/api/readings/photos/{photo}", headers=headers["Utilities"]).content == image.getvalue()
+    assert not client.get("/api/logs", params={"equipment_id": eq_id}, headers=browser).json()["items"]
+    logs = client.get("/api/logs", params={"equipment_id": eq_id}).json()["items"]
+    assert logs[0]["photos"] == [{"id": photo, "filename": "pump.png"}]
