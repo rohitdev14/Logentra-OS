@@ -522,3 +522,45 @@ CREATE TABLE document_comments (
     created_at   TEXT NOT NULL
 );
 CREATE INDEX ix_document_comments_document_id ON document_comments(document_id);
+
+-- QR tags, quick-entry receipts and reading photos (0008_qr_tags)
+ALTER TABLE equipment ADD COLUMN qr_code TEXT;
+ALTER TABLE equipment ADD COLUMN qr_code_issued_at TEXT;
+CREATE UNIQUE INDEX ix_equipment_qr_code ON equipment(qr_code);
+
+CREATE TABLE qr_retired_codes (
+    code TEXT PRIMARY KEY,
+    equipment_id TEXT REFERENCES equipment(id) ON DELETE SET NULL,
+    retired_at TEXT NOT NULL,
+    retired_by TEXT
+);
+
+CREATE TABLE qr_entries (
+    id TEXT PRIMARY KEY,
+    equipment_id TEXT NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+    note TEXT NOT NULL,
+    entered_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE reading_photos (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    equipment_id TEXT NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    storage_path TEXT NOT NULL,
+    uploaded_by TEXT NOT NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX ix_reading_photos_entry_id ON reading_photos(entry_id);
+CREATE INDEX ix_reading_photos_equipment_id ON reading_photos(equipment_id);
+
+ALTER TABLE session_tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'browser';
+ALTER TABLE session_tokens ADD COLUMN label TEXT;
+ALTER TABLE session_tokens ADD COLUMN revoked_at TEXT;

@@ -55,6 +55,10 @@ class Settings(BaseModel):
     api_key: str = ""
     # open = single-user / standalone (no login). users = require login or a user-bound API key.
     auth_mode: Literal["open", "users"] = "open"
+    phone_session_days: int = Field(7, ge=1, le=30)
+    photo_max_bytes: int = Field(2 * 1024 * 1024, gt=0)
+    photos_per_entry: int = Field(3, ge=1, le=3)
+    public_base_url: str = ""
     session_days: int = Field(7, ge=1, le=30)
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""

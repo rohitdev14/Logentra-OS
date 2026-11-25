@@ -17,6 +17,8 @@ class FieldDefinition(Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    qr_code: Mapped[str | None] = mapped_column(Text, unique=True, index=True)
+    qr_code_issued_at: Mapped[str | None] = mapped_column(Text)
     values: Mapped[list[EquipmentFieldValue]] = relationship(back_populates="field")
 
 
@@ -377,6 +379,10 @@ class SessionToken(Base):
     expires_at: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     last_used_at: Mapped[str | None] = mapped_column(Text)
 
+    kind: Mapped[str] = mapped_column(Text, server_default="browser")
+    label: Mapped[str | None] = mapped_column(Text)
+    revoked_at: Mapped[str | None] = mapped_column(Text)
+
 
 class ApiKey(Base):
     __tablename__ = "api_keys"
@@ -618,3 +624,37 @@ class DocumentComment(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     document: Mapped[Document] = relationship(back_populates="comments")
 
+
+
+class QRRetiredCode(Base):
+    __tablename__ = "qr_retired_codes"
+    code: Mapped[str] = mapped_column(Text, primary_key=True)
+    equipment_id: Mapped[str | None] = mapped_column(Text, ForeignKey("equipment.id", ondelete="SET NULL"))
+    retired_at: Mapped[str] = mapped_column(Text)
+    retired_by: Mapped[str | None] = mapped_column(Text)
+
+
+class QREntry(Base):
+    __tablename__ = "qr_entries"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    equipment_id: Mapped[str] = mapped_column(Text, ForeignKey("equipment.id", ondelete="CASCADE"))
+    note: Mapped[str] = mapped_column(Text)
+    entered_by: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text)
+
+
+class ReadingPhoto(Base):
+    __tablename__ = "reading_photos"
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    entry_id: Mapped[str] = mapped_column(Text, index=True)
+    equipment_id: Mapped[str] = mapped_column(Text, ForeignKey("equipment.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(Text)
+    content_type: Mapped[str] = mapped_column(Text)
+    size: Mapped[int]
+    width: Mapped[int]
+    height: Mapped[int]
+    sha256: Mapped[str] = mapped_column(Text)
+    storage_path: Mapped[str] = mapped_column(Text)
+    uploaded_by: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[str] = mapped_column(Text)

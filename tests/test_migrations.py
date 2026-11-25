@@ -46,7 +46,7 @@ def test_alembic_upgrade_from_empty(tmp_path):
     assert "ix_readings_eq_ts" in reading_indexes
     with engine.begin() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0007_performance"
+        assert version == "0008_qr_tags"
 
 
 def test_alembic_upgrade_from_v03(tmp_path):
@@ -88,4 +88,22 @@ def test_alembic_stamp_legacy_v03_file(tmp_path):
         tag = conn.execute(text("SELECT tag FROM equipment WHERE id='eq_1'")).scalar()
         assert tag == "LEG-1"
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0007_performance"
+        assert version == "0008_qr_tags"
+
+
+def test_qr_migration_round_trip(tmp_path):
+    url = f"sqlite:///{tmp_path}/qr.db"
+    engine = make_engine(url)
+    run_migrations(engine)
+    schema = inspect(engine)
+    assert {"qr_entries", "qr_retired_codes", "reading_photos"} <= set(schema.get_table_names())
+    assert {"qr_code", "qr_code_issued_at"} <= {col["name"] for col in schema.get_columns("equipment")}
+    with engine.begin() as conn:
+        cfg = alembic_config(url)
+        cfg.attributes["connection"] = conn
+        command.downgrade(cfg, "0007_performance")
+    schema = inspect(engine)
+    assert "reading_photos" not in schema.get_table_names()
+    assert "qr_code" not in {col["name"] for col in schema.get_columns("equipment")}
+    run_migrations(engine)
+    assert "reading_photos" in inspect(engine).get_table_names()
