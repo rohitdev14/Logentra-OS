@@ -17,8 +17,6 @@ class FieldDefinition(Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
-    qr_code: Mapped[str | None] = mapped_column(Text, unique=True, index=True)
-    qr_code_issued_at: Mapped[str | None] = mapped_column(Text)
     values: Mapped[list[EquipmentFieldValue]] = relationship(back_populates="field")
 
 
@@ -30,6 +28,8 @@ class Equipment(Base):
     area_id: Mapped[str | None] = mapped_column(Text, ForeignKey("areas.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    qr_code: Mapped[str | None] = mapped_column(Text, unique=True, index=True)
+    qr_code_issued_at: Mapped[str | None] = mapped_column(Text)
     values: Mapped[list[EquipmentFieldValue]] = relationship(
         back_populates="equipment", cascade="all, delete-orphan"
     )
