@@ -278,6 +278,7 @@ def test_login_screenshot(tmp_path):
             phone.get_by_role("form",name="Quick entry").wait_for()
             page.get_by_role("button",name="Profile",exact=True).click()
             page.locator("#qr-own-sessions").get_by_role("button",name="Sign out").click()
+            page.get_by_text("No active phone sessions.").wait_for()
             phone.reload()
             phone.get_by_role("heading",name="Sign in to log readings").wait_for()
             browser.close()
