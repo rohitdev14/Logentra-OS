@@ -28,6 +28,12 @@ from logentra_server.pagination import clamp_page, page_result, count_rows
 from logentra_server.utils import dumps, loads, uid, utcnow_iso
 
 
+def _require_new(db: Session, model, ident: Any, label: str) -> None:
+    """Return a clear 409 when a caller-supplied ID is already taken."""
+    if ident and db.get(model, ident) is not None:
+        raise HTTPException(409, f"{label} with ID {ident!r} already exists")
+
+
 
 class LoginIn(BaseModel):
     username: str = Field(max_length=256)
@@ -167,6 +173,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             raise HTTPException(400, "name is required")
         if db.query(Role).filter(Role.name == name).one_or_none():
             raise HTTPException(409, f"Role {name!r} already exists")
+        _require_new(db, Role, body.get("id"), "A role")
         perms = [p for p in (body.get("permissions") or []) if p in ALL_PERMISSIONS]
         now = utcnow_iso()
         row = Role(
@@ -253,6 +260,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             raise HTTPException(400, "Password must be at least 8 characters")
         if db.query(User).filter(User.username == username).one_or_none():
             raise HTTPException(409, f"User {username!r} already exists")
+        _require_new(db, User, body.get("id"), "A user")
         role = None
         if body.get("role_id"):
             role = db.get(Role, body["role_id"])
@@ -405,11 +413,21 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         name = (body.get("name") or "").strip()
         if not name:
             raise HTTPException(400, "name is required")
+        code = (body.get("code") or "").strip() or None
+        _require_new(db, Site, body.get("id"), "A site")
+        if code and db.query(Site.id).filter(Site.code == code).first():
+            raise HTTPException(409, f"A site with code {code!r} already exists")
+        areas = body.get("areas") or []
+        area_ids = [a.get("id") for a in areas if a.get("id")]
+        if len(area_ids) != len(set(area_ids)):
+            raise HTTPException(409, "Two areas in this request use the same ID")
+        for area_id in area_ids:
+            _require_new(db, Area, area_id, "An area")
         now = utcnow_iso()
-        site = Site(id=body.get("id") or uid("site"), name=name, code=(body.get("code") or "") or None, created_at=now)
+        site = Site(id=body.get("id") or uid("site"), name=name, code=code, created_at=now)
         db.add(site)
         db.flush()
-        for area in body.get("areas") or []:
+        for area in areas:
             db.add(Area(
                 id=area.get("id") or uid("area"),
                 site_id=site.id,
@@ -430,6 +448,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         name = (body.get("name") or "").strip()
         if not name:
             raise HTTPException(400, "name is required")
+        _require_new(db, Area, body.get("id"), "An area")
         area = Area(id=body.get("id") or uid("area"), site_id=sid, name=name, code=body.get("code") or None, created_at=utcnow_iso())
         db.add(area)
         db.commit()

@@ -85,6 +85,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
                 raise HTTPException(403, "Work order location is outside your scope")
             service.validate_location(db, site, area)
             body = {**body, "site_id": site, "area_id": area}
+        if body.get("id") and db.get(WorkOrder, body["id"]) is not None:
+            raise HTTPException(409, "A work order with this ID already exists")
         try:
             row = wo.create_work_order(db, body, actor=principal.actor, user_id=principal.user_id)
         except ValueError as exc:
@@ -260,6 +262,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     def create_rule(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require_global()
         principal.require("workorders.assign")
+        if body.get("id") and db.get(AutoWorkOrderRule, body["id"]) is not None:
+            raise HTTPException(409, "A work-order rule with this ID already exists")
         row = wo.upsert_rule(db, body)
         return wo.rule_to_dict(row)
 

@@ -16,6 +16,7 @@ from logentra_server.auth import Principal, make_auth_dependency
 from logentra_server.branding import PRODUCT_NAME, RELEASE_LABEL
 from logentra_server.schemas import ReplayIn, SyncBody, WebhookIn
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from logentra_server.http_security import HTTPSecurity, read_upload
@@ -120,6 +121,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def invalid_input(_request, error):
         details = [{name: item[name] for name in ("loc", "msg", "type")} for item in error.errors()]
         return JSONResponse({"detail": details}, status_code=422)
+
+    @app.exception_handler(IntegrityError)
+    async def duplicate_write(_request, error):
+        # Safety net for any create path without its own pre-check. The session is
+        # closed (and rolled back) by get_db; the constraint detail stays in the log.
+        log.warning("Rejected conflicting write: %s", getattr(error, "orig", error))
+        return JSONResponse(
+            {"detail": "This item already exists or conflicts with another record."}, status_code=409
+        )
 
     @app.exception_handler(StaleDataError)
     async def stale_write(_request, _error):
