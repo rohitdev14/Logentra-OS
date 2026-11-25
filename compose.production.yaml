@@ -10,6 +10,10 @@ services:
       postgres:
         condition: service_healthy
     networks: [ingress, database]
+  recovery:
+    environment:
+      LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:?Set the dedicated PostgreSQL connection URL}
+    networks: [database]
   postgres:
     environment:
       POSTGRES_PASSWORD: ${LOGENTRA_POSTGRES_PASSWORD:?Set the dedicated PostgreSQL password}

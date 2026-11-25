@@ -2,7 +2,28 @@
 
 Stop application and ingestion writers so database and attachments reflect one point in time. Keep deployment configuration and secret references in their existing configuration store. Restrict access to the backup bundle.
 
-## Create a bundle
+## With Docker Compose (recommended)
+
+The `recovery` service uses the application image, runs as the app user (UID 10001) and keeps `cap_drop: ALL`. No `--user 0` or `--cap-add` is needed. Bundles live in the `logentra-backups` volume, mounted at `/backups`. Add `-f compose.production.yaml` (and the `postgres` profile) for the production overlay.
+
+    docker compose --profile recovery run --rm recovery backup /backups/2026-11-25
+    docker compose stop app
+    docker compose --profile recovery run --rm recovery restore /backups/2026-11-25 --replace
+    docker compose start app
+
+`--replace` stages and verifies the backup first. Only then are the current attachments (and a SQLite file) renamed to `*.pre-restore-<time>` and the restored copies moved into place. PostgreSQL is restored in one transaction with `--clean`, so a failed restore leaves the existing database as it was. Delete the `.pre-restore` copies after you have verified the restore.
+
+To copy a bundle off the host, or bring one in from another host:
+
+    # copy out
+    docker run --rm -v <project>_logentra-backups:/backups -v "$PWD:/host" alpine cp -a /backups/2026-11-25 /host/
+    # copy in, owned by the app user
+    docker run --rm -v <project>_logentra-backups:/backups -v "$PWD/2026-11-25:/in:ro" alpine \
+      sh -c 'cp -a /in /backups/2026-11-25 && chown -R 10001:10001 /backups/2026-11-25'
+
+A bundle on a host folder must be readable by UID 10001. If it is not, restore stops with a plain message telling you to run `sudo chown -R 10001:10001 <folder>` (or `chmod -R a+rX <folder>`).
+
+## Create a bundle without Compose
 
 Set LOGENTRA_DATABASE_URL explicitly to the source. Run from the repository root.
 
@@ -12,8 +33,8 @@ SQLite uses its backup API and integrity check. PostgreSQL uses pg_dump in custo
 
 ## Restore and verify
 
-1. Set LOGENTRA_DATABASE_URL to a fresh SQLite filename or an empty PostgreSQL database.
-2. Restore to a fresh attachment directory.
+1. Set LOGENTRA_DATABASE_URL to a fresh SQLite filename or an empty PostgreSQL database, or stop the app and add `--replace` to restore over the current installation.
+2. Restore to a fresh attachment directory (or the live one with `--replace`).
 
        python scripts/recovery.py restore /path/to/bundle --attachments /path/to/fresh-attachments
 
@@ -32,7 +53,7 @@ SQLite uses its backup API and integrity check. PostgreSQL uses pg_dump in custo
 4. Verify readiness, equipment, readings, record revisions and document downloads. Review pending outbound deliveries before restarting integrations. A restored pending event may be sent again.
 5. Resume application and ingestion writers with the recovered pair.
 
-A tampered bundle and an existing SQLite target are rejected. PostgreSQL database changes are transactional, while publication of the attachment directory is a separate operation. If filesystem publication fails, preserve the bundle and retry into a fresh target. For rollback, restore the paired v0.5 bundle and use the checkpoint.
+A tampered bundle is rejected, and an existing SQLite target or attachment tree is rejected unless `--replace` is given. PostgreSQL database changes are transactional, while publication of the attachment directory is a separate operation. If filesystem publication fails, preserve the bundle and retry into a fresh target. For rollback, restore the paired v0.5 bundle and use the checkpoint.
 
 ## Evidence reconciliation
 

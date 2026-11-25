@@ -1,6 +1,7 @@
 services:
   app:
     build: .
+    image: logentra-os:local
     environment:
       LOGENTRA_PROFILE: production
       LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:-sqlite:////app/data/logentra.db}
@@ -16,6 +17,27 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+  # One-off backup/restore helper. Runs as the app user (10001) with no extra
+  # capabilities, so restored files are owned correctly without chown.
+  #   docker compose --profile recovery run --rm recovery backup /backups/<name>
+  #   docker compose stop app
+  #   docker compose --profile recovery run --rm recovery restore /backups/<name> --replace
+  #   docker compose start app
+  recovery:
+    build: .
+    image: logentra-os:local
+    profiles: [recovery]
+    user: "10001:10001"
+    entrypoint: ["python", "scripts/recovery.py"]
+    command: ["--help"]
+    environment:
+      LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:-sqlite:////app/data/logentra.db}
+    volumes:
+      - logentra-data:/app/data
+      - logentra-backups:/backups
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
@@ -45,4 +67,5 @@ services:
     restart: unless-stopped
 volumes:
   logentra-data:
+  logentra-backups:
   postgres-data:

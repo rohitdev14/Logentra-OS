@@ -76,6 +76,20 @@ jobs:
           docker compose up -d --wait app
           test "$(docker compose exec -T app id -u)" = 10001
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/bootstrap)" = 401
+      - name: Back up and restore through the recovery service without extra privileges
+        run: |
+          token=$(docker compose exec -T app python run.py create-admin --username ci-admin --password ci-admin-pass >/dev/null && \
+            curl -s -X POST -H 'Content-Type: application/json' -d '{"username":"ci-admin","password":"ci-admin-pass"}' \
+            http://127.0.0.1:8787/api/auth/login | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          printf 'restore round trip' > evidence.txt
+          did=$(curl -s -H "Authorization: Bearer $token" -F file=@evidence.txt -F title=CI \
+            http://127.0.0.1:8787/api/documents | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          docker compose stop app
+          docker compose --profile recovery run --rm recovery backup /backups/ci
+          docker compose --profile recovery run --rm recovery restore /backups/ci --replace
+          docker compose start app
+          docker compose up -d --wait app
+          test "$(curl -s -H "Authorization: Bearer $token" http://127.0.0.1:8787/api/documents/$did/file)" = "restore round trip"
       - name: Verify PostgreSQL profile startup
         env:
           LOGENTRA_POSTGRES_PASSWORD: ci-test-only

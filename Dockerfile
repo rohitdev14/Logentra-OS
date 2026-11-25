@@ -8,7 +8,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt requirements-postgres.txt ./
 RUN pip install -r requirements-postgres.txt && groupadd -g 10001 logentra \
-    && useradd -u 10001 -g 10001 -M logentra && install -d -o 10001 -g 10001 /app/data
+    && useradd -u 10001 -g 10001 -M logentra && install -d -o 10001 -g 10001 /app/data /backups
 COPY run.py alembic.ini ./
 COPY logentra_server/ logentra_server/
 COPY migrations/ migrations/

@@ -9,6 +9,8 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -65,6 +67,32 @@ def default_owner_spec() -> str | None:
     return None
 
 
+def running_as_app_user() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == DEFAULT_APP_UID
+
+
+class RecoveryError(ValueError):
+    """A problem the operator can fix; printed without a traceback."""
+
+
+def require_readable_bundle(source: Path) -> None:
+    manifest = source / "manifest.json"
+    if not source.is_dir() or not manifest.exists():
+        if source.exists() and not os.access(source, os.R_OK | os.X_OK):
+            raise RecoveryError(_unreadable(source))
+        raise RecoveryError(f"No backup found at {source} (expected a folder containing manifest.json)")
+    unreadable = [p for p in [source, *source.rglob("*")]
+                  if not os.access(p, os.R_OK | (os.X_OK if p.is_dir() else 0))]
+    if unreadable:
+        raise RecoveryError(_unreadable(source))
+
+
+def _unreadable(source: Path) -> str:
+    who = f"UID {os.geteuid()}" if hasattr(os, "geteuid") else "this user"
+    return (f"Cannot read the backup at {source} as {who}. On the host, make it readable, for example: "
+            f"sudo chown -R {DEFAULT_APP_UID}:{DEFAULT_APP_GID} <backup-folder>  (or chmod -R a+rX <backup-folder>)")
+
+
 def apply_attachment_ownership(root: Path, owner: str | None = None) -> dict:
     """Chown/chmod a restored attachment tree so the application UID can read it.
 
@@ -78,6 +106,10 @@ def apply_attachment_ownership(root: Path, owner: str | None = None) -> dict:
     requested = owner if owner is not None else default_owner_spec()
     target = parse_owner(requested) if requested else None
     chowned = False
+    if target is None and running_as_app_user():
+        # Restoring as the application user: every copied file is already ours,
+        # so no chown (and no extra container capabilities) is needed.
+        target = (os.geteuid(), os.getegid())
     if target is not None:
         uid, gid = target
         try:
@@ -137,38 +169,79 @@ def backup(database_url: str, attachments: Path, destination: Path) -> None:
         raise
 
 
-def restore(source: Path, database_url: str, attachments: Path, owner: str | None = None) -> None:
+def _set_aside(path: Path, stamp: str) -> Path | None:
+    if not (path.exists() or path.is_symlink()):
+        return None
+    kept = path.with_name(f"{path.name}.pre-restore-{stamp}")
+    path.rename(kept)
+    return kept
+
+
+def restore(source: Path, database_url: str, attachments: Path, owner: str | None = None,
+            replace: bool = False) -> dict:
+    """Restore a verified bundle.
+
+    Without *replace* the attachment path (and a SQLite file) must not exist yet.
+    With *replace* the new data is staged and verified first; only then are the
+    current attachment tree and SQLite file renamed to ``*.pre-restore-<time>``
+    and the restored copies moved into place. PostgreSQL is restored in a single
+    transaction with ``--clean`` so a failure leaves the old database untouched.
+    """
+    require_readable_bundle(source)
     check_tree(source)
     manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
     if manifest["sha256"] != checksums(source):
-        raise ValueError("Backup checksum verification failed")
+        raise RecoveryError("Backup checksum verification failed; the bundle is incomplete or was changed")
     url = make_url(database_url)
     backend = url.get_backend_name()
-    if manifest["backend"] != backend or attachments.exists() or attachments.is_symlink():
-        raise ValueError("Restore requires the original database backend and a fresh attachment path")
+    if manifest["backend"] != backend:
+        raise RecoveryError(f"This backup is for {manifest['backend']}, but LOGENTRA_DATABASE_URL points to {backend}")
+    if not replace and (attachments.exists() or attachments.is_symlink()):
+        raise RecoveryError(f"{attachments} already exists. Stop the app and add --replace to swap it out "
+                            "(the current files are kept as a .pre-restore copy).")
     target = Path(url.database) if backend == "sqlite" else None
-    if target is not None and (target.exists() or target.is_symlink()):
-        raise FileExistsError(target)
+    if not replace and target is not None and (target.exists() or target.is_symlink()):
+        raise RecoveryError(f"{target} already exists. Stop the app and add --replace to swap it out.")
+    if backend not in ("sqlite", "postgresql"):
+        raise RecoveryError("Unsupported database backend")
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    kept: dict[str, str] = {}
     attachments.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(dir=attachments.parent) as staging:
+    with TemporaryDirectory(dir=attachments.parent, prefix=".restore-") as staging:
         staged = Path(staging) / "attachments"
         shutil.copytree(source / "attachments", staged)
+        apply_attachment_ownership(staged, owner=owner)
+        staged_db = None
         if target is not None:
             target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("xb"):
+            staged_db = target.with_name(f".{target.name}.restoring-{stamp}")
+            with staged_db.open("xb"):
                 pass
             try:
-                sqlite_copy(source / "database.sqlite3", target)
+                sqlite_copy(source / "database.sqlite3", staged_db)
             except BaseException:
-                target.unlink()
+                staged_db.unlink()
                 raise
-        elif backend == "postgresql":
-            pg_command("pg_restore", url, "--single-transaction", "--no-owner", "--no-privileges",
-                       str(source / "database.dump"))
         else:
-            raise ValueError("Unsupported database backend")
+            options = ["--single-transaction", "--no-owner", "--no-privileges"]
+            if replace:
+                options += ["--clean", "--if-exists"]
+            pg_command("pg_restore", url, *options, str(source / "database.dump"))
+        if staged_db is not None:
+            old_db = _set_aside(target, stamp) if replace else None
+            if old_db:
+                kept["database"] = str(old_db)
+            if replace:
+                # Leftover WAL/SHM/journal files belong to the old database and
+                # must never be replayed into the restored one.
+                for suffix in ("-wal", "-shm", "-journal"):
+                    _set_aside(target.with_name(target.name + suffix), stamp)
+            staged_db.rename(target)
+        old_tree = _set_aside(attachments, stamp) if replace else None
+        if old_tree:
+            kept["attachments"] = str(old_tree)
         staged.rename(attachments)
-        apply_attachment_ownership(attachments, owner=owner)
+    return {"restored": str(attachments), "kept": kept}
 
 
 def main() -> None:
@@ -182,14 +255,31 @@ def main() -> None:
         help="UID, UID:GID, or name[:name] for restored attachments. "
              "Defaults to LOGENTRA_ATTACHMENTS_OWNER, or 10001:10001 when run as root.",
     )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Restore over an existing installation. Stop the app first; the current "
+             "attachments (and SQLite file) are kept as *.pre-restore-<time>.",
+    )
     args = parser.parse_args()
     database_url = os.environ.get("LOGENTRA_DATABASE_URL")
     if not database_url:
         parser.error("Set LOGENTRA_DATABASE_URL explicitly")
-    if args.operation == "backup":
-        backup(database_url, args.attachments, args.bundle)
-    else:
-        restore(args.bundle, database_url, args.attachments, owner=args.owner)
+    try:
+        if args.operation == "backup":
+            backup(database_url, args.attachments, args.bundle)
+            print(f"Backup written to {args.bundle}")
+        else:
+            result = restore(args.bundle, database_url, args.attachments, owner=args.owner, replace=args.replace)
+            print(f"Restored into {result['restored']}")
+            for name, path in result["kept"].items():
+                print(f"Previous {name} kept at {path}")
+    except RecoveryError as exc:
+        print(f"recovery: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except subprocess.CalledProcessError as exc:
+        print(f"recovery: {exc.cmd[0]} failed with exit code {exc.returncode}; nothing was replaced", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
