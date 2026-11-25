@@ -113,3 +113,32 @@ def test_phone_login_and_revocation(db_url):
         session, = client.get(f"/api/users/{user_id}/sessions", headers=headers).json()
         assert client.delete(f"/api/users/{user_id}/sessions/{session['id']}", headers=headers).status_code == 200
         assert "Sign in to log readings" in client.get("/q/ABCDEFGH").text
+
+
+def test_phone_login_sets_secure_cookie_behind_trusted_proxy(db_url):
+    from fastapi.testclient import TestClient
+
+    from logentra_server.app import create_app
+    from logentra_server.config import Settings
+
+    app = create_app(Settings(database_url=db_url, auth_mode="users", trusted_proxies=["127.0.0.1/32"],
+                              bootstrap_admin_username="operator", bootstrap_admin_password="test-password"))
+    async def upstream(scope, receive, send):
+        if scope["type"] == "http":
+            scope["scheme"] = "http"
+        await app(scope, receive, send)
+
+    with TestClient(upstream, base_url="https://logbook.plant.local:8443", client=("127.0.0.1", 1)) as client:
+        now = utcnow_iso()
+        with app.state.SessionLocal.begin() as db:
+            db.add(Equipment(id="eq_qr", tag="P-101", qr_code="ABCDEFGH", created_at=now, updated_at=now))
+        proxy = {"X-Forwarded-Proto": "https"}
+        page = client.get("/q/ABCDEFGH", headers=proxy)
+        assert "Secure" in page.headers["set-cookie"]
+        data = re.search(r'<script type="application/json" id="phone-data">(.*?)</script>', page.text).group(1)
+        form_headers = {**proxy, "Origin": "https://logbook.plant.local:8443",
+                        "X-CSRF-Token": json.loads(data)["csrf"]}
+        phone = client.post("/q/login", headers=form_headers,
+                            json={"username":"operator", "password":"test-password"})
+        assert phone.status_code == 200, phone.text
+        assert "Secure" in phone.headers["set-cookie"]

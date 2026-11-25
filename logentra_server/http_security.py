@@ -37,15 +37,16 @@ class HTTPSecurity:
         self.attempts: dict[str, tuple[float, int]] = {}
         self.trusted = [ipaddress.ip_network(p, strict=False) for p in getattr(settings, "trusted_proxies", []) or []]
 
-    def client_key(self, peer: str, headers: Headers) -> str:
-        """Identify the real client: the peer, or the proxy-reported address when the peer is trusted."""
-        if not self.trusted or not peer:
-            return peer
+    def trusted_peer(self, peer: str) -> bool:
         try:
             address = ipaddress.ip_address(peer)
         except ValueError:
-            return peer
-        if not any(address in network for network in self.trusted):
+            return False
+        return any(address in network for network in self.trusted)
+
+    def client_key(self, peer: str, headers: Headers) -> str:
+        """Identify the real client: the peer, or the proxy-reported address when the peer is trusted."""
+        if not self.trusted_peer(peer):
             return peer
         forwarded = [part.strip() for part in headers.get("x-forwarded-for", "").split(",") if part.strip()]
         if not forwarded:
@@ -92,6 +93,9 @@ class HTTPSecurity:
         scope.setdefault("state", {})["request_id"] = request_id
         started = time.monotonic()
         peer = (scope.get("client") or ("",))[0]
+        forwarded_scheme = headers.get("x-forwarded-proto")
+        if forwarded_scheme in {"http", "https"} and self.trusted_peer(peer):
+            scope["scheme"] = forwarded_scheme
         is_login = scope["path"].rstrip("/") in {"/api/auth/login", "/q/login"} and scope["method"] == "POST"
         login_key = self.client_key(peer, headers) if is_login else ""
 
