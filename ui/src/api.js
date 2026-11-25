@@ -79,6 +79,22 @@
   }
 
   const api = {
+    issueQRCodes: (ids, reprint) => req("POST", "/equipment/qr-codes", {ids, reprint}),
+    getPublicURL: () => req("GET", "/settings/public-url"),
+    setPublicURL: (public_base_url) => req("PUT", "/settings/public-url", {public_base_url}),
+    storage: () => req("GET", "/storage"),
+    phoneSessions: (user) => req("GET", user ? "/users/" + encodeURIComponent(user) + "/sessions" : "/auth/sessions"),
+    revokePhone: (user, session) => req("DELETE",
+      (user ? "/users/" + encodeURIComponent(user) + "/sessions/" : "/auth/sessions/") + encodeURIComponent(session)),
+    authenticatedFetch: (path) => {
+      const headers = {};
+      if (getToken()) headers.Authorization = "Bearer " + getToken();
+      if (global.LOGBOOK_API_KEY) headers["X-API-Key"] = global.LOGBOOK_API_KEY;
+      return fetch(path, {headers}).then(response => {
+        if (!response.ok) throw new Error("Request failed (" + response.status + ")");
+        return response;
+      });
+    },
     health: () => req("GET", "/health"),
     bootstrap: () => req("GET", "/bootstrap"),
     sync: (payload, revision) => req("PUT", "/sync", payload, { headers: revision ? { "If-Match": revision } : {} }),

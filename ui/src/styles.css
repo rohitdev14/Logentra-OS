@@ -1063,3 +1063,11 @@ body.login-open .app { display: none; }
 .print-head { border-bottom: 2px solid var(--ink); padding-bottom: 0.6rem; margin-bottom: 1rem; }
 #chart [data-log-id] { cursor: pointer; }
 #chart [data-log-id]:focus { outline: none; }
+
+/* QR label selection and sheet preview */
+.qr-desktop {display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:1rem;align-items:start}
+.qr-desktop .table-wrap {max-height:55vh;margin:.7rem 0}
+#qr-preview {margin:.7rem 0;overflow:auto;max-height:65vh}
+#qr-preview iframe {width:230%;height:1320px;border:0;zoom:.43}
+#qr-storage:not([hidden]) {margin-bottom:1rem}
+@media(max-width:900px){.qr-desktop{grid-template-columns:1fr}}

@@ -26,6 +26,7 @@ LABELS_PER_SHEET = 21
 
 class EquipmentSelection(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=500)
+    reprint: bool = False
 
 
 class PublicURL(BaseModel):
@@ -49,6 +50,17 @@ def issue_code(db, equipment):
     equipment.qr_code = code
     equipment.qr_code_issued_at = utcnow_iso()
     db.flush()
+    return code
+
+
+def rotate_code(db, equipment, principal):
+    old = equipment.qr_code
+    if old:
+        db.add(QRRetiredCode(code=old, equipment_id=equipment.id, retired_at=utcnow_iso(),
+                             retired_by=principal.username))
+    code = issue_code(db, equipment)
+    service.audit(db, "qr.code_rotated", actor=principal.username, user_id=principal.user_id,
+                  entity_type="equipment", entity_id=equipment.id, detail={"old_code": old, "code": code})
     return code
 
 
@@ -96,8 +108,8 @@ def current_equipment(db, code, principal):
     return equipment
 
 
-def render_label(equipment, area, base_url):
-    address = f"{base_url}/q/{equipment.qr_code}"
+def render_label(equipment, area, base_url, *, preview=False):
+    address = f"{base_url}/q/{equipment.qr_code}" if not preview else "https://example.invalid/label-preview"
     stream = BytesIO()
     segno.make_qr(address, error="m").save(stream, kind="svg", xmldecl=False, svgns=False, border=4)
     svg = stream.getvalue().decode()
@@ -105,7 +117,7 @@ def render_label(equipment, area, base_url):
     return (
         f'<div class="label">{svg}<div><strong>{escape(equipment.tag)}</strong>'
         f'<div>{escape(name)}</div><div>{escape(area)}</div>'
-        f'<small>Scan to log readings<br>{escape(address.split("://", 1)[-1])}</small></div></div>'
+        f'<small>Scan to log readings<br>{escape("Preview" if preview else address.split("://", 1)[-1])}</small></div></div>'
     )
 
 
@@ -150,6 +162,8 @@ def build_router(get_db, get_principal, settings):
             if not equipment.qr_code:
                 issue_code(db, equipment)
                 issued.append(eid)
+            elif body.reprint:
+                rotate_code(db, equipment, principal)
             codes[eid] = equipment.qr_code
         if issued:
             service.audit(db, "qr.codes_generated", actor=principal.username, user_id=principal.user_id,
@@ -162,13 +176,7 @@ def build_router(get_db, get_principal, settings):
         principal.require("equipment.write")
         set_setting(db, "qr_issuance_lock", "", lock_only=True)
         equipment = equipment_for(db, eid, principal)
-        old = equipment.qr_code
-        if old:
-            db.add(QRRetiredCode(code=old, equipment_id=eid, retired_at=utcnow_iso(),
-                                 retired_by=principal.username))
-        code = issue_code(db, equipment)
-        service.audit(db, "qr.code_rotated", actor=principal.username, user_id=principal.user_id,
-                      entity_type="equipment", entity_id=eid, detail={"old_code": old, "code": code})
+        code = rotate_code(db, equipment, principal)
         db.commit()
         return {"code": code}
 
@@ -213,10 +221,10 @@ def build_router(get_db, get_principal, settings):
         labels = []
         for eid in selected:
             equipment = equipment_for(db, eid, principal)
-            if not equipment.qr_code:
+            if not equipment.qr_code and not preview:
                 raise HTTPException(409, f"Generate a QR code for {equipment.tag} first")
             area = db.get(Area, equipment.area_id) if equipment.area_id else None
-            labels.append(render_label(equipment, area.name if area else "", base))
+            labels.append(render_label(equipment, area.name if area else "", base, preview=preview))
         if not preview:
             set_setting(db, "qr_labels_printed", "1")
             service.audit(db, "qr.sheet_printed", actor=principal.username, user_id=principal.user_id,

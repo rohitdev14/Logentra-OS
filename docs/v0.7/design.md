@@ -188,3 +188,11 @@ Built-in roles: viewer gets `shiftlog.read`; technician adds `shiftlog.write`, `
 
 QR totals about 5 days and fits its week. Shift log and handover totals about 7 days against 5 days plus the weekend buffer; it fits only if the buffer is used.
 **Cut-line if late (move to v0.7.1):** roster "repeat pattern" helper (manual roster only), history filters beyond date/area/text, handover CSV export. Core flow (log, auto-filled handover, sign-off, acknowledge, return, first escalation, printable report) stays in v0.7.0.
+
+## QR setup and verification
+
+Under **Settings**, set the public URL to the server hostname that phones can reach. In **Equipment → QR tags**, select equipment, choose the first unused label position and preview the layout. Select **Print / Save as PDF** on A4 stock at 100% scale. Confirm before reprinting existing labels, since a reprint retires the previous codes.
+
+Scan the label with the phone's camera. In a user-authenticated installation, sign in from the scan page. A phone can stay signed in for seven days, and active phone sessions are visible under **Profile** or **Users and roles**. On a shared phone, sign out when finished. Standalone open mode continues to use loopback. For shared LAN use, run the server in user-authenticated mode.
+
+The **Backup** page shows attachment storage. Use the recovery utility for a full restorable backup with attachments, including quick-entry photos.

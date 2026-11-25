@@ -1059,7 +1059,8 @@
       trends: viewTrends, import: viewImport, backup: viewBackup
     };
     if (v4 && v4.views) Object.assign(views, v4.views);
-    const groupMap = { recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
+    Object.assign(views, window.LogentraQR?.views || {});
+    const groupMap = { qrTags: "equipment", recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
     root.innerHTML = (views[ui.view] || viewDashboard)();
     document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
       const group = groupMap[ui.view] || ui.view;
@@ -1070,6 +1071,7 @@
       v4.applyChrome();
       v4.bindFilters();
     }
+    window.LogentraQR?.bind(ui.view);
   }
   function openPunches() {
     const list = [];
@@ -1153,6 +1155,7 @@
       <div class="card">
         <div class="grid-toolbar">
           <button class="btn btn-primary" data-act="eq-add" data-need-perm="equipment.write">Add row</button>
+          <button class="btn" data-act="goto" data-view="qrTags" data-need-perm="equipment.write">QR tags</button>
           <button class="btn" data-act="col-manage" data-need-perm="equipment.write">Columns…</button>
           <button class="btn" data-act="goto" data-view="import">Import table</button>
           <button class="btn" data-act="export-eq-csv">Export CSV</button>
@@ -1607,6 +1610,7 @@
         <h2>Backup &amp; starter packs</h2>
         <p class="page-lead">Everything is stored in the local database. Export a JSON file and keep it somewhere safe. You can also import a v0.2 JSON backup. Starter packs are optional — they add templates and parameter presets without replacing your rows.</p>
       </div>
+      <div id="qr-storage" class="card" data-need-perm="settings.manage"></div>
       <div class="grid-2">
         <div class="card">
           <h3>Backup</h3>
@@ -2434,6 +2438,12 @@
     } catch (err) {
       if (v4) v4.showLogin(err.message || "Please sign in.");
       return;
+    }
+    const qrWorkOrder = new URLSearchParams(location.search).get("qr_work_order");
+    if (qrWorkOrder && v4?.can("workorders.create")) {
+      ui.view = "woNew";
+      ui.woEquipment = qrWorkOrder;
+      history.replaceState({}, "", location.pathname);
     }
     if (v4 && v4.beforeView) {
       try { await v4.beforeView(ui.view || "dashboard", ui); } catch (e) { /* first paint still useful */ }

@@ -93,6 +93,7 @@ def equipment_to_ui(eq: Equipment) -> dict[str, Any]:
         "site_id": eq.site_id,
         "area_id": eq.area_id,
         "tag": eq.tag,
+        "qr_code_issued": bool(eq.qr_code),
         "createdAt": eq.created_at[:10] if eq.created_at else "",
     }
 

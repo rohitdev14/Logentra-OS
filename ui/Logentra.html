@@ -1087,6 +1087,14 @@ body.login-open .app { display: none; }
 #chart [data-log-id] { cursor: pointer; }
 #chart [data-log-id]:focus { outline: none; }
 
+/* QR label selection and sheet preview */
+.qr-desktop {display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:1rem;align-items:start}
+.qr-desktop .table-wrap {max-height:55vh;margin:.7rem 0}
+#qr-preview {margin:.7rem 0;overflow:auto;max-height:65vh}
+#qr-preview iframe {width:230%;height:1320px;border:0;zoom:.43}
+#qr-storage:not([hidden]) {margin-bottom:1rem}
+@media(max-width:900px){.qr-desktop{grid-template-columns:1fr}}
+
   </style>
 </head>
 <body>
@@ -1161,6 +1169,8 @@ body.login-open .app { display: none; }
             <svg class="icon icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/></svg>
             <svg class="icon icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
           </button>
+          <button type="button" data-act="goto" data-view="profile" id="qr-profile" class="btn btn-sm" hidden>Profile</button>
+          <button type="button" data-act="goto" data-view="settings" data-need-perm="settings.manage" class="btn btn-sm">Settings</button>
           <button type="button" id="logout-btn" class="btn btn-sm" hidden>Sign out</button>
         </div>
       </header>
@@ -1624,6 +1634,22 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   }
 
   const api = {
+    issueQRCodes: (ids, reprint) => req("POST", "/equipment/qr-codes", {ids, reprint}),
+    getPublicURL: () => req("GET", "/settings/public-url"),
+    setPublicURL: (public_base_url) => req("PUT", "/settings/public-url", {public_base_url}),
+    storage: () => req("GET", "/storage"),
+    phoneSessions: (user) => req("GET", user ? "/users/" + encodeURIComponent(user) + "/sessions" : "/auth/sessions"),
+    revokePhone: (user, session) => req("DELETE",
+      (user ? "/users/" + encodeURIComponent(user) + "/sessions/" : "/auth/sessions/") + encodeURIComponent(session)),
+    authenticatedFetch: (path) => {
+      const headers = {};
+      if (getToken()) headers.Authorization = "Bearer " + getToken();
+      if (global.LOGBOOK_API_KEY) headers["X-API-Key"] = global.LOGBOOK_API_KEY;
+      return fetch(path, {headers}).then(response => {
+        if (!response.ok) throw new Error("Request failed (" + response.status + ")");
+        return response;
+      });
+    },
     health: () => req("GET", "/health"),
     bootstrap: () => req("GET", "/bootstrap"),
     sync: (payload, revision) => req("PUT", "/sync", payload, { headers: revision ? { "If-Match": revision } : {} }),
@@ -2778,7 +2804,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       trends: viewTrends, import: viewImport, backup: viewBackup
     };
     if (v4 && v4.views) Object.assign(views, v4.views);
-    const groupMap = { recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
+    Object.assign(views, window.LogentraQR?.views || {});
+    const groupMap = { qrTags: "equipment", recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
     root.innerHTML = (views[ui.view] || viewDashboard)();
     document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
       const group = groupMap[ui.view] || ui.view;
@@ -2789,6 +2816,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       v4.applyChrome();
       v4.bindFilters();
     }
+    window.LogentraQR?.bind(ui.view);
   }
   function openPunches() {
     const list = [];
@@ -2872,6 +2900,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       <div class="card">
         <div class="grid-toolbar">
           <button class="btn btn-primary" data-act="eq-add" data-need-perm="equipment.write">Add row</button>
+          <button class="btn" data-act="goto" data-view="qrTags" data-need-perm="equipment.write">QR tags</button>
           <button class="btn" data-act="col-manage" data-need-perm="equipment.write">Columns…</button>
           <button class="btn" data-act="goto" data-view="import">Import table</button>
           <button class="btn" data-act="export-eq-csv">Export CSV</button>
@@ -3326,6 +3355,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         <h2>Backup &amp; starter packs</h2>
         <p class="page-lead">Everything is stored in the local database. Export a JSON file and keep it somewhere safe. You can also import a v0.2 JSON backup. Starter packs are optional — they add templates and parameter presets without replacing your rows.</p>
       </div>
+      <div id="qr-storage" class="card" data-need-perm="settings.manage"></div>
       <div class="grid-2">
         <div class="card">
           <h3>Backup</h3>
@@ -4154,6 +4184,12 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       if (v4) v4.showLogin(err.message || "Please sign in.");
       return;
     }
+    const qrWorkOrder = new URLSearchParams(location.search).get("qr_work_order");
+    if (qrWorkOrder && v4?.can("workorders.create")) {
+      ui.view = "woNew";
+      ui.woEquipment = qrWorkOrder;
+      history.replaceState({}, "", location.pathname);
+    }
     if (v4 && v4.beforeView) {
       try { await v4.beforeView(ui.view || "dashboard", ui); } catch (e) { /* first paint still useful */ }
     }
@@ -4596,7 +4632,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         <div class="form-grid">
           <label class="fld"><span>Priority</span><select id="wo-n-prio">${prioOptions("medium")}</select></label>
           <label class="fld"><span>Due</span><input type="date" id="wo-n-due"></label>
-          <label class="fld"><span>Equipment</span><select id="wo-n-eq">${eqOptions(state, "")}</select></label>
+          <label class="fld"><span>Equipment</span><select id="wo-n-eq">${eqOptions(state, global.Logbook._ui.woEquipment || "")}</select></label>
           <label class="fld"><span>Assignee</span><select id="wo-n-assignee">${userOptions("")}</select></label>
         </div>
         <button class="btn btn-primary" data-act="wo-create">Create work order</button>
@@ -4666,6 +4702,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
                 "<tr><td>" + esc(u.username) + "</td><td>" + esc(u.display_name) + "</td><td>" + esc(u.role || "") +
                 "</td><td>" + esc(u.site_id || "—") + "</td><td>" + (u.is_active ? "yes" : "no") +
                 "</td><td class='no-print'><button class='btn btn-sm' data-act='usr-key' data-id='" + esc(u.id) + "'>API key</button> " +
+                "<button class='btn btn-sm' data-qr-user='" + esc(u.id) + "'>Phone sessions</button> " +
                 "<button class='btn btn-sm btn-danger' data-act='usr-del' data-id='" + esc(u.id) + "'>Delete</button></td></tr>"
               ).join("") || '<tr><td colspan="6"><p class="empty">No users in the directory. In single-user mode the app works without accounts.</p></td></tr>'}
             </tbody>
@@ -4732,7 +4769,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const L = global.Logbook;
     const ui = L._ui || (L._ui = {});
     try {
-      if (act === "wo-new") { ui.view = "woNew"; if (cache.users.length === 0) await refreshUsers(); L.render(); return true; }
+      if (act === "wo-new") { ui.woEquipment = ""; ui.view = "woNew"; if (cache.users.length === 0) await refreshUsers(); L.render(); return true; }
       if (act === "wo-open") {
         cache.detail = await api.getWorkOrder(el.dataset.id);
         if (cache.users.length === 0) await refreshUsers();
@@ -5649,6 +5686,242 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   }
   global.LogbookV5 = { cache, loadDash, loadDocs, viewDashboard };
 })(typeof window !== "undefined" ? window : globalThis);
+
+/* QR label printing, settings and phone sessions. */
+(function () {
+  "use strict";
+  const api = window.LogbookAPI;
+  const selected = new Map();
+  const esc = value => String(value ?? "").replace(/[&<>"']/g, char =>
+    ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[char]);
+
+  function viewTags() {
+    return `<div class="row spread"><div><h2>Print QR tags</h2>
+      <p class="page-lead">Select equipment and print on A4 label sheets. Staff scan with their phone camera.</p></div>
+      <button class="btn" data-act="goto" data-view="equipment">Equipment</button></div>
+      <div class="qr-desktop"><div class="stack">
+        <section class="card"><div class="row spread"><h3>Choose equipment</h3><span id="qr-selected"></span></div>
+          <div class="row"><label class="fld"><span>Site</span><select id="qr-site"><option value="">All sites</option></select></label>
+          <label class="fld"><span>Area</span><select id="qr-area"><option value="">All areas</option></select></label>
+          <label class="fld"><span>Search</span><input id="qr-query" type="search" placeholder="Tag or name"></label></div>
+          <div class="row"><button class="btn btn-sm" id="qr-select-page">Select visible</button>
+          <button class="btn btn-sm" id="qr-clear">Clear selection</button></div>
+          <div class="table-wrap"><table class="sheet"><thead><tr><th></th><th>Tag</th><th>Name</th><th>Area</th><th>Label</th></tr></thead>
+          <tbody id="qr-rows"></tbody></table></div>
+          <div class="row"><button class="btn btn-sm" id="qr-prev">Previous</button><span id="qr-page"></span>
+          <button class="btn btn-sm" id="qr-next">Next</button></div>
+        </section>
+        <section class="card"><h3>Label settings</h3><p>A4 · 21 per sheet · 63.5 × 38.1 mm (L7160-type)</p>
+          <label class="fld"><span>Start at position</span><input id="qr-start" type="number" min="1" max="21" value="1"></label>
+          <p>Server address in QR <strong id="qr-url"></strong>
+          <button class="btn btn-sm" data-act="goto" data-view="settings" data-need-perm="settings.manage">Settings</button></p>
+          <p>Reprinting replaces existing codes. Old labels direct users to the current tag.</p>
+        </section></div>
+        <section class="card"><div class="row spread"><h3>Preview</h3><span id="qr-sheet-count"></span></div>
+          <p id="qr-feedback" role="status"></p><div id="qr-preview" aria-label="A4 preview"></div>
+          <button class="btn btn-primary" id="qr-print" disabled>Print / Save as PDF</button>
+          <p>Print at 100% scale.</p>
+        </section></div>`;
+  }
+
+  function bindTags() {
+    const get = id => document.getElementById("qr-" + id);
+    const host = get("rows");
+    let rows = [], sites = [], page = 1, pages = 1, searchTimer, loadVersion = 0, previewVersion = 0;
+    const start = () => Math.max(1, Math.min(21, Number(get("start").value) || 1));
+    const feedback = text => { if (host.isConnected) get("feedback").textContent = text; };
+    const fields = window.Logbook.getState().equipmentFields;
+    const nameKey = fields.find(field => field.key === "name")?.id;
+    const areaName = row => sites.flatMap(site => site.areas || []).find(area => area.id === row.area_id)?.name || "";
+    const url = (ids, preview) => "/tags/print?" + new URLSearchParams({ids:[...ids].join(","), start:start(), preview});
+    const renderRows = () => {
+      if (!host.isConnected) return;
+      host.innerHTML = rows.map(row => `<tr><td><input type="checkbox" aria-label="Select ${esc(row.tag)}"
+        data-equipment="${esc(row.id)}" ${selected.has(row.id) ? "checked" : ""}></td>
+        <td><strong>${esc(row.tag)}</strong></td><td>${esc(row.values[nameKey])}</td>
+        <td>${esc(areaName(row))}</td><td>${row.qr_code_issued ? "Reprint" : "New"}</td></tr>`).join("")
+        || '<tr><td colspan="5">No equipment matches.</td></tr>';
+      get("page").textContent = page + " / " + pages;
+      get("prev").disabled = page <= 1;
+      get("next").disabled = page >= pages;
+    };
+    async function preview() {
+      const version = ++previewVersion;
+      const count = selected.size;
+      get("selected").textContent = count + " selected";
+      get("print").disabled = !count;
+      get("sheet-count").textContent = count ? Math.ceil((count + start() - 1) / 21) + " sheet(s) · " + count + " labels" : "";
+      if (!count) {
+        get("preview").textContent = "Select equipment to preview a sheet.";
+        return;
+      }
+      try {
+        const response = await api.authenticatedFetch(url(selected.keys(), true));
+        const html = await response.text();
+        if (version !== previewVersion || !host.isConnected) return;
+        const frame = document.createElement("iframe");
+        frame.title = "Label sheet preview";
+        frame.setAttribute("sandbox", "");
+        frame.srcdoc = html;
+        get("preview").replaceChildren(frame);
+      } catch (error) { feedback(error.message); }
+    }
+    async function load() {
+      const version = ++loadVersion;
+      try {
+        const result = await api.listEquipment({page, page_size:50, q:get("query").value,
+          site_id:get("site").value, area_id:get("area").value});
+        if (version !== loadVersion || !host.isConnected) return;
+        rows = result.items;
+        pages = Math.max(1, result.pages);
+        rows.forEach(row => { if (selected.has(row.id)) selected.set(row.id, row); });
+        renderRows();
+      } catch (error) { feedback(error.message); }
+    }
+    function setAreas() {
+      const site = get("site").value;
+      const areas = sites.filter(item => !site || item.id === site).flatMap(item => item.areas || []);
+      get("area").innerHTML = '<option value="">All areas</option>' + areas.map(area =>
+        `<option value="${esc(area.id)}">${esc(area.name)}</option>`).join("");
+    }
+    api.listSites().then(result => {
+      if (!host.isConnected) return;
+      sites = result;
+      get("site").insertAdjacentHTML("beforeend", sites.map(site =>
+        `<option value="${esc(site.id)}">${esc(site.name)}</option>`).join(""));
+      setAreas();
+      renderRows();
+    }).catch(error => feedback(error.message));
+    get("url").textContent = location.origin;
+    if (window.LogbookV4.can("settings.manage")) api.getPublicURL().then(result => {
+      if (host.isConnected && result.public_base_url) get("url").textContent = result.public_base_url;
+    }).catch(error => feedback(error.message));
+    get("site").onchange = () => { setAreas(); page = 1; load(); };
+    get("area").onchange = () => { page = 1; load(); };
+    get("query").oninput = () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { if (host.isConnected) { page = 1; load(); } }, 180);
+    };
+    get("prev").onclick = () => { page--; load(); };
+    get("next").onclick = () => { page++; load(); };
+    get("start").oninput = preview;
+    get("clear").onclick = () => { selected.clear(); renderRows(); preview(); };
+    get("select-page").onclick = () => {
+      rows.forEach(row => { if (selected.size < 500) selected.set(row.id, row); });
+      renderRows();
+      preview();
+    };
+    host.onchange = event => {
+      const input = event.target;
+      const row = rows.find(item => item.id === input.dataset.equipment);
+      if (!row) return;
+      if (input.checked && selected.size < 500) selected.set(row.id, row);
+      else { selected.delete(row.id); input.checked = false; }
+      preview();
+    };
+    get("print").onclick = async () => {
+      const ids = [...selected.keys()];
+      if ([...selected.values()].some(row => row.qr_code_issued)
+          && !confirm("Replace the existing QR codes for the selected equipment?")) return;
+      const tab = window.open("about:blank", "_blank");
+      if (!tab) { feedback("Allow popups to print the sheet."); return; }
+      get("print").disabled = true;
+      try {
+        await api.issueQRCodes(ids, true);
+        const response = await api.authenticatedFetch(url(ids, false));
+        const html = await response.text();
+        tab.document.open();
+        tab.document.write(html);
+        tab.document.close();
+        tab.focus();
+        tab.print();
+        await load();
+      } catch (error) { tab.close(); feedback(error.message); }
+      finally { if (host.isConnected) get("print").disabled = !selected.size; }
+    };
+    load();
+    preview();
+  }
+
+  function viewSettings() {
+    return `<h2>Settings</h2><section class="card"><h3>QR server address</h3>
+      <form id="qr-url-form"><label class="fld"><span>Public server URL</span>
+      <input type="url" name="publicUrl" placeholder="http://logbook.plant.local" maxlength="500"></label>
+      <p>Use a hostname that phones on your network can reach.</p>
+      <p id="qr-url-warning" hidden>Changing this address can prevent previously printed labels from opening.</p>
+      <p id="qr-settings-feedback" role="status"></p><button class="btn btn-primary" disabled>Save address</button></form></section>`;
+  }
+
+  async function bindSettings(form) {
+    const status = form.querySelector('[role="status"]');
+    const button = form.querySelector("button");
+    try {
+      let saved = await api.getPublicURL();
+      form.publicUrl.value = saved.public_base_url;
+      form.querySelector("#qr-url-warning").hidden = !saved.labels_printed;
+      button.disabled = false;
+      form.onsubmit = async event => {
+        event.preventDefault();
+        if (saved.labels_printed && saved.public_base_url !== form.publicUrl.value
+            && !confirm("Change the server address printed on QR labels?")) return;
+        button.disabled = true;
+        try { saved = await api.setPublicURL(form.publicUrl.value); status.textContent = "Address saved."; }
+        catch (error) { status.textContent = error.message; }
+        finally { button.disabled = false; }
+      };
+    } catch (error) { status.textContent = error.message; }
+  }
+
+  async function sessions(host, user) {
+    try {
+      const rows = await api.phoneSessions(user);
+      host.innerHTML = rows.map(row => `<div class="row spread"><span>${esc(row.label || "Phone")}
+        <small>Expires ${esc(new Date(row.expires_at).toLocaleString())}</small></span>
+        <button class="btn btn-sm" data-session="${esc(row.id)}">Sign out</button></div>`).join("")
+        || "<p>No active phone sessions.</p>";
+      host.querySelectorAll("[data-session]").forEach(button => {
+        button.onclick = async () => {
+          button.disabled = true;
+          try { await api.revokePhone(user, button.dataset.session); await sessions(host, user); }
+          catch (error) { window.Logbook._toast(error.message); button.disabled = false; }
+        };
+      });
+    } catch (error) { host.textContent = error.message; }
+  }
+
+  async function storage(host) {
+    try {
+      const result = await api.storage();
+      const labels = {reading_photos:"Reading photos", shift_log_attachments:"Shift log attachments", documents:"Documents"};
+      host.innerHTML = "<h3>Attachment storage</h3>" + Object.entries(labels).map(([key, label]) => {
+        const {files, bytes} = result[key];
+        return `<p>${label} · ${files.toLocaleString()} files · ${bytes.toLocaleString()} bytes</p>`;
+      }).join("");
+    } catch (error) { host.textContent = error.message; }
+  }
+
+  window.LogentraQR = {
+    views:{qrTags:viewTags, settings:viewSettings, profile:() =>
+      '<h2>Profile</h2><section class="card"><h3>Phone sessions</h3><div id="qr-own-sessions"></div></section>'},
+    bind(view) {
+      document.getElementById("qr-profile").hidden = window.Logbook.getState().me?.mode !== "user";
+      if (view === "qrTags") bindTags();
+      if (view === "settings") bindSettings(document.getElementById("qr-url-form"));
+      if (view === "profile") sessions(document.getElementById("qr-own-sessions"));
+      if (view === "backup" && window.LogbookV4.can("settings.manage")) storage(document.getElementById("qr-storage"));
+      if (view === "users") document.querySelectorAll("[data-qr-user]").forEach(button => {
+        button.onclick = () => {
+          const dialog = document.createElement("dialog");
+          dialog.innerHTML = '<h3>Phone sessions</h3><div></div><form method="dialog"><button class="btn">Close</button></form>';
+          document.body.append(dialog);
+          dialog.addEventListener("close", () => dialog.remove(), {once:true});
+          dialog.showModal();
+          sessions(dialog.querySelector("div"), button.dataset.qrUser);
+        };
+      });
+    }
+  };
+})();
 
   </script>
 </body>

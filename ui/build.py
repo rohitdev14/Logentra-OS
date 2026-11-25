@@ -28,6 +28,7 @@ def main() -> None:
     js = (SRC / "app.js").read_text(encoding="utf-8")
     v4 = (SRC / "v4.js").read_text(encoding="utf-8")
     theme = (SRC / "theme.js").read_text(encoding="utf-8")
+    qr = (SRC / "qr.js").read_text(encoding="utf-8")
     v5 = (SRC / "v5.js").read_text(encoding="utf-8")
     shell = (SRC / "shell.html").read_text(encoding="utf-8")
     html = (
@@ -45,6 +46,7 @@ def main() -> None:
         .replace("__JS__", js)
         .replace("__V4__", v4)
         .replace("__V5__", v5)
+        .replace("__QR__", qr)
     )
     OUT.write_text(html, encoding="utf-8")
     OUT2.write_text(html, encoding="utf-8")

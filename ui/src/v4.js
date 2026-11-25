@@ -408,7 +408,7 @@
         <div class="form-grid">
           <label class="fld"><span>Priority</span><select id="wo-n-prio">${prioOptions("medium")}</select></label>
           <label class="fld"><span>Due</span><input type="date" id="wo-n-due"></label>
-          <label class="fld"><span>Equipment</span><select id="wo-n-eq">${eqOptions(state, "")}</select></label>
+          <label class="fld"><span>Equipment</span><select id="wo-n-eq">${eqOptions(state, global.Logbook._ui.woEquipment || "")}</select></label>
           <label class="fld"><span>Assignee</span><select id="wo-n-assignee">${userOptions("")}</select></label>
         </div>
         <button class="btn btn-primary" data-act="wo-create">Create work order</button>
@@ -478,6 +478,7 @@
                 "<tr><td>" + esc(u.username) + "</td><td>" + esc(u.display_name) + "</td><td>" + esc(u.role || "") +
                 "</td><td>" + esc(u.site_id || "—") + "</td><td>" + (u.is_active ? "yes" : "no") +
                 "</td><td class='no-print'><button class='btn btn-sm' data-act='usr-key' data-id='" + esc(u.id) + "'>API key</button> " +
+                "<button class='btn btn-sm' data-qr-user='" + esc(u.id) + "'>Phone sessions</button> " +
                 "<button class='btn btn-sm btn-danger' data-act='usr-del' data-id='" + esc(u.id) + "'>Delete</button></td></tr>"
               ).join("") || '<tr><td colspan="6"><p class="empty">No users in the directory. In single-user mode the app works without accounts.</p></td></tr>'}
             </tbody>
@@ -544,7 +545,7 @@
     const L = global.Logbook;
     const ui = L._ui || (L._ui = {});
     try {
-      if (act === "wo-new") { ui.view = "woNew"; if (cache.users.length === 0) await refreshUsers(); L.render(); return true; }
+      if (act === "wo-new") { ui.woEquipment = ""; ui.view = "woNew"; if (cache.users.length === 0) await refreshUsers(); L.render(); return true; }
       if (act === "wo-open") {
         cache.detail = await api.getWorkOrder(el.dataset.id);
         if (cache.users.length === 0) await refreshUsers();

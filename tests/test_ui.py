@@ -364,3 +364,42 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path):
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_qr_print_and_phone_quick_entry(live_url):
+    from playwright.sync_api import expect, sync_playwright
+
+    shots = SHOT / "v0.7"
+    shots.mkdir(exist_ok=True)
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        desktop = browser.new_page(viewport={"width": 1440, "height": 1000})
+        bootstrap = desktop.request.get(live_url + "/api/bootstrap")
+        if not bootstrap.json()["equipment"]:
+            assert desktop.request.post(live_url + "/api/demo").ok
+        desktop.goto(live_url)
+        desktop.wait_for_function("window.Logbook?.getState().equipment.length > 0")
+        desktop.evaluate("Logbook.goto('equipment')")
+        desktop.get_by_role("button", name="QR tags", exact=True).click()
+        expect(desktop.get_by_role("heading", name="Print QR tags")).to_be_visible()
+        desktop.get_by_role("checkbox", name="Select P-101", exact=True).check()
+        desktop.get_by_label("Start at position").fill("3")
+        sheet = desktop.frame_locator('iframe[title="Label sheet preview"]')
+        expect(sheet.locator(".label")).to_have_count(21)
+        expect(sheet.locator(".label").nth(2)).to_contain_text("P-101")
+        desktop.screenshot(path=str(shots / "qr-print-tags.png"), full_page=True)
+        issued = desktop.request.post(live_url + "/api/equipment/qr-codes", data={"ids": ["eq_p101"]})
+        assert issued.ok, issued.text()
+        code = issued.json()["codes"]["eq_p101"]
+
+        phone = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        phone.goto(f"{live_url}/q/{code}")
+        expect(phone.get_by_role("heading", name="P-101")).to_be_visible()
+        phone.get_by_label("Your name").fill("Plant operator")
+        phone.locator("[data-parameter]").first.fill("900")
+        expect(phone.get_by_text("Out of range", exact=True).first).to_be_visible()
+        phone.screenshot(path=str(shots / "qr-phone-entry.png"), full_page=True)
+        phone.get_by_role("button", name="Save readings").click()
+        expect(phone.get_by_role("heading", name="Readings saved")).to_be_visible()
+        phone.screenshot(path=str(shots / "qr-phone-saved.png"), full_page=True)
+        browser.close()
