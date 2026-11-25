@@ -194,6 +194,8 @@ def test_tls_proxy_qualification(tmp_path, db_url):
                 time.sleep(.1)
             else:
                 pytest.fail("TLS proxy failed to reach production readiness")
+            with pytest.raises(httpx.RemoteProtocolError):
+                client.get("/api/ready", headers={"Host": "unknown.invalid"})
             response = client.get("/api/bootstrap")
             assert response.status_code == 401
             assert response.headers["strict-transport-security"] == "max-age=31536000"

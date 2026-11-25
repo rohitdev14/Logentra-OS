@@ -65,4 +65,5 @@ def phone_principal(db, request, settings, *, write=False):
             if not row:
                 raise HTTPException(401, "Phone session expired")
             authorization = f"Bearer {raw}"
-    return authenticate(db, settings, authorization=authorization, x_api_key=api_key)
+    return authenticate(db, settings, authorization=authorization, x_api_key=api_key,
+                        request_path=request.url.path)

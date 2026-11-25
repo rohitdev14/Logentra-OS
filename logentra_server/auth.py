@@ -210,6 +210,7 @@ def authenticate(
     x_api_key: str | None,
     authorization: str | None,
     actor_hint: str | None = None,
+    request_path: str = "",
 ) -> Principal:
     """Resolve the caller. `settings.auth_mode` is `open` (default) or `users`."""
     from logentra_server.models import ApiKey, SessionToken, User
@@ -250,6 +251,11 @@ def authenticate(
         # Opaque session token
         tok = db.query(SessionToken).filter(SessionToken.token_hash == hash_token(raw)).one_or_none()
         if tok:
+            phone_paths = ("/q", "/api/qr", "/api/readings/photos")
+            if tok.kind == "phone" and not any(
+                request_path == path or request_path.startswith(path + "/") for path in phone_paths
+            ):
+                raise HTTPException(401, "Phone sessions are limited to QR quick entry")
             if tok.revoked_at:
                 raise HTTPException(status_code=401, detail="Session revoked")
             if tok.expires_at and tok.expires_at <= utcnow_iso():
@@ -327,6 +333,7 @@ def make_auth_dependency(settings, SessionLocal):
                 settings,
                 x_api_key=x_api_key,
                 authorization=authorization,
+                request_path=request.url.path,
                 actor_hint=request.headers.get("X-Logentra-Actor") or request.headers.get("X-Logbook-Actor"),
             )
             db.commit()
