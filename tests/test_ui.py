@@ -276,6 +276,8 @@ def test_login_screenshot(tmp_path):
             phone.get_by_label("Password").fill("adminpass1")
             phone.get_by_role("button",name="Sign in",exact=True).click()
             phone.get_by_role("form",name="Quick entry").wait_for()
+            assert phone.locator("#operator").inner_text() == "admin"
+            assert phone.get_by_role("button", name="Sign out").is_visible()
             page.get_by_role("button",name="Profile",exact=True).click()
             page.locator("#qr-own-sessions").get_by_role("button",name="Sign out").click()
             page.get_by_text("No active phone sessions.").wait_for()
@@ -388,7 +390,12 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path):
         thread.join(timeout=10)
 
 
-def test_qr_print_and_phone_quick_entry(live_url):
+def test_qr_print_and_phone_quick_entry(live_url, tmp_path, monkeypatch):
+    from io import BytesIO
+    from PIL import Image
+    from logentra_server import qr_entries
+
+    monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path)
     from playwright.sync_api import expect, sync_playwright
 
     shots = SHOT / "v0.7"
@@ -405,12 +412,25 @@ def test_qr_print_and_phone_quick_entry(live_url):
         desktop.get_by_role("button", name="QR tags", exact=True).click()
         expect(desktop.get_by_role("heading", name="Print QR tags")).to_be_visible()
         desktop.get_by_role("checkbox", name="Select P-101", exact=True).check()
+        desktop.get_by_role("button", name="Select visible", exact=True).click()
         desktop.get_by_label("Start at position").fill("3")
         sheet = desktop.frame_locator('iframe[title="Label sheet preview"]')
         expect(sheet.locator(".label")).to_have_count(21)
         expect(sheet.locator(".label").nth(2)).to_contain_text("P-101")
+        expect(sheet.locator(".label").nth(2)).to_contain_text("Pump")
+        preview = desktop.locator(".qr-preview-stage").bounding_box()
+        iframe = desktop.locator(".qr-preview-stage iframe").bounding_box()
+        assert preview and iframe
+        native_width = sheet.locator(".sheet").evaluate("(sheet) => sheet.getBoundingClientRect().width")
+        scale = iframe["width"] / native_width
+        for cell in (sheet.locator(".label").first, sheet.locator(".label").last):
+            rect = cell.evaluate("(cell) => cell.getBoundingClientRect().toJSON()")
+            assert iframe["x"] + rect["left"] * scale >= preview["x"] - 1
+            assert iframe["y"] + rect["top"] * scale >= preview["y"] - 1
+            assert iframe["x"] + rect["right"] * scale <= preview["x"] + preview["width"] + 1
+            assert iframe["y"] + rect["bottom"] * scale <= preview["y"] + preview["height"] + 1
         desktop.screenshot(path=str(shots / "qr-print-tags.png"), full_page=True)
-        issued = desktop.request.post(live_url + "/api/equipment/qr-codes", data={"ids": ["eq_p101"]})
+        issued = desktop.request.post(live_url + "/api/equipment/qr-codes", data={"ids": ["eq_p101", "eq_ahu12", "eq_m204", "eq_tk03"]})
         assert issued.ok, issued.text()
         code = issued.json()["codes"]["eq_p101"]
 
@@ -418,18 +438,45 @@ def test_qr_print_and_phone_quick_entry(live_url):
         phone.goto(f"{live_url}/q/{code}")
         expect(phone.get_by_role("heading", name="P-101")).to_be_visible()
         phone.get_by_label("Your name").fill("Plant operator")
-        phone.locator("[data-parameter]").first.fill("900")
+        for label, value in (("Flow", "51"), ("Discharge pressure", "3.3"), ("Vibration", "6.2"),
+                             ("Bearing temperature", "61")):
+            phone.get_by_label(label, exact=True).fill(value)
+        phone.get_by_label("Note", exact=False).fill("Bearing vibration above the configured limit.")
         expect(phone.get_by_text("Out of range", exact=True).first).to_be_visible()
+        expect(phone.get_by_text("OK", exact=True)).to_have_count(3)
+        expect(phone.locator("#reading-warning")).to_contain_text("1 out of range")
+        expect(phone.get_by_text("Last logged", exact=False)).to_be_visible()
+        expect(phone.locator(".equipment-card")).to_contain_text("Pump")
+        photo = BytesIO()
+        Image.new("RGB", (32, 24), "#658399").save(photo, "PNG")
+        for name in ("pump.png", "inspection.png"):
+            with phone.expect_file_chooser() as picker:
+                phone.get_by_role("button", name="Add photo (0 of 3)" if name == "pump.png"
+                                  else "Replace photo 1", exact=True).click()
+            picker.value.set_files({"name": name, "mimeType": "image/png", "buffer": photo.getvalue()})
+            expect(phone.locator(".photo-list img")).to_have_attribute("alt", name.replace(".png", ".jpg"))
+        expect(phone.get_by_role("button", name="Add photo (1 of 3)")).to_be_visible()
+        expect(phone.locator(".photo-list figcaption")).to_contain_text("KB")
         phone.screenshot(path=str(shots / "qr-phone-entry.png"), full_page=True)
-        phone.get_by_role("button", name="Save readings").click()
+        phone.emulate_media(color_scheme="dark")
+        phone.screenshot(path=str(shots / "qr-phone-entry-dark.png"), full_page=True)
+        phone.emulate_media(color_scheme="light")
+        phone.get_by_role("button", name="Save 4 readings").click()
         expect(phone.get_by_role("heading", name="Readings saved")).to_be_visible()
+        desktop.reload()
+        desktop.wait_for_function("Logbook.getState().logs.some(entry => entry.photos?.length)")
+        desktop.evaluate("Logbook.goto('logbook', {logEq:'eq_p101'})")
+        thumbnail = desktop.get_by_role("button", name="Open photo inspection.jpg").locator("img")
+        expect(thumbnail).to_be_visible()
+        thumbnail.evaluate("(image) => image.decode()")
+        desktop.screenshot(path=str(shots / "desktop-reading-photos.png"), full_page=True)
         phone.screenshot(path=str(shots / "qr-phone-saved.png"), full_page=True)
         phone.get_by_role("button", name="Raise work order").click()
         phone.get_by_role("button", name="Create work order").click()
         expect(phone.get_by_role("status").get_by_text("Work order created · Inspect P-101")).to_be_visible()
 
         printed = browser.new_page(viewport={"width":850,"height":1240})
-        printed.goto(live_url + "/tags/print?ids=eq_p101&start=3")
+        printed.goto(live_url + "/tags/print?ids=eq_p101,eq_ahu12,eq_m204,eq_tk03&start=3")
         expect(printed.locator(".label")).to_have_count(21)
         printed.screenshot(path=str(shots / "qr-label-sheet.png"),full_page=True)
 
@@ -445,7 +492,7 @@ def test_qr_print_and_phone_quick_entry(live_url):
         expect(phone.get_by_role("table")).to_be_visible()
         phone.locator("[data-parameter]").first.fill("12,2")
         phone.screenshot(path=str(shots / "qr-phone-table.png"),full_page=True)
-        phone.get_by_role("button", name="Save readings").click()
+        phone.get_by_role("button", name="Save 1 reading").click()
         expect(phone.get_by_role("heading", name="Readings saved")).to_be_visible()
         assert desktop.request.post(live_url + "/api/equipment/eq_qr_compact/qr-code/rotate").ok
         phone.goto(f"{live_url}/q/{compact}")
@@ -473,17 +520,26 @@ def test_ui_shift_log_sign_off_return_and_acknowledge(live_url):
         site = rest("POST","/sites",{"name":"Northbrook Works Training"})
         area = rest("POST",f"/sites/{site['id']}/areas",{"name":"Utilities Training"})
         pattern = rest("POST","/shift-patterns",{"site_id":site["id"],"name":"Training shifts","timezone":"UTC"})
-        crew = rest("POST","/crews",{"site_id":site["id"],"name":"Utilities crew"})
+        day_crew = rest("POST","/crews",{"site_id":site["id"],"name":"Crew A"})
+        night_crew = rest("POST","/crews",{"site_id":site["id"],"name":"Crew B"})
+        lead = rest("POST","/users",{"username":"night-lead","display_name":"Night lead",
+                                    "password":"example-password","role":"technician"})
+        equipment = rest("POST","/equipment",{"id":"eq_shift_pump","values":{"fld_tag":"P-102"},
+                        "site_id":site["id"],"area_id":area["id"],
+                        "params":[{"key":"vibration","label":"Vibration","unit":"mm/s","max":4.5}]})
+        rest("POST","/readings",{"equipment_id":equipment["id"],"parameter":"vibration","value":6.2,
+                                "ts":datetime.now(timezone.utc).isoformat()})
+        rest("POST","/work-orders",{"title":"Inspect P-102 bearings","equipment_id":equipment["id"],"priority":"high"})
         now = datetime.now(timezone.utc)
         start = now - timedelta(minutes=15)
         incoming = start + timedelta(minutes=60)
         roster = []
-        for code, name, moment in [("A","Outgoing",start),("B","Incoming",incoming)]:
+        for code, name, moment, crew in [("A","Day shift",start,day_crew),("B","Night shift",incoming,night_crew)]:
             definition = rest("POST",f"/shift-patterns/{pattern['id']}/definitions",{
                 "code":code,"name":name,"start_time":moment.strftime("%H:%M"),"duration_minutes":60,
             })
             roster.append({"shift_definition_id":definition["id"],"date":moment.date().isoformat(),
-                           "area_id":area["id"],"crew_id":crew["id"]})
+                           "area_id":area["id"],"crew_id":crew["id"],"lead_user_id":lead["id"] if code == "B" else None})
         rest("PUT","/roster",roster)
         page.goto(live_url)
         page.get_by_role("button", name="Shift log", exact=True).click()
@@ -491,27 +547,43 @@ def test_ui_shift_log_sign_off_return_and_acknowledge(live_url):
         composer = page.locator("#shift-entry-form")
         composer.get_by_label("Your name").fill("Plant operator")
         composer.get_by_label("Title").fill("Cooling pump inspection")
+        composer.locator("select[name=category_id]").select_option(label="Safety")
+        composer.locator("select[name=severity]").select_option("high")
         composer.get_by_label("Shift entry").fill("Inspect the bearings on the next round.")
         composer.get_by_label("Add to handover").check()
         composer.get_by_role("button",name="Add entry").click()
         expect(page.locator(".shift-item").get_by_text("Cooling pump inspection")).to_be_visible()
         expect(page.get_by_role("button",name="Sign off and hand over")).to_be_enabled()
-        page.locator("#shift-sign-form").get_by_label("Outgoing summary").fill("Watch the cooling loop under load.")
+        page.get_by_label("Outgoing summary").fill("Watch the cooling loop under load.")
+        expect(page.get_by_role("button", name="All 3", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="In handover 3", exact=True)).to_be_visible()
+        expect(page.locator(".timeline-dot")).to_have_count(3)
+        page.get_by_role("button", name="Readings 1", exact=True).click()
+        expect(page.locator(".timeline-dot")).to_have_count(1)
+        page.get_by_role("button", name="All 3", exact=True).click()
+        expect(page.locator(".timeline-dot")).to_have_count(3)
+        expect(page.locator(".shift-stepper [aria-current=step]")).to_contain_text("Draft")
+        expect(page.locator(".shift-context")).to_contain_text("Handover due")
+        expect(page.get_by_label("Outgoing summary")).to_have_value("Watch the cooling loop under load.")
         page.screenshot(path=str(shots / "handover-outgoing.png"), full_page=True)
+        page.evaluate("LogbookTheme.apply('dark')")
+        page.screenshot(path=str(shots / "handover-outgoing-dark.png"), full_page=True)
+        page.evaluate("LogbookTheme.apply('light')")
         page.get_by_role("button",name="Sign off and hand over").click()
         expect(page.get_by_role("heading",name="Acknowledge handover")).to_be_visible()
+        expect(page.get_by_text("Watch the cooling loop under load.", exact=True)).to_be_visible()
         page.screenshot(path=str(shots / "handover-incoming.png"), full_page=True)
-        page.get_by_role("button",name="Return",exact=True).click()
-        dialog = page.get_by_role("dialog")
-        dialog.get_by_label("Return reason").fill("Include the bearing inspection.")
-        dialog.get_by_role("button",name="Save").click()
+        expect(page.locator(".shift-waiting")).to_contain_text("Acknowledge by")
+        expect(page.get_by_role("heading", name="Audit trail")).to_be_visible()
+        page.locator("#shift-return-form").get_by_role("textbox").fill("Include the bearing inspection.")
+        page.get_by_role("button",name="Return handover",exact=True).click()
         expect(page.get_by_text("Version 2 · draft",exact=True)).to_be_visible()
         page.get_by_role("button",name="Open shift log").click()
         expect(page.get_by_role("button",name="Sign off and hand over")).to_be_enabled()
         page.get_by_role("button",name="Sign off and hand over").click()
         expect(page.get_by_role("button",name="Acknowledge",exact=True)).to_be_enabled()
         page.get_by_role("button",name="Acknowledge",exact=True).click()
-        expect(page.get_by_text("Unseen at acknowledgement · 1",exact=True)).to_be_visible()
+        expect(page.get_by_text("Unseen at acknowledgement · 3",exact=True)).to_be_visible()
         page.get_by_role("button",name="Shifts & rosters",exact=True).click()
         page.locator("#shift-view select[name=site]").select_option(site["id"])
         page.get_by_role("button",name="Handover & escalation",exact=True).click()

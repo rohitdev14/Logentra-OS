@@ -1090,8 +1090,9 @@ body.login-open .app { display: none; }
 /* QR label selection and sheet preview */
 .qr-desktop {display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:1rem;align-items:start}
 .qr-desktop .table-wrap {max-height:55vh;margin:.7rem 0}
-#qr-preview {margin:.7rem 0;overflow:auto;max-height:65vh}
-#qr-preview iframe {width:230%;height:1320px;border:0;zoom:.43}
+#qr-preview {margin:.7rem 0;min-width:0}
+.qr-preview-stage {position:relative;overflow:hidden;background:#e6ebf2}
+.qr-preview-stage iframe {position:absolute;top:0;left:0;width:210mm;border:0;transform-origin:top left;display:block}
 #qr-storage:not([hidden]) {margin-bottom:1rem}
 @media(max-width:900px){.qr-desktop{grid-template-columns:1fr}}
 
@@ -1116,6 +1117,50 @@ body.login-open .app { display: none; }
 .shift-table {overflow:auto;margin:.7rem 0}
 #handover-dashboard:not([hidden]) {margin-bottom:1rem}
 @media(max-width:880px){.shift-layout{grid-template-columns:minmax(0,1fr)}}
+
+.log-photos {display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.4rem}
+.log-photos button {padding:2px}
+.log-photos img {display:block;width:64px;height:48px;object-fit:cover;border-radius:4px}
+
+.shift-layout {grid-template-columns:minmax(0,2.3fr) minmax(310px,1fr)}
+.shift-context strong,.shift-facts dd {color:var(--ink)}
+.shift-context p,.shift-meta {color:var(--muted)}
+.shift-chips {display:flex;flex-wrap:wrap;gap:.4rem;margin:.6rem 0 1rem}
+.shift-chips .btn {border-radius:999px;padding:.28rem .65rem;font-size:.8rem}
+.shift-chips .btn[aria-pressed="true"] {background:var(--accent);border-color:var(--accent);color:var(--on-accent,#fff)}
+.timeline-row {display:grid;grid-template-columns:3rem 14px minmax(0,1fr);gap:.65rem;position:relative;align-items:start}
+.timeline-row::before {content:"";position:absolute;left:calc(3rem + .65rem + 6px);top:0;height:calc(100% + .6rem);width:2px;background:var(--line)}
+.timeline-row:last-child::before {height:100%}
+.timeline-clock {text-align:right;padding-top:.85rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.timeline-dot {z-index:1;margin-top:1.05rem;width:12px;height:12px;margin-inline:auto;border-radius:50%;border:2px solid var(--muted);background:var(--surface)}
+.timeline-row[data-severity="low"] .timeline-dot {border-color:var(--good)}
+.timeline-row[data-severity="medium"] .timeline-dot {border-color:var(--warn)}
+.timeline-row:is([data-severity="high"],[data-severity="urgent"],[data-severity="critical"]) .timeline-dot {border-color:var(--bad)}
+.timeline-card .shift-entry {margin:0;border-left-width:1px}
+.timeline-card .shift-pinned {border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.shift-stepper {display:flex;gap:.55rem;flex-wrap:wrap;list-style:none;padding:0;margin:.7rem 0 1rem;color:var(--muted);font-size:.82rem}
+.shift-stepper li {display:flex;align-items:center;gap:.3rem}
+.shift-stepper li span,.shift-auto {border:1px solid var(--line);border-radius:999px;padding:.1rem .4rem}
+.shift-stepper li[aria-current="step"] {font-weight:700;color:var(--ink)}
+.shift-stepper .reached span {background:var(--accent);border-color:var(--accent);color:var(--on-accent,#fff)}
+.shift-facts {display:grid;grid-template-columns:auto 1fr;gap:.45rem .85rem;margin:.6rem 0 .9rem}
+.shift-facts dt,.shift-item p,.shift-item-group h4 {color:var(--muted)}
+.shift-facts dd {margin:0;font-weight:650}
+.shift-item-group h4 {text-transform:uppercase;font-size:.78rem;margin:.9rem 0 .25rem}
+.shift-item {display:grid;grid-template-columns:1fr auto;gap:.45rem;border-top:1px solid var(--line);padding:.5rem 0;align-items:start}
+.shift-item p {margin:.2rem 0 0;font-size:.85rem;overflow-wrap:anywhere}
+.shift-item .btn {padding:.1rem .4rem;font-size:1rem}
+.shift-auto {white-space:nowrap;color:var(--muted);font-size:.75rem}
+.shift-waiting {background:color-mix(in srgb,var(--warn) 10%,var(--surface));border-color:color-mix(in srgb,var(--warn) 40%,var(--line))}
+.shift-return {border:1px solid color-mix(in srgb,var(--bad) 45%,var(--line));border-radius:.6rem;padding:.7rem;background:color-mix(in srgb,var(--bad) 8%,var(--surface))}
+.shift-return button {background:var(--surface);color:var(--bad);border-color:var(--bad)}
+.shift-question {border-left:2px solid var(--accent);padding:.4rem .6rem;margin:.5rem 0}
+.shift-question small,.shift-audit time {color:var(--muted)}
+.shift-seen {color:var(--good);font-weight:650}
+.shift-audit {list-style:none;padding:0;margin:.6rem 0}
+.shift-audit li {display:grid;grid-template-columns:3rem 1fr;gap:.5rem;padding:.35rem 0;border-bottom:1px solid var(--line)}
+@media(max-width:880px){.shift-layout{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:540px){.timeline-row{grid-template-columns:2.5rem 12px minmax(0,1fr);gap:.35rem}.timeline-row::before{left:calc(2.5rem + .35rem + 5px)}}
 
   </style>
 </head>
@@ -1660,6 +1705,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
 
   const api = {
     shiftRequest: (method, path, body) => req(method, path, body),
+    listQRLabels: params => req("GET", "/equipment/qr-labels" + qs(params)),
     issueQRCodes: (ids, reprint) => req("POST", "/equipment/qr-codes", {ids, reprint}),
     getPublicURL: () => req("GET", "/settings/public-url"),
     setPublicURL: (public_base_url) => req("PUT", "/settings/public-url", {public_base_url}),
@@ -3206,7 +3252,10 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
               return "<td" + (bad ? " style='color:#b42318;font-weight:700'" : "") + ">" + (v == null || v === "" ? "—" : esc(v)) + (noted ? " *" : "") + "</td>";
             }).join("");
             return "<tr><td>" + esc(l.date) + "</td><td>" + esc(l.time || "") + "</td>" + cells +
-              "<td>" + esc(l.remarks || "") + "</td><td class='no-print'><button class='btn btn-sm btn-danger' data-act='log-del' data-id='" + l.id + "'>Delete</button></td></tr>";
+              "<td>" + esc(l.remarks || "") + (l.photos?.length ? '<div class="log-photos">' + l.photos.map(photo =>
+                '<button type="button" class="btn" data-reading-photo="' + esc(photo.id) + '" aria-label="Open photo ' +
+                esc(photo.filename) + '"><img loading="lazy" alt="' + esc(photo.filename) + '"></button>'
+              ).join("") + '</div>' : "") + "</td><td class='no-print'><button class='btn btn-sm btn-danger' data-act='log-del' data-id='" + l.id + "'>Delete</button></td></tr>";
           }).join("") + "</tbody></table></div>" : '<p class="empty">No entries for this tag yet.</p>'}
       </div>` : '<p class="empty">Add equipment first.</p>'}
     `;
@@ -5714,6 +5763,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   "use strict";
   const api = window.LogbookAPI;
   const selected = new Map();
+  let previewObserver;
   const esc = value => String(value ?? "").replace(/[&<>"']/g, char =>
     ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[char]);
 
@@ -5752,16 +5802,13 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     let rows = [], sites = [], page = 1, pages = 1, searchTimer, loadVersion = 0, previewVersion = 0;
     const start = () => Math.max(1, Math.min(21, Number(get("start").value) || 1));
     const feedback = text => { if (host.isConnected) get("feedback").textContent = text; };
-    const fields = window.Logbook.getState().equipmentFields;
-    const nameKey = fields.find(field => field.key === "name")?.id;
-    const areaName = row => sites.flatMap(site => site.areas || []).find(area => area.id === row.area_id)?.name || "";
     const url = (ids, preview) => "/tags/print?" + new URLSearchParams({ids:[...ids].join(","), start:start(), preview});
     const renderRows = () => {
       if (!host.isConnected) return;
       host.innerHTML = rows.map(row => `<tr><td><input type="checkbox" aria-label="Select ${esc(row.tag)}"
         data-equipment="${esc(row.id)}" ${selected.has(row.id) ? "checked" : ""}></td>
-        <td><strong>${esc(row.tag)}</strong></td><td>${esc(row.values[nameKey])}</td>
-        <td>${esc(areaName(row))}</td><td>${row.qr_code_issued ? "Reprint" : "New"}</td></tr>`).join("")
+        <td><strong>${esc(row.tag)}</strong></td><td>${esc(row.name)}</td>
+        <td>${esc(row.area)}</td><td>${row.qr_code_issued ? "Reprint" : "New"}</td></tr>`).join("")
         || '<tr><td colspan="5">No equipment matches.</td></tr>';
       get("page").textContent = page + " / " + pages;
       get("prev").disabled = page <= 1;
@@ -5769,6 +5816,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     };
     async function preview() {
       const version = ++previewVersion;
+      previewObserver?.disconnect();
       const count = selected.size;
       get("selected").textContent = count + " selected";
       get("print").disabled = !count;
@@ -5785,13 +5833,29 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         frame.title = "Label sheet preview";
         frame.setAttribute("sandbox", "");
         frame.srcdoc = html;
-        get("preview").replaceChildren(frame);
+        const stage = document.createElement("div");
+        stage.className = "qr-preview-stage";
+        stage.append(frame);
+        get("preview").replaceChildren(stage);
+        const sheets = Math.ceil((count + start() - 1) / 21);
+        const width = 210 * 96 / 25.4;
+        const height = Math.ceil(297 * 96 / 25.4 * sheets);
+        frame.style.height = height + "px";
+        const fit = () => {
+          const scale = Math.min(1, stage.clientWidth / width);
+          frame.style.transform = "scale(" + scale + ")";
+          stage.style.height = Math.ceil(height * scale) + "px";
+        };
+        previewObserver?.disconnect();
+        previewObserver = new ResizeObserver(fit);
+        previewObserver.observe(stage);
+        fit();
       } catch (error) { feedback(error.message); }
     }
     async function load() {
       const version = ++loadVersion;
       try {
-        const result = await api.listEquipment({page, page_size:50, q:get("query").value,
+        const result = await api.listQRLabels({page, page_size:50, q:get("query").value,
           site_id:get("site").value, area_id:get("area").value});
         if (version !== loadVersion || !host.isConnected) return;
         rows = result.items;
@@ -5922,12 +5986,37 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     } catch (error) { host.textContent = error.message; }
   }
 
+  function bindReadingPhotos() {
+    document.querySelectorAll("[data-reading-photo]").forEach(button => {
+      const path = "/api/readings/photos/" + encodeURIComponent(button.dataset.readingPhoto);
+      const image = button.querySelector("img");
+      const load = () => api.authenticatedFetch(path).then(response => response.blob());
+      load().then(blob => {
+        if (!button.isConnected) return;
+        const url = URL.createObjectURL(blob);
+        image.onload = image.onerror = () => URL.revokeObjectURL(url);
+        image.src = url;
+      }).catch(() => { image.alt = "Photo unavailable"; });
+      button.onclick = async () => {
+        const tab = window.open("about:blank", "_blank");
+        if (!tab) { window.Logbook._toast("Allow popups to open the photo."); return; }
+        try {
+          const url = URL.createObjectURL(await load());
+          tab.location.replace(url);
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+        } catch (error) { tab.close(); window.Logbook._toast(error.message); }
+      };
+    });
+  }
+
   window.LogentraQR = {
     views:{qrTags:viewTags, settings:viewSettings, profile:() =>
       '<h2>Profile</h2><section class="card"><h3>Phone sessions</h3><div id="qr-own-sessions"></div></section>'},
     bind(view) {
+      previewObserver?.disconnect();
       document.getElementById("qr-profile").hidden = window.Logbook.getState().me?.mode !== "user";
       if (view === "qrTags") bindTags();
+      if (view === "logbook") bindReadingPhotos();
       if (view === "settings") bindSettings(document.getElementById("qr-url-form"));
       if (view === "profile") sessions(document.getElementById("qr-own-sessions"));
       if (view === "backup" && window.LogbookV4.can("settings.manage")) storage(document.getElementById("qr-storage"));
@@ -5997,8 +6086,10 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   const hostHTML = (title, subtitle, extra = "") => `<div class="row spread"><div><h2>${title}</h2>
     <p class="page-lead">${subtitle}</p></div>${extra}</div><div id="shift-view" aria-live="polite">Loading…</div>`;
   const severityChoices = ["info","low","medium","high","critical"].map(value => [value, value]);
-  const kinds = {oor_reading:"Out-of-range readings", work_order:"Work orders", punch:"Punch items", log_entry:"Shift log", note:"Notes"};
-  const ui = {current:"", logPage:1, category:"", revisions:false, tab:"patterns", site:"",
+  const kinds = {oor_reading:"Out of range", work_order:"Work orders", punch:"Punch items", log_entry:"Log entries", note:"Notes"};
+  const itemKind = item => item.category === "Safety" ? "Safety" : kinds[item.kind];
+  const draftSummaries = new Map();
+  const ui = {current:"", logPage:1, logFilter:"all", incomingFilter:"all", revisions:false, tab:"patterns", site:"",
     historyPage:1, historyQuery:{}, handoverPage:1, handoverQuery:{}};
   const bind = (host, target, fn) => host.querySelectorAll(target).forEach(element => {
     element.onclick = async () => {
@@ -6043,6 +6134,27 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     } catch (error) { popup?.close(); throw error; }
   }
 
+  const timestamp = value => value && !/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value + "Z" : value;
+  const clockTime = (value, zone) => value ? new Date(timestamp(value)).toLocaleTimeString(undefined,
+    {timeZone:zone || "UTC", hour:"2-digit", minute:"2-digit", hourCycle:"h23"}) : "—";
+  const rowTime = (value, severity, zone, content) => `<div class="timeline-row" data-severity="${esc(severity)}">
+    <time class="timeline-clock" datetime="${esc(value)}">${esc(clockTime(value,zone))}</time>
+    <span class="timeline-dot" aria-hidden="true"></span><div class="timeline-card">${content}</div></div>`;
+  const filterChips = (choices, active, attribute) => `<div class="shift-chips" role="group" aria-label="Timeline filters">${choices.map(
+    ([key,label,count]) => btn(label + " " + count,`${attribute}="${esc(key)}" aria-pressed="${key === active}"`)
+  ).join("")}</div>`;
+  const stepper = status => {
+    const current = status === "acknowledged" ? 2 : ["signed_off","returned"].includes(status) ? 1 : 0;
+    return `<ol class="shift-stepper" aria-label="Handover status">${["Draft","Signed off","Acknowledged"].map(
+      (name,index) => `<li class="${index <= current ? "reached" : ""}" ${index === current ? 'aria-current="step"' : ""}>
+        <span>${index + 1}</span>${name}</li>`).join("")}</ol>`;
+  };
+  const shiftName = shift => shift ? [shift.name,shift.crew_name].filter(Boolean).join(" · ") : "Not rostered";
+  const minutesLeft = end => {
+    const remaining = Math.ceil((new Date(end) - Date.now()) / 60000);
+    return remaining > 0 ? remaining + " min left" : "Shift ended";
+  };
+
   function recordCard(entry, row, timezone, editable) {
     const heading = esc(entry.title);
     const evidence = entry.equipment_id ? btn("Equipment", `data-equipment="${esc(entry.equipment_id)}"`) : "";
@@ -6058,8 +6170,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       btn("Void", `data-void="${esc(entry.id)}"`),
       btn("Attach", `data-attach="${esc(entry.id)}"`)
     ].join("") : "";
-    return `<article class="card shift-entry"><div class="row spread"><strong>${heading}</strong>
-      <small>${esc(local(entry.event_at,timezone))}</small></div>
+    return `<article class="card shift-entry ${included ? "shift-pinned" : ""}"><div class="row spread"><strong>${heading}</strong>
+      <small>${row ? "" : esc(local(entry.event_at,timezone))}</small></div>
       <p class="shift-meta">${esc(entry.category)} · ${esc(entry.severity)} · ${esc(entry.author_name)}
       ${entry.after_handover ? " · After handover" : ""}${entry.version > 1 ? " · Version " + entry.version : ""}</p>
       <p class="shift-body">${esc(entry.body)}</p>
@@ -6107,25 +6219,34 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
 
   function outgoingPanel(row) {
     const editable = row.status === "draft" && lead(row);
-    const groups = Object.entries(kinds).map(([kind, label]) => {
-      const items = row.items.filter(item => item.kind === kind);
+    const groups = ["Safety","Out of range","Work orders","Punch items","Log entries","Notes"].map(label => {
+      const items = row.items.filter(item => itemKind(item) === label);
       if (!items.length) return "";
-      return `<section class="shift-item-group"><h4>${esc(label)} · ${items.length}</h4>${items.map(item =>
-        `<div class="row spread shift-item"><span>${esc(item.title)} ${item.auto ? "<small>Auto</small>" : ""}</span>
+      return `<section class="shift-item-group"><h4>${label}</h4>${items.map(item =>
+        `<div class="shift-item"><div><strong>${esc(item.title)}</strong> ${item.auto ? '<small class="shift-auto">auto</small>' : ""}
+        ${item.detail ? `<p>${esc(item.detail)}</p>` : ""}</div>
         ${editable ? btn("×", `data-remove="${esc(item.id)}" aria-label="Remove ${esc(item.title)}"`) : ""}</div>`).join("")}</section>`;
     }).join("");
     const returned = [...row.versions].reverse().find(item => item.return_reason);
-    return `<section class="card shift-handover"><div class="row spread"><h3>In handover</h3><span>${row.items.length} items</span></div>
-      <p class="shift-steps">Draft → Signed off → Acknowledged</p>
-      <p><strong>${esc(labelStatus(row.status))}</strong> · Version ${row.version}</p>
+    const end = clockTime(row.outgoing.ends_at,row.outgoing.timezone);
+    const incoming = shiftName(row.incoming) + (row.incoming?.lead_name ? " · " + row.incoming.lead_name : "");
+    return `<aside class="stack shift-handover"><section class="card">
+      <div class="row spread"><h3>Sign off handover</h3><small>Version ${row.version}</small></div>
+      ${stepper(row.status)}
       ${returned ? `<p class="shift-banner">Returned: ${esc(returned.return_reason)}</p>` : ""}
+      <dl class="shift-facts"><dt>Pinned</dt><dd>${row.items.length} items</dd>
+      <dt>Incoming</dt><dd>${esc(incoming)}</dd><dt>Shift ends</dt><dd>${esc(end)} · ${esc(minutesLeft(row.outgoing.ends_at))}</dd></dl>
+      ${editable ? `<form id="shift-sign-form" class="stack">${nameField()}${submit("Sign off and hand over")}</form>`
+        : btn("Open handover",`data-open="${esc(row.id)}"`)}
+      <p class="shift-meta">If the handover is still unacknowledged ${row.ack_window_minutes} min after the incoming shift starts,
+      it escalates to the ${esc(row.escalation_role)}.</p>
+      </section><section class="card">
+      <div class="row spread"><h3>In handover</h3><small>${row.items.length} items</small></div>
       ${groups || "<p>No items included.</p>"}
-      ${editable ? `<form id="shift-sign-form" class="stack">${nameField()}
-        ${textarea("Outgoing summary","summary",row.summary,'maxlength="20000"')}
-        <div class="row">${btn("Add note","data-add-note")}${btn("Save draft","data-save-summary")}</div>
-        ${submit("Sign off and hand over")}</form>`
-        : `<p class="shift-body">${esc(row.summary)}</p>${btn("Open handover",`data-open="${esc(row.id)}"`)}`}
-      </section>`;
+      ${editable ? `${textarea("Outgoing summary","summary",draftSummaries.get(row.id) ?? row.summary,'form="shift-sign-form" maxlength="20000"')}
+        <div class="row">${btn("Add note","data-add-note")}${btn("Save draft","data-save-summary")}</div>`
+        : `<p class="shift-body">${esc(row.summary)}</p>`}
+      </section></aside>`;
   }
 
   async function renderLog(host) {
@@ -6142,27 +6263,53 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const shift = choices.get(ui.current) || choices.values().next().value;
     ui.current = shift.id;
     const path = "/shifts/" + id(shift.id);
-    const [entries, row, categories] = await Promise.all([
-      get(path + "/entries",{page:ui.logPage,page_size:25,revisions:ui.revisions}),
+    const [row,categories] = await Promise.all([
       get(path + "/handover"), get("/shift-log-categories",{site:shift.site_id})
     ]);
+    const entries = await get(path + "/entries",{page:ui.logPage,page_size:25,revisions:ui.revisions,timeline_filter:ui.logFilter});
     if (!host.isConnected || ui.current !== shift.id) return;
     const visibleCategories = categories.filter(category => category.active);
-    const shown = entries.items.filter(entry => !ui.category || entry.category_id === ui.category);
-    host.innerHTML = `<div class="row shift-context">
-      ${select("Shift","selection",[...choices.values()].map(item => [item.id,
-        [item.area_name,item.name,item.crew_name].filter(Boolean).join(" · ")]),shift.id)}
-      <p>${esc(local(shift.starts_at,shift.timezone))} – ${esc(local(shift.ends_at,shift.timezone))} · ${esc(shift.timezone)}
-      ${shift.lead_name ? " · Lead " + esc(shift.lead_name) : ""}</p></div>
+    const extras = row.items.filter(item => item.kind !== "log_entry");
+    const itemFilter = {oor_reading:"readings",work_order:"work_orders",note:"notes"};
+    const counts = {...entries.counts};
+    for (const item of extras) {
+      counts.all++;
+      counts.included++;
+      if (itemFilter[item.kind]) counts[itemFilter[item.kind]]++;
+    }
+    const chips = [["all","All"],["included","In handover"],
+      ...categories.filter(category => counts["category:" + category.id] || ui.logFilter === "category:" + category.id)
+        .map(category => ["category:" + category.id,category.name]),
+      ["readings","Readings"],["work_orders","Work orders"],["notes","Notes"]
+    ].map(([key,label]) => [key,label,counts[key] || 0]);
+    const timeline = entries.items.map(entry => [entry.event_at, entry.severity,
+      recordCard(entry,row,shift.timezone,can("shiftlog.write"))]);
+    if (entries.page === 1) {
+      for (const item of extras) {
+        if (!["all","included",itemFilter[item.kind]].includes(ui.logFilter)) continue;
+        timeline.push([item.event_at,item.severity,`<article class="card shift-entry shift-pinned">
+          <p class="shift-meta">${esc(itemKind(item))} · ${esc(item.severity)}</p><strong>${esc(item.title)}</strong>
+          <p class="shift-body">${esc(item.detail)}</p><small class="shift-auto">In handover</small></article>`]);
+      }
+    }
+    timeline.sort(([left],[right]) => String(timestamp(right) || "").localeCompare(String(timestamp(left) || "")));
+    host.innerHTML = `<div class="shift-context">
+      ${choices.size > 1 ? select("Shift","selection",[...choices.values()].map(item => [item.id,
+        [item.area_name,item.name,item.crew_name].filter(Boolean).join(" · ")]),shift.id) : ""}
+      <p>Outgoing <strong>${esc(shiftName(shift))}</strong> · Incoming <strong>${esc(shiftName(row.incoming))}</strong>
+      ${row.incoming?.lead_name ? " lead " + esc(row.incoming.lead_name) : ""} · Handover due
+      <strong>${esc(clockTime(shift.ends_at,shift.timezone))}</strong> · ${esc(minutesLeft(shift.ends_at))}</p></div>
       <div class="shift-layout"><div class="stack">
        ${can("shiftlog.write") ? `<section class="card"><h3>Add log entry</h3>${composer(visibleCategories)}</section>` : ""}
        <section class="card"><div class="row spread"><h3>Shift timeline</h3>
-       ${select("Category","filter",[["","All categories"],...pairs(categories)],ui.category)}
        <label><input type="checkbox" name="revisions" ${ui.revisions ? "checked" : ""}> Show revisions</label></div>
-       <div class="shift-timeline">${shown.map(entry => recordCard(entry,row,shift.timezone,can("shiftlog.write"))).join("") || "<p>No log entries match.</p>"}</div>
-       ${pager(entries.page,entries.pages)}</section></div>${outgoingPanel(row)}</div>`;
-    host.querySelector("[name=selection]").onchange = event => { ui.current = event.target.value; ui.logPage = 1; refresh(host,renderLog); };
-    host.querySelector("[name=filter]").onchange = event => { ui.category = event.target.value; refresh(host,renderLog); };
+       ${filterChips(chips,ui.logFilter,"data-log-filter")}
+       <div class="shift-timeline">${timeline.map(([at,severity,card]) => rowTime(at,severity,shift.timezone,card)).join("")
+         || "<p>No log entries match.</p>"}</div>
+       ${entries.pages > 1 ? pager(entries.page,entries.pages) : ""}</section></div>${outgoingPanel(row)}</div>`;
+    const selection = host.querySelector("[name=selection]");
+    if (selection) selection.onchange = event => { ui.current = event.target.value; ui.logPage = 1; refresh(host,renderLog); };
+    bind(host,"[data-log-filter]", button => { ui.logFilter = button.dataset.logFilter; ui.logPage = 1; return renderLog(host); });
     host.querySelector("[name=revisions]").onchange = event => { ui.revisions = event.target.checked; ui.logPage = 1; refresh(host,renderLog); };
     bind(host,"[data-page]", button => { ui.logPage = Number(button.dataset.page); return renderLog(host); });
     bind(host,"[data-open]",button => openHandover(button.dataset.open));
@@ -6197,10 +6344,13 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const handoverPath = "/handovers/" + id(row.id);
     const sign = host.querySelector("#shift-sign-form");
     let savedSummary = row.summary;
+    if (sign) sign.elements.summary.oninput = () => draftSummaries.set(row.id, sign.elements.summary.value);
     async function preserveSummary() {
-      if (sign && sign.summary.value !== savedSummary) {
-        savedSummary = sign.summary.value;
-        await request("PATCH",handoverPath,{summary:savedSummary,...actor(sign)});
+      if (sign && sign.elements.summary.value !== savedSummary) {
+        const summary = sign.elements.summary.value;
+        await request("PATCH",handoverPath,{summary,...actor(sign)});
+        savedSummary = summary;
+        draftSummaries.delete(row.id);
       }
     }
     bind(host,"[data-remove]",async button => {
@@ -6222,7 +6372,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     }));
     bind(host,"[data-save-summary]",async () => { await preserveSummary(); book()._toast("Handover draft saved."); });
     onForm(host,"#shift-sign-form",async form => {
-      const result = await request("POST",handoverPath + "/sign-off",{summary:form.summary.value,...actor(form)});
+      const result = await request("POST",handoverPath + "/sign-off",{summary:form.elements.summary.value,...actor(form)});
+      draftSummaries.delete(row.id);
       openHandover(result.id);
     });
   }
@@ -6234,6 +6385,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   }
 
   function openHandover(identifier) {
+    ui.incomingFilter = "all";
     book().goto("handoverDetail",{handoverId:identifier});
   }
 
@@ -6245,34 +6397,65 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     const editable = row.status === "signed_off" && lead(row,true);
     const canReturn = row.status === "signed_off" && lead(row,true,false);
     const outgoing = row.outgoing;
-    host.innerHTML = `<section class="shift-banner"><strong>${esc(labelStatus(row.status))}</strong> ·
-      ${esc(outgoing.area_name)} · ${esc(outgoing.name)} · ${esc(outgoing.crew_name)} · Version ${row.version}
-      ${row.ack_due_at ? " · Acknowledge by " + esc(local(row.ack_due_at,outgoing.timezone)) : ""}</section>
+    const seenCount = row.items.filter(item => item.seen_at).length;
+    const questions = new Set(row.comments.filter(message => message.kind === "question").map(message => message.item_id));
+    const questionCount = row.comments.filter(message => message.kind === "question").length;
+    const visibleItems = row.items.filter(item => ui.incomingFilter === "all" ||
+      (ui.incomingFilter === "unseen" && !item.seen_at) || (ui.incomingFilter === "questions" && questions.has(item.id)));
+    const eventLabels = {opened:"opened the handover",signed_off:"signed off",acknowledged:"acknowledged",
+      returned:"returned the handover",question:"asked a question",answer:"answered a question",item_seen:"marked an item seen",
+      item_added:"added an item",item_removed:"removed an item",summary_changed:"updated the summary",
+      reminder_sent:"sent a reminder",escalated:"escalated the handover"};
+    host.innerHTML = `<div class="row spread shift-context"><p>From <strong>${esc(shiftName(outgoing))}</strong>
+      ${outgoing.lead_name ? " lead " + esc(outgoing.lead_name) : ""} · To <strong>${esc(shiftName(row.incoming))}</strong>
+      · ${esc(outgoing.area_name)} · Version ${row.version}</p>${btn("Print / PDF","data-report")}</div>
+      <section class="shift-banner ${row.status === "signed_off" ? "shift-waiting" : ""}">
+      <strong>${row.status === "signed_off" ? (editable ? "Waiting for you" : "Awaiting acknowledgement") : esc(labelStatus(row.status))}</strong>
+      ${row.signed_off_at ? " · Signed off by " + esc(row.signed_off_name) + " at " + esc(clockTime(row.signed_off_at,outgoing.timezone)) : ""}
+      ${row.ack_due_at && row.status === "signed_off" ? " · Acknowledge by " + esc(clockTime(row.ack_due_at,outgoing.timezone))
+        + " (" + row.ack_window_minutes + " min after shift start) or it escalates to the " + esc(row.escalation_role) + "." : ""}</section>
       <div class="shift-layout"><div class="stack">
-      <section class="card"><h3>Outgoing summary</h3><p class="shift-body">${esc(row.summary || "No summary entered.")}</p></section>
-      <section class="card"><h3>Handover items · ${row.items.length}</h3>
-      ${row.items.map(item => `<article class="card shift-entry"><h4>${esc(item.title)}</h4>
-        <p class="shift-meta">${esc(kinds[item.kind])} · ${esc(item.severity)} · ${item.seen_at ? "Seen" : "Unseen"}</p><p class="shift-body">${esc(item.detail)}</p>
+      <section class="card"><div class="row spread"><h3>Outgoing summary</h3>
+      ${row.signed_off_name ? `<small>${esc(row.signed_off_name)} · ${esc(clockTime(row.signed_off_at,outgoing.timezone))}</small>` : ""}</div>
+      <p class="shift-body">${esc(row.summary || "No summary entered.")}</p></section>
+      <section class="card"><div class="row spread"><h3>Handover items</h3><small>${seenCount} of ${row.items.length} seen</small></div>
+      ${filterChips([["all","All",row.items.length],["unseen","Not seen",row.items.length-seenCount],
+        ["questions","Questions",questionCount]],ui.incomingFilter,"data-incoming-filter")}
+      <div class="shift-timeline">${visibleItems.map(item => rowTime(item.event_at,item.severity,outgoing.timezone,
+        `<article class="card shift-entry shift-pinned"><div class="row spread">
+        <p class="shift-meta">${esc(itemKind(item))} · ${esc(item.severity)}</p>
+        ${item.seen_at ? '<small class="shift-seen">✓ Seen</small>' : editable ? btn("Mark seen",`data-seen="${esc(item.id)}"`) : '<small>Unseen</small>'}
+        </div><h4>${esc(item.title)}</h4><p class="shift-body">${esc(item.detail)}</p>
         ${row.comments.filter(msg => msg.item_id === item.id).map(msg =>
-          `<p><strong>${esc(msg.kind)} · ${esc(msg.author_name)}</strong> ${esc(msg.body)}
-          ${msg.kind === "question" && lead(row) ? btn("Answer",`data-answer="${esc(msg.id)}"`) : ""}</p>`).join("")}
-        ${editable ? `<div class="row">${!item.seen_at ? btn("Seen",`data-seen="${esc(item.id)}"`) : ""}
-          ${btn("Ask a question",`data-question="${esc(item.id)}"`)}</div>` : ""}</article>`).join("") || "<p>No items included.</p>"}
-      </section></div><div class="stack"><section class="card"><h3>Handover record</h3>
-      ${row.signed_off_at ? `<p>Signed off by ${esc(row.signed_off_name)} · ${esc(local(row.signed_off_at,outgoing.timezone))}</p>` : ""}
+          `<div class="shift-question"><strong>${esc(msg.author_name)}</strong>
+          <small>${esc(clockTime(msg.created_at,outgoing.timezone))} · ${esc(msg.kind)}</small>
+          <p class="shift-body">${esc(msg.body)}</p>
+          ${msg.kind === "question" && lead(row) ? btn("Answer",`data-answer="${esc(msg.id)}"`) : ""}</div>`).join("")}
+        ${editable ? btn("Ask a question",`data-question="${esc(item.id)}"`) : ""}</article>`
+      )).join("") || "<p>No items match this filter.</p>"}</div></section></div>
+      <aside class="stack">
+      ${editable ? `<section class="card shift-handover"><h3>Acknowledge handover</h3>${stepper(row.status)}
+      <form id="shift-ack-form" class="stack">${nameField()}${textarea("Comment (optional)","comment")}
+      ${submit("Acknowledge")}</form>
+      <p class="shift-meta">${row.items.length - seenCount} unseen items. Unseen items are recorded at acknowledgement.</p>
+      ${canReturn ? `<form id="shift-return-form" class="shift-return stack">
+        ${textarea("Return to outgoing lead · reason required","reason","","required")}
+        ${submit("Return handover")}</form>` : ""}</section>` : ""}
+      <section class="card"><h3>Audit trail</h3>
+      <ul class="shift-audit">${row.audit_events.map(event => `<li><time>${esc(clockTime(event.at,outgoing.timezone))}</time>
+        <span>${esc(event.actor)} ${esc(eventLabels[event.action.split(".").at(-1)] || labelStatus(event.action))}</span></li>`).join("")}</ul>
       ${row.acknowledged_at ? `<p>Acknowledged by ${esc(row.acknowledged_name)} · ${esc(local(row.acknowledged_at,outgoing.timezone))}
       ${row.late ? " · Late" : ""}${row.acknowledged_after_start ? " · After incoming shift start" : ""}</p><p>Unseen at acknowledgement · ${row.unseen_count}</p><p>${esc(row.ack_comment)}</p>` : ""}
       ${row.return_reason ? `<p>Returned by ${esc(row.returned_name)} · ${esc(row.return_reason)}</p>` : ""}
       ${row.snapshot_sha256 ? `<p>Snapshot SHA-256 <code>${esc(row.snapshot_sha256)}</code></p>` : ""}
-      <div class="row">${btn("Print report","data-report")}${row.status === "draft" ? btn("Open shift log","data-outgoing") : ""}</div>
+      ${row.status === "draft" ? btn("Open shift log","data-outgoing") : ""}
       <h4>Versions</h4>${row.versions.map(version => `<p>${btn("Version " + version.version + " · " +
         labelStatus(version.status), `data-version="${esc(version.id)}"`)} ${esc(version.return_reason || "")}</p>`).join("")}
-      </section>
-      ${editable ? `<section class="card"><h3>Acknowledge handover</h3>
-      <p>${row.items.filter(item => !item.seen_at).length} unseen items. Unseen items are recorded at acknowledgement.</p>
-      <form id="shift-ack-form" class="stack">${nameField()}${textarea("Comment (optional)","comment")}
-      <div class="row">${submit("Acknowledge")}${canReturn ? btn("Return","data-return") : ""}</div></form></section>` : ""}
-      </div></div>`;
+      </section></aside></div>`;
+    bind(host,"[data-incoming-filter]",button => {
+      ui.incomingFilter = button.dataset.incomingFilter;
+      return renderHandover(host);
+    });
     bind(host,"[data-report]",() => fileFetch("/api" + path + "/report","",true));
     bind(host,"[data-version]",button => openHandover(button.dataset.version));
     bind(host,"[data-outgoing]",() => { ui.current = row.outgoing_shift_id; book().goto("shiftLog"); });
@@ -6289,10 +6472,10 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       await request("POST","/handover-comments/" + id(button.dataset.answer) + "/answer",{...formData(form),...actor(form)});
       await renderHandover(host);
     }));
-    bind(host,"[data-return]",() => dialogForm("Return handover",nameField() + textarea("Return reason","reason","", "required"),async form => {
-      const draft = await request("POST",path + "/return",{...formData(form),...actor(form)});
+    onForm(host,"#shift-return-form",async form => {
+      const draft = await request("POST",path + "/return",{...formData(form),...actor(ackForm)});
       openHandover(draft.id);
-    }));
+    });
     onForm(host,"#shift-ack-form",async form => {
       await request("POST",path + "/acknowledge",{...formData(form),...actor(form)});
       await renderHandover(host);
@@ -6452,6 +6635,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       const [config, roles] = await Promise.all([get(path),get("/shift-escalation-roles")]);
       designated.innerHTML = section("Handover & escalation",setupForm("handover-settings",
         input("Acknowledge within (minutes)","ack_within_minutes","number",config.ack_within_minutes,'min="1" max="1440" required') +
+        input("Out-of-range reading lookback (days)","reading_lookback_days","number",config.reading_lookback_days,'min="1" max="365" required') +
         select("First escalation role","escalate_to_role",roles.map(role => [role,role]),config.escalate_to_role) +
         input("Sign-off reminder before shift end (minutes)","signoff_reminder_minutes","number",config.signoff_reminder_minutes,
           'min="0" max="1440" required'),"Save settings") +
@@ -6568,7 +6752,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
 
   window.LogentraShifts = {
     views:{
-      shiftLog:() => hostHTML("Shift log","Record operations and prepare the outgoing handover.",
+      shiftLog:() => hostHTML("Shift log and handover","Record operations and prepare the outgoing handover.",
         btn("Shift log history",'data-act="goto" data-view="shiftHistory"')),
       shiftHistory:() => hostHTML("Shift log history","Find entries, amendments and voided records.",
         btn("Current shift",'data-act="goto" data-view="shiftLog"')),

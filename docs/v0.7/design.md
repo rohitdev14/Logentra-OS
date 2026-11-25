@@ -162,33 +162,6 @@ Built-in roles: viewer gets `shiftlog.read`; technician adds `shiftlog.write`, `
 
 ---
 
-## 3. Build estimate vs timeline
-
-| Dates | Work | Estimate |
-|---|---|---|
-| 26–28 Nov | Designs (this package) | done |
-| **Sun 29 Nov** | **Rohit approves design = "start"** | gate |
-| Mon 30 Nov | QR: migration 0008, settings (public URL), codes + rotate, QR SVG | 1 day |
-| Tue 1 Dec | QR: `/q` page, phone sign-in cookie (7 days), CSRF/origin check, session revoke | 1 day |
-| Wed 2 Dec | QR: quick entry (form/table chosen automatically), live flag, idempotent save | 1 day |
-| Thu 3 Dec | QR: photos (shrink on phone, 3 per entry, 2 MB cap), storage meter, backup/restore incl. photos | 1 day |
-| Fri 4 Dec | QR: print-tags screen + 21-up sheet, tests, docs | 1 day |
-| 5–6 Dec | Buffer | |
-| **Mon 7 Dec** | **QR demo + scan video for Vikram's X post**; start shift log: migration 0009, permissions | 0.5 day |
-| Mon 7–Tue 8 Dec | Shifts & rosters (pattern, crews, roster, settings, categories) | 1.5 days |
-| Tue 8–Wed 9 Dec | Shift log feed, entries, links, attachments, amend/void | 1.5 days |
-| Thu 10 Dec | Handover auto-fill, pin/remove, summary, one-click sign-off, snapshot | 1 day |
-| Fri 11 Dec | Acknowledge, seen, questions, return with reason; escalation worker | 1.5 days |
-| 12–13 Dec | Buffer: history/search, printable report, tests | 1 day |
-| **Mon 14 Dec** | **Shift log demo** | |
-| Tue 15 Dec | Fixes from demo, upgrade test from v0.6.1 on PostgreSQL and SQLite | |
-| **Wed 16 Dec** | **Release candidate**: full CI, Docker images, recovery round-trip | |
-| Thu 17 Dec | Soak, release notes | |
-| **Fri 18 Dec** | **v0.7.0 release + website** | |
-
-QR totals about 5 days and fits its week. Shift log and handover totals about 7 days against 5 days plus the weekend buffer; it fits only if the buffer is used.
-**Cut-line if late (move to v0.7.1):** roster "repeat pattern" helper (manual roster only), history filters beyond date/area/text, handover CSV export. Core flow (log, auto-filled handover, sign-off, acknowledge, return, first escalation, printable report) stays in v0.7.0.
-
 ## QR setup and verification
 
 Under **Settings**, set the public URL to the server hostname that phones can reach. In **Equipment → QR tags**, select equipment, choose the first unused label position and preview the layout. Select **Print / Save as PDF** on A4 stock at 100% scale. Confirm before reprinting existing labels, since a reprint retires the previous codes.

@@ -23,7 +23,7 @@ Where this brief and `design.md` differ, **this brief wins**.
 3. **Small commits** with plain messages (e.g. "Add QR codes and retired codes tables"). One logical change each.
 4. **No force push, ever.** No rewriting pushed history. Do not touch branches `checkpoint/*` or `backup/*`.
 5. **Pull request:** open a PR from `feature/v0.7` to `main` for review by Rok. Do not merge it.
-6. **Example data:** generic industrial only (the existing fictional "Northbrook Works", tags like P-101, AHU-12, TK-03, CT-2, B-1). **No GlobalFoundries / GF or any real company content.**
+6. **Example data:** generic industrial only (the existing fictional "Northbrook Works", tags like P-101, AHU-12, TK-03, CT-2, B-1). **No real company content.**
 7. **No donations / sponsor links / funding files** anywhere.
 8. Do not bump to a different version string than `0.7.0`. Do not edit release notes of v0.6.x.
 
