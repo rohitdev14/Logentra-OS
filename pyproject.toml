@@ -31,6 +31,8 @@ dependencies = [
   "openpyxl==3.1.5",
   "python-dotenv==1.2.4",
   "alembic==1.16.5",
+  "segno==1.6.6",
+  "Pillow==13.0.0",
 ]
 
 [project.urls]
@@ -43,3 +45,6 @@ py-modules = ["run"]
 
 [tool.setuptools.packages.find]
 include = ["logentra_server*", "logbook_server*"]
+
+[tool.setuptools.package-data]
+logentra_server = ["templates/*.html"]
