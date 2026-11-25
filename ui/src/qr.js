@@ -237,7 +237,8 @@
     const state = window.Logbook.getState();
     const selection = window.Logbook._ui.logEq;
     const equipment = state.equipmentIndex;
-    return `<h2>Log book</h2><section class="card">
+    return `<div class="row spread"><h2>Log book</h2>
+      ${equipment.length ? '<button type="button" class="btn no-print" data-act="logs-print">Print / PDF</button>' : ""}</div><section class="card">
       ${equipment.length ? `<label class="fld"><span>Equipment</span><select id="history-equipment">${equipment.map(item =>
         `<option value="${esc(item.id)}" ${item.id === selection ? "selected" : ""}>${esc(item.tag)}</option>`
       ).join("")}</select></label><div id="paged-log-history" aria-live="polite">Loading reading history…</div>`
@@ -254,11 +255,12 @@
         const result = await api.listLogs({equipment_id:selection.value,page,page_size:50});
         if (!host.isConnected || requested !== version) return;
         host.innerHTML = `<div class="table-wrap"><table class="data">
-          <thead><tr><th>Date</th><th>Time</th><th>Readings</th><th>Remarks and photos</th></tr></thead>
+          <thead><tr><th>Date</th><th>Time</th><th>Equipment</th><th>Entered by</th><th>Readings</th><th>Remarks and photos</th></tr></thead>
           <tbody>${result.items.map(row => `<tr><td>${esc(row.date)}</td><td>${esc(row.time)}</td>
+          <td>${esc(selection.selectedOptions[0].textContent)}</td><td>${esc(row.enteredBy)}</td>
           <td>${Object.entries(row.readings).map(([key,value]) => esc(key) + ": " + esc(value)).join(" · ")}</td>
-          <td>${esc(row.remarks)}${readingPhotos(row.photos)}</td></tr>`).join("")
-          || '<tr><td colspan="4">No readings for this equipment.</td></tr>'}</tbody></table></div>
+          <td>${row.kind === "note" ? "<strong>Note</strong> " : ""}${esc(row.remarks)}${readingPhotos(row.photos)}</td></tr>`).join("")
+          || '<tr><td colspan="6">No entries for this equipment.</td></tr>'}</tbody></table></div>
           ${result.pages > 1 ? `<div class="row"><button type="button" class="btn" data-history-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>Previous</button>
           <span>Page ${page} of ${result.pages}</span>
           <button type="button" class="btn" data-history-page="${page + 1}" ${page >= result.pages ? "disabled" : ""}>Next</button></div>` : ""}`;

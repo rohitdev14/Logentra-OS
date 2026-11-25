@@ -1,3 +1,4 @@
+import csv
 from datetime import datetime, timezone
 from io import BytesIO
 import json
@@ -190,6 +191,15 @@ def test_quick_entry_and_photos_respect_area_scope(client, monkeypatch, tmp_path
             db.flush()
             headers[area] = {"Authorization": "Bearer " + create_session(db, user.id, kind="phone")[0]}
         browser = {"Authorization": "Bearer " + create_session(db, "Workshop")[0]}
+        allowed_browser = {"Authorization": "Bearer " + create_session(db, "Utilities")[0]}
+        limited_role = Role(id="catalog-role", name="Catalog", permissions='["equipment.read"]',
+                            created_at=now, updated_at=now)
+        db.add(limited_role)
+        db.flush()
+        db.add(User(id="catalog-user", username="Catalog", role_id=limited_role.id, is_active=1,
+                    password_hash="unused", created_at=now, updated_at=now))
+        db.flush()
+        catalog_browser = {"Authorization": "Bearer " + create_session(db, "catalog-user")[0]}
     path = f"/api/qr/{code}/entry"
     body = {"entry_id": str(uuid4()), "values": '{"value_0": "2"}'}
     assert client.post(path, data=body, headers=headers["Workshop"]).status_code == 403
@@ -206,3 +216,35 @@ def test_quick_entry_and_photos_respect_area_scope(client, monkeypatch, tmp_path
     assert not client.get("/api/logs", params={"equipment_id": eq_id}, headers=browser).json()["items"]
     logs = client.get("/api/logs", params={"equipment_id": eq_id}).json()["items"]
     assert logs[0]["photos"] == [{"id": photo, "filename": "pump.png"}]
+
+    note = "Guard inspected with pump stopped."
+    note_id = str(uuid4())
+    body = {"entry_id": note_id, "note": note}
+    assert client.post(path, data=body, headers=headers["Workshop"]).status_code == 403
+    note_saved = client.post(path, data=body, files={"photos": ("guard.png", image.getvalue())},
+                             headers=headers["Utilities"])
+    assert note_saved.status_code == 200, note_saved.text
+    assert note_saved.json()["values"] == []
+    note_photo, = note_saved.json()["photos"]
+    assert client.get(f"/api/readings/photos/{note_photo}", headers=headers["Workshop"]).status_code == 403
+    assert client.get(f"/api/readings/photos/{note_photo}", headers=headers["Utilities"]).content == image.getvalue()
+
+    params = {"equipment_id": eq_id, "q": "Guard inspected", "from": now[:10], "to": now[:10]}
+    scoped = client.get("/api/logs", params=params, headers=allowed_browser).json()
+    assert scoped["total"] == 1
+    item, = scoped["items"]
+    assert (item["kind"], item["remarks"], item["enteredBy"], item["readings"]) == ("note", note, "Utilities", {})
+    assert item["photos"] == [{"id": note_photo, "filename": "guard.png"}]
+    assert not client.get("/api/logs", params=params, headers=browser).json()["items"]
+    assert client.get("/api/logs", params=params, headers=catalog_browser).status_code == 403
+    assert note_id not in [entry["id"] for entry in client.get("/api/bootstrap", headers=catalog_browser).json()["logs"]]
+    first_page = client.get("/api/logs", params={"equipment_id": eq_id, "page_size": 1}, headers=allowed_browser).json()
+    second_page = client.get("/api/logs", params={"equipment_id": eq_id, "page_size": 1, "page": 2},
+                             headers=allowed_browser).json()
+    assert first_page["total"] == second_page["total"] == 2
+    assert {first_page["items"][0]["id"], second_page["items"][0]["id"]} == {note_id, logs[0]["id"]}
+    export = client.get("/api/export/readings.csv", params={"tag": "P-101"}, headers=allowed_browser)
+    exported, = [row for row in csv.DictReader(export.content.decode("utf-8-sig").splitlines()) if row["entry_id"] == note_id]
+    assert (exported["parameter"], exported["remarks"], exported["entered_by"]) == ("Note", note, "Utilities")
+    assert note not in client.get("/api/export/readings.csv", headers=browser).text
+    assert note not in client.get("/api/export/readings.csv", params={"parameter": "value_0"}, headers=allowed_browser).text

@@ -647,15 +647,28 @@
     toast("Equipment table downloaded.");
   }
   function exportLogsTable(fmt) {
+    if (fmt === "csv" && state.meta.paginated) {
+      const api = window.LogbookAPI;
+      api.authenticatedFetch(api.exportUrl("readings.csv")).then(response => response.blob()).then(blob => {
+        download("logbook-logs.csv", blob);
+        toast("Logs table downloaded.");
+      }).catch(error => toast("Export failed: " + error.message));
+      return;
+    }
     const rows = [["tag", "category", "date", "time", "parameter", "label", "value", "unit", "remarks", "enteredBy", "annot_cause", "annot_action", "annot_by", "annot_at"]];
     state.logs.forEach((l) => {
       const eq = eqById(l.equipmentId);
-      if (!eq) return;
-      const params = paramsFor(eq);
+      const tag = eq ? eqTag(eq) : state.equipmentIndex.find(item => item.id === l.equipmentId)?.tag;
+      if (!tag) return;
+      if (l.kind === "note") {
+        rows.push([tag, eqCat(eq), l.date, l.time, "", "Note", "", "", l.remarks || "", l.enteredBy || "", "", "", "", ""]);
+        return;
+      }
+      const params = eq ? paramsFor(eq) : [];
       Object.keys(l.readings || {}).forEach((k) => {
         const p = params.find((x) => x.key === k) || { key: k, label: k, unit: "" };
         const an = annotOf(l, k) || {};
-        rows.push([eqTag(eq), eqCat(eq), l.date, l.time, k, p.label, l.readings[k], p.unit, l.remarks || "", l.enteredBy || "", an.cause || "", an.action || "", an.by || "", an.at || ""]);
+        rows.push([tag, eqCat(eq), l.date, l.time, k, p.label, l.readings[k], p.unit, l.remarks || "", l.enteredBy || "", an.cause || "", an.action || "", an.by || "", an.at || ""]);
       });
     });
     if (fmt === "xlsx") download("logbook-logs.xlsx", XlsxUtil.build("Logs", rows));
@@ -1381,7 +1394,7 @@
     const eqId = ui.logEq || (state.equipment[0] && state.equipment[0].id) || "";
     const eq = eqById(eqId);
     const params = eq ? paramsFor(eq) : [];
-    const entries = eq ? state.logs.filter((l) => l.equipmentId === eq.id).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).reverse() : [];
+    const entries = eq ? state.logs.filter((l) => l.equipmentId === eq.id).sort((a, b) => (b.ts || b.date + "T" + b.time).localeCompare(a.ts || a.date + "T" + a.time)) : [];
     return `
       <div class="row spread">
         <div>
@@ -1389,7 +1402,7 @@
           <p class="page-lead">Daily or shift readings. Parameters are defined per equipment, or copied from a category preset. Limits are optional.</p>
         </div>
       </div>
-      <div class="card">
+      <div class="card no-print">
         <div class="form-grid">
           <label class="fld"><span>Equipment</span>
             <select id="log-eq">${state.equipment.map((e) =>
@@ -1403,7 +1416,7 @@
         </div>
       </div>
       ${eq ? `
-      <div class="card" style="margin-top:1rem">
+      <div class="card no-print" style="margin-top:1rem">
         <h3>New entry</h3>
         <div class="form-grid">
           <label class="fld"><span>Date</span><input id="log-date" type="date" value="${todayISO()}"></label>
@@ -1424,8 +1437,9 @@
         <div class="row" style="margin-top:.8rem"><button class="btn btn-primary" data-act="log-add">Save entry</button></div>
       </div>
       <div class="card" style="margin-top:1rem">
-        <h3>History (${entries.length})</h3>
-        ${entries.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Date</th><th>Time</th>' +
+        <div class="row spread"><h3>History (${entries.length})</h3>
+          <button type="button" class="btn no-print" data-act="logs-print">Print / PDF</button></div>
+        ${entries.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Date</th><th>Time</th><th>Equipment</th><th>Entered by</th>' +
           params.map((p) => "<th>" + esc(p.label) + "</th>").join("") +
           "<th>Remarks</th><th class='no-print'></th></tr></thead><tbody>" +
           entries.map((l) => {
@@ -1435,8 +1449,13 @@
               const noted = annotFilled(annotOf(l, p.key));
               return "<td" + (bad ? " style='color:#b42318;font-weight:700'" : "") + ">" + (v == null || v === "" ? "—" : esc(v)) + (noted ? " *" : "") + "</td>";
             }).join("");
-            return "<tr><td>" + esc(l.date) + "</td><td>" + esc(l.time || "") + "</td>" + cells +
-              "<td>" + esc(l.remarks || "") + window.LogentraQR.readingPhotos(l.photos) + "</td><td class='no-print'><button class='btn btn-sm btn-danger' data-act='log-del' data-id='" + l.id + "'>Delete</button></td></tr>";
+            const note = l.kind === "note";
+            return "<tr><td>" + esc(l.date) + "</td><td>" + esc(l.time || "") + "</td><td>" + esc(eqTag(eq)) +
+              "</td><td>" + esc(l.enteredBy || "") + "</td>" + cells +
+              "<td>" + (note ? "<strong>Note</strong> " : "") + esc(l.remarks || "") +
+              window.LogentraQR.readingPhotos(l.photos) + "</td><td class='no-print'>" +
+              (note ? "" : "<button class='btn btn-sm btn-danger' data-act='log-del' data-id='" + esc(l.id) + "'>Delete</button>") +
+              "</td></tr>";
           }).join("") + "</tbody></table></div>" : '<p class="empty">No entries for this tag yet.</p>'}
       </div>` : '<p class="empty">Add equipment first.</p>'}
     `;
@@ -2262,7 +2281,7 @@
       return;
     }
     if (act === "annot-open") { modalAnnot(btn.dataset.logId, btn.dataset.param); return; }
-    if (act === "trend-print") { window.print(); return; }
+    if (act === "trend-print" || act === "logs-print") { window.print(); return; }
     if (act === "export-json") { exportJSON(); return; }
     if (act === "export-eq-csv") { exportEquipmentTable("csv"); return; }
     if (act === "export-eq-xlsx") { exportEquipmentTable("xlsx"); return; }

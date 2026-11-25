@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, exists, func, or_, tuple_
+from sqlalchemy import and_, exists, func, literal, or_, tuple_
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -22,6 +22,7 @@ from logentra_server.models import (
     ParamPreset,
     Parameter,
     Punch,
+    QREntry,
     Reading,
     ReadingPhoto,
     Record,
@@ -235,6 +236,7 @@ def list_records(
     )
     if equipment_id:
         query = query.filter(Record.equipment_id == equipment_id)
+    scoped_equipment = None
     if principal and principal.scoped:
         scoped_equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
         query = query.filter(Record.equipment_id.in_(scoped_equipment.statement))
@@ -263,6 +265,64 @@ def add_log_photos(db, entries):
     return entries
 
 
+def note_log_query(db, principal=None, *, equipment_id=None, tag=None, ts_from=None, ts_to=None, q=None):
+    """Find QR receipts with evidence but no corresponding reading rows."""
+    pair = (Reading.entry_id == QREntry.id, Reading.equipment_id == QREntry.equipment_id)
+    has_photo = exists().where(ReadingPhoto.entry_id == QREntry.id, ReadingPhoto.equipment_id == QREntry.equipment_id)
+    query = db.query(QREntry).join(Equipment, Equipment.id == QREntry.equipment_id).filter(
+        ~exists().where(*pair), or_(QREntry.note != "", has_photo),
+    )
+    query = apply_scope(query, Equipment, principal)
+    if equipment_id:
+        query = query.filter(QREntry.equipment_id == equipment_id)
+    if tag:
+        query = query.filter(Equipment.tag == tag.strip())
+    if q:
+        query = query.filter(substring_match(q, QREntry.id, QREntry.note))
+    return filter_log_dates(query, func.substr(QREntry.created_at, 1, 19), ts_from, ts_to)
+
+
+def filter_log_dates(query, column, ts_from, ts_to):
+    if ts_from:
+        start = parse_ts(ts=ts_from) if len(ts_from) > 10 else ts_from + "T00:00:00"
+        query = query.filter(column >= start)
+    if ts_to:
+        end = ts_to if len(ts_to) > 10 else ts_to + "T23:59:59"
+        query = query.filter(column <= end)
+    return query
+
+
+def note_log_entry(receipt):
+    date, time = split_ts(receipt.created_at)
+    return {"id": receipt.id, "equipmentId": receipt.equipment_id, "date": date, "time": time,
+            "kind": "note", "ts": receipt.created_at, "remarks": receipt.note, "enteredBy": receipt.entered_by,
+            "readings": {}, "annotations": {}}
+
+
+def group_log_readings(rows):
+    groups = {}
+    for reading in rows:
+        key = reading.entry_id, reading.equipment_id
+        if key not in groups:
+            date, time = split_ts(reading.ts)
+            groups[key] = {"id": reading.entry_id, "equipmentId": reading.equipment_id,
+                           "date": date, "time": time, "ts": reading.ts, "readings": {}, "remarks": "",
+                           "enteredBy": "", "annotations": {}}
+        entry = groups[key]
+        entry["readings"][reading.parameter_key] = reading.value
+        if reading.remarks:
+            entry["remarks"] = reading.remarks
+        if reading.entered_by:
+            entry["enteredBy"] = reading.entered_by
+        annotation = reading.annotation
+        if annotation and (annotation.cause or annotation.action or annotation.annotated_by):
+            entry["annotations"][reading.parameter_key] = {
+                "cause": annotation.cause or "", "action": annotation.action or "",
+                "by": annotation.annotated_by or "", "at": annotation.annotated_at or "",
+            }
+    return groups
+
+
 def list_logs(
     db: Session,
     *,
@@ -274,77 +334,49 @@ def list_logs(
     page_size: int | None = 50,
     principal=None,
 ) -> dict[str, Any]:
-    """Paginate grouped log-book lines (one row per entry_id)."""
+    """Paginate reading groups and note/photo receipts together."""
     page, page_size = clamp_page(page, page_size)
-    entry_q = db.query(Reading.entry_id, func.min(Reading.ts).label("ts"))
+    include_notes = principal is None or principal.can("readings.read")
+    reading_keys = db.query(Reading.entry_id.label("entry_id"), Reading.equipment_id.label("equipment_id"),
+                            func.min(Reading.ts).label("ts"), literal(False).label("is_note"))
+    if principal and principal.scoped:
+        scoped_equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
+        reading_keys = reading_keys.filter(Reading.equipment_id.in_(scoped_equipment.statement))
     if equipment_id:
-        entry_q = entry_q.filter(Reading.equipment_id == equipment_id)
-    def scoped_readings(query):
-        if principal and principal.scoped:
-            equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
-            query = query.filter(Reading.equipment_id.in_(equipment.statement))
-        return query
-
-    entry_q = scoped_readings(entry_q)
-    if ts_from:
-        start = parse_ts(ts=ts_from) if ("T" in ts_from or len(ts_from) > 10) else (ts_from + "T00:00:00")
-        entry_q = entry_q.filter(Reading.ts >= start)
-    if ts_to:
-        end = ts_to if ("T" in ts_to or len(ts_to) > 10) else (ts_to + "T23:59:59")
-        entry_q = entry_q.filter(Reading.ts <= end)
+        reading_keys = reading_keys.filter(Reading.equipment_id == equipment_id)
     if q:
-        entry_q = entry_q.filter(substring_match(q, Reading.entry_id, Reading.parameter_key, Reading.remarks))
-    entry_q = entry_q.group_by(Reading.entry_id)
-    total = int(entry_q.order_by(None).enable_eagerloads(False).count() or 0)
-    page_ids = (
-        entry_q.order_by(func.min(Reading.ts).desc(), Reading.entry_id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
-    ids = [row[0] for row in page_ids]
-    if not ids:
-        return page_result([], total, page, page_size)
-    # Reuse logs_to_ui grouping on just this page of entries
-    rows = (
-        scoped_readings(db.query(Reading))
-        .options(selectinload(Reading.annotation))
-        .filter(Reading.entry_id.in_(ids))
-        .order_by(Reading.ts, Reading.id)
-        .all()
-    )
-    # temporarily group
-    groups: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        if r.entry_id not in groups:
-            date, time = split_ts(r.ts)
-            groups[r.entry_id] = {
-                "id": r.entry_id,
-                "equipmentId": r.equipment_id,
-                "date": date,
-                "time": time,
-                "readings": {},
-                "remarks": r.remarks or "",
-                "enteredBy": r.entered_by or "",
-                "annotations": {},
-            }
-        g = groups[r.entry_id]
-        g["readings"][r.parameter_key] = r.value
-        if r.remarks:
-            g["remarks"] = r.remarks
-        if r.entered_by:
-            g["enteredBy"] = r.entered_by
-        if r.annotation and (r.annotation.cause or r.annotation.action or r.annotation.annotated_by):
-            g["annotations"][r.parameter_key] = {
-                "cause": r.annotation.cause or "",
-                "action": r.annotation.action or "",
-                "by": r.annotation.annotated_by or "",
-                "at": r.annotation.annotated_at or "",
-            }
-    items = [groups[i] for i in ids if i in groups]
-    if principal is None or principal.can("readings.read"):
-        add_log_photos(db, items)
-    return page_result(items, total, page, page_size)
+        reading_keys = reading_keys.filter(substring_match(q, Reading.entry_id, Reading.parameter_key, Reading.remarks))
+    reading_keys = filter_log_dates(reading_keys, Reading.ts, ts_from, ts_to).group_by(
+        Reading.entry_id, Reading.equipment_id)
+    keys = reading_keys
+    if include_notes:
+        note_keys = note_log_query(db, principal, equipment_id=equipment_id, ts_from=ts_from, ts_to=ts_to, q=q)
+        keys = reading_keys.union_all(note_keys.with_entities(
+            QREntry.id, QREntry.equipment_id, func.substr(QREntry.created_at, 1, 19), literal(True)))
+    keys = keys.subquery()
+    total = db.query(func.count()).select_from(keys).scalar()
+    page_rows = db.query(keys).order_by(
+        keys.c.ts.desc(), keys.c.entry_id.desc(), keys.c.equipment_id.desc(), keys.c.is_note,
+    ).offset((page - 1) * page_size).limit(page_size).all()
+    reading_pairs = [(row.entry_id, row.equipment_id) for row in page_rows if not row.is_note]
+    note_ids = [row.entry_id for row in page_rows if row.is_note]
+    readings = {}
+    query = db.query(Reading).options(selectinload(Reading.annotation))
+    if scoped_equipment is not None:
+        query = query.filter(Reading.equipment_id.in_(scoped_equipment.statement))
+    for offset in range(0, len(reading_pairs), 400):
+        readings.update(group_log_readings(query.filter(
+            tuple_(Reading.entry_id, Reading.equipment_id).in_(reading_pairs[offset:offset + 400])
+        ).order_by(Reading.ts, Reading.id)))
+    notes = {receipt.id: note_log_entry(receipt) for receipt in note_log_query(db, principal).filter(
+        QREntry.id.in_(note_ids)
+    )} if note_ids else {}
+    entries = [notes.get(row.entry_id) if row.is_note else readings.get((row.entry_id, row.equipment_id))
+               for row in page_rows]
+    entries = [entry for entry in entries if entry is not None]
+    if include_notes:
+        add_log_photos(db, entries)
+    return page_result(entries, total, page, page_size)
 
 
 def template_to_ui(t: Template) -> dict[str, Any]:
@@ -384,43 +416,14 @@ def record_to_ui(r: Record) -> dict[str, Any]:
     }
 
 
-def logs_to_ui(db: Session, *, include_photos: bool = True) -> list[dict[str, Any]]:
-    q = (
-        db.query(Reading)
-        .options(selectinload(Reading.annotation))
-        .order_by(Reading.ts, Reading.id)
-    )
-    groups: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
-    for r in q:
-        if r.entry_id not in groups:
-            date, time = split_ts(r.ts)
-            groups[r.entry_id] = {
-                "id": r.entry_id,
-                "equipmentId": r.equipment_id,
-                "date": date,
-                "time": time,
-                "readings": {},
-                "remarks": r.remarks or "",
-                "enteredBy": r.entered_by or "",
-                "annotations": {},
-            }
-            order.append(r.entry_id)
-        g = groups[r.entry_id]
-        g["readings"][r.parameter_key] = r.value
-        if r.remarks:
-            g["remarks"] = r.remarks
-        if r.entered_by:
-            g["enteredBy"] = r.entered_by
-        if r.annotation and (r.annotation.cause or r.annotation.action or r.annotation.annotated_by):
-            g["annotations"][r.parameter_key] = {
-                "cause": r.annotation.cause or "",
-                "action": r.annotation.action or "",
-                "by": r.annotation.annotated_by or "",
-                "at": r.annotation.annotated_at or "",
-            }
-    entries = [groups[k] for k in order]
-    return add_log_photos(db, entries) if include_photos else entries
+def logs_to_ui(db: Session, *, include_notes: bool = True) -> list[dict[str, Any]]:
+    readings = db.query(Reading).options(selectinload(Reading.annotation)).order_by(Reading.ts, Reading.id)
+    entries = list(group_log_readings(readings).values())
+    if include_notes:
+        entries.extend(note_log_entry(receipt) for receipt in note_log_query(db))
+        entries.sort(key=lambda row: row["ts"].removesuffix("Z"))
+        add_log_photos(db, entries)
+    return entries
 
 
 def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500, principal=None) -> dict[str, Any]:
@@ -460,7 +463,7 @@ def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500
         )
         records = [record_to_ui(r) for r in rec_query.all()]
         record_total = len(records)
-        logs = logs_to_ui(db, include_photos=principal is None or principal.can("readings.read"))
+        logs = logs_to_ui(db, include_notes=principal is None or principal.can("readings.read"))
     templates = db.query(Template).options(
         selectinload(Template.columns), selectinload(Template.items)
     ).all()

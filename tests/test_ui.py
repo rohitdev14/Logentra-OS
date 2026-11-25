@@ -497,6 +497,34 @@ def test_qr_print_and_phone_quick_entry(live_url, tmp_path, monkeypatch):
         phone.get_by_role("button", name="Create work order").click()
         expect(phone.get_by_role("status").get_by_text("Work order created · Inspect P-101")).to_be_visible()
 
+        phone.goto(f"{live_url}/q/{code}")
+        phone.get_by_label("Your name").fill("Plant operator")
+        note = "Guard inspected with pump stopped."
+        phone.get_by_label("Note", exact=False).fill(note)
+        with phone.expect_file_chooser() as note_picker:
+            phone.get_by_role("button", name="Add photo (0 of 3)", exact=True).click()
+        note_picker.value.set_files({"name": "guard.png", "mimeType": "image/png", "buffer": photo.getvalue()})
+        expect(phone.locator(".photo-list img")).to_have_attribute("alt", "guard.jpg")
+        phone.get_by_role("button", name="Save entry", exact=True).click()
+        expect(phone.locator("#saved-summary")).to_contain_text("0 readings")
+        desktop.reload()
+        desktop.wait_for_function("Logbook.getState().logs.some(entry => entry.kind === 'note')")
+        desktop.evaluate("Logbook.goto('logbook', {logEq:'eq_p101'})")
+        note_row = desktop.get_by_role("row").filter(has_text=note)
+        expect(note_row).to_contain_text("Note")
+        expect(note_row).to_contain_text("Plant operator")
+        expect(note_row).to_contain_text("P-101")
+        note_row.get_by_role("img", name="guard.jpg").evaluate("(image) => image.decode()")
+        desktop.emulate_media(media="print")
+        expect(note_row).to_be_visible()
+        desktop.emulate_media(media="screen")
+        desktop.screenshot(path=str(shots / "desktop-reading-photos.png"), full_page=True)
+        desktop.evaluate("Logbook.goto('backup')")
+        with desktop.expect_download() as downloaded:
+            desktop.get_by_role("button", name="Logs CSV", exact=True).click()
+        assert note in downloaded.value.path().read_text(encoding="utf-8-sig")
+
+
         printed = browser.new_page(viewport={"width":850,"height":1240})
         printed.goto(live_url + "/tags/print?ids=eq_p101,eq_ahu12,eq_m204,eq_tk03&start=3")
         expect(printed.locator(".label")).to_have_count(21)

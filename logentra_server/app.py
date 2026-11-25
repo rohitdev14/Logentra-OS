@@ -29,6 +29,7 @@ from logentra_server.models import (
     AuditLog,
     Document,
     Equipment,
+    QREntry,
     Setting,
     Signoff,
     FieldDefinition,
@@ -511,6 +512,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 an.get("cause"), an.get("action"), an.get("by"), an.get("at"),
                 r["id"], r["entry_id"],
             ])
+        if not parameter:
+            notes = service.note_log_query(db, request.state.principal, tag=tag, ts_from=ts_from, ts_to=ts_to)
+            notes = notes.add_columns(Equipment.tag).order_by(QREntry.created_at, QREntry.id)
+            for receipt, equipment_tag in notes:
+                entry = service.note_log_entry(receipt)
+                w.writerow([equipment_tag, receipt.equipment_id, entry["date"], entry["time"], receipt.created_at,
+                            "Note", None, None, None, 0, 0, receipt.note, receipt.entered_by, "qr",
+                            None, None, None, None, None, receipt.id])
         data = buf.getvalue().encode("utf-8-sig")
         return StreamingResponse(
             io.BytesIO(data), media_type="text/csv",
