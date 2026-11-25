@@ -12,7 +12,7 @@ from logentra_server import events, service, shifts
 from logentra_server.models import Annotation, AuditLog, Equipment, Parameter, Punch, Reading, Record, WorkOrder
 from logentra_server.routers.shift_log import latest_entries
 from logentra_server.routers.shifts import settings_for
-from logentra_server.shift_models import Handover, HandoverComment, HandoverItem, Shift, ShiftLogCategory, ShiftLogEntry
+from logentra_server.shift_models import Handover, HandoverComment, HandoverItem, Shift, ShiftDefinition, ShiftLogCategory, ShiftLogEntry, ShiftPattern
 from logentra_server.utils import parse_ts, uid
 from logentra_server.workorders import OPENISH
 
@@ -113,15 +113,29 @@ def live_candidates(db, shift, now=None):
     config = settings_for(db, shift.site_id)
     cutoff = parse_ts(ts=shifts.utc_text(now - timedelta(days=config.reading_lookback_days)))
     area = (shift.site_id, shift.area_id)
-    oor = db.query(Reading, Equipment.tag, Parameter.label).select_from(Reading).join(Equipment, Equipment.id == Reading.equipment_id).outerjoin(
+    definition = db.get(ShiftDefinition, shift.shift_definition_id)
+    zone = shifts.timezone_for(db.get(ShiftPattern, definition.pattern_id).timezone)
+    oor = db.query(Reading, Equipment.tag, Parameter.label, Parameter.unit).select_from(Reading).join(Equipment, Equipment.id == Reading.equipment_id).outerjoin(
         Parameter, (Parameter.equipment_id == Reading.equipment_id) & (Parameter.key == Reading.parameter_key)
     ).outerjoin(Annotation, Annotation.reading_id == Reading.id).filter(
         Equipment.site_id == area[0], Equipment.area_id == area[1], Reading.out_of_range == 1,
         Annotation.id.is_(None), Reading.ts >= cutoff, Reading.ts <= parse_ts(ts=shifts.utc_text(now)),
     ).order_by(Reading.ts.desc(), Reading.id)
-    for reading, tag, label in oor:
+    for reading, tag, label, unit in oor:
+        timestamp = datetime.fromisoformat(reading.ts)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        clock = timestamp.astimezone(zone).strftime("%H:%M")
+        value = f"{reading.value:g} {unit}" if unit else f"{reading.value:g}"
+        detail = f"{value} at {clock}"
+        if reading.limit_min is not None and reading.value < reading.limit_min:
+            detail += f" (limit min {reading.limit_min:g})"
+        elif reading.limit_max is not None and reading.value > reading.limit_max:
+            detail += f" (limit max {reading.limit_max:g})"
+        if reading.remarks:
+            detail += f". {reading.remarks}"
         yield ("oor_reading", reading.id, f"{tag} · {label or reading.parameter_key}",
-               f"{reading.value:g} at {reading.ts}. {reading.remarks or ''}".strip(), "high", True, reading.ts, None)
+               detail, "high", True, reading.ts, None)
     orders = db.query(WorkOrder).filter(
         WorkOrder.site_id == area[0], WorkOrder.area_id == area[1],
         WorkOrder.priority.in_(("urgent", "high")), WorkOrder.status.in_(OPENISH),

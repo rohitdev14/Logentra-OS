@@ -165,3 +165,27 @@ def test_reading_lookback_uses_site_setting(client):
     assert response.status_code == 200, response.text
     updated = client.get(path).json()
     assert not {item["ref_id"] for item in updated["items"]} & {"reading_3_days", "reading_9_days"}
+
+
+def test_reading_detail_uses_recorded_limits_and_site_time(client):
+    from logentra_server.models import Parameter
+    from logentra_server.shift_models import Shift, ShiftPattern
+
+    shift = rostered_shift(client)
+    seeded_evidence(client)
+    with client.app.state.SessionLocal.begin() as db:
+        db.query(ShiftPattern).one().timezone = "Asia/Singapore"
+        parameter = db.query(Parameter).filter_by(equipment_id="eq_pump", key="vibration").one()
+        parameter.unit, parameter.min_value, parameter.max_value = "mm/s", 2.0, 4.5
+        db.flush()
+        for identifier, value in (("high-reading", 6.2), ("low-reading", 1.1)):
+            service.ingest_readings(db, [{"id": identifier, "equipment_id": "eq_pump", "parameter": "vibration",
+                                         "value": value, "ts": "2026-11-25T13:22:00Z"}], commit=False)
+        parameter.max_value = 10
+        db.flush()
+        row = db.get(Shift, shift["id"])
+        details = {item[1]: item[3] for item in handovers.live_candidates(
+            db, row, datetime(2026, 11, 25, 14, tzinfo=timezone.utc)
+        )}
+    assert details["high-reading"] == "6.2 mm/s at 21:22 (limit max 4.5)"
+    assert details["low-reading"] == "1.1 mm/s at 21:22 (limit min 2)"
