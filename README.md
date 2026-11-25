@@ -7,7 +7,7 @@ The logbook that stays yours.
 [![Tests](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml/badge.svg)](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**v0.6.1.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
+**v0.7.0.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
 
 **Logentra OS** is **Log**book + **Eng**ineering + **Tra**ceability. It is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
 
@@ -18,6 +18,9 @@ It runs on your machine. There is no hosted account.
 ![Dashboard (dark)](docs/images/dashboard-dark.png)
 
 ## Features
+
+- **Equipment QR tags** with A4 label sheets and phone quick entry for readings, notes, and photos
+- **Shift log and handover** with crew rosters, append-only entries, versioned sign-off, acknowledgement, return, and escalation
 
 - **Equipment register** with user-defined columns (text, number, date, dropdown) and spreadsheet-like grid editing
 - **Record templates** you design yourself (commissioning, inspection, maintenance, or anything else): custom rows and result columns, instantiate per asset, punches, sign-off, print
@@ -39,6 +42,8 @@ It runs on your machine. There is no hosted account.
 ![Work orders](docs/images/work-orders-light.png)
 
 ![Approvals](docs/images/approvals-light.png)
+
+[QR phone entry](docs/v0.7/images/qr-phone-entry.png) · [Print QR tags](docs/v0.7/images/qr-print-tags.png) · [Outgoing shift log](docs/v0.7/images/handover-outgoing.png) · [Incoming handover](docs/v0.7/images/handover-incoming.png)
 
 ## Quick start
 

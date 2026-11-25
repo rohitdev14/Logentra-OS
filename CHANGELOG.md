@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.7.0 – QR tags and shift handover
+
+- Print equipment QR tags on A4 21-up sheets. Scanning a tag opens the equipment's phone entry form or compact table with live limit checks, notes, photo uploads, and revocable phone sign-in.
+- Configure site shift patterns, crews, rosters, log categories, and handover timers. The append-only shift log supports amendments and attachments, with automatic handover items for out-of-range readings, priority work orders and open punch items.
+- Sign off a frozen version of the handover, mark items seen, ask and answer questions, acknowledge with unseen items or return with a reason. In-app and webhook notifications cover reminders and escalation. History is searchable and handovers can be printed or exported to CSV.
+- Alembic applies `0008_qr_tags` and `0009_shift_handover` on startup. Back up the database and attachments before upgrading. See [upgrade and setup](docs/v0.7/OPERATIONS.md).
+
 ## 0.6.1 – maintenance update
 
 Upgrading from 0.6.0 needs no database changes: pull the new version, rebuild, and run `docker compose up -d` as before.
