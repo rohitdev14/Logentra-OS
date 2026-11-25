@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import httpx
 import pytest
@@ -161,10 +160,12 @@ def test_tls_proxy_qualification(tmp_path, db_url):
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
                     "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
                     "-keyout", str(key), "-out", str(certificate)], check=True, capture_output=True)
-    source = Path("deployment/nginx.conf").read_text()
+    env = {**os.environ, "LOGENTRA_PUBLIC_HOST": "localhost logbook.plant.local 192.168.1.50 [2001:db8::50]"}
+    source = subprocess.run(["sh", "deployment/render-nginx.sh", "deployment/nginx.conf"],
+                            env=env, check=True, text=True, capture_output=True).stdout
     source = source.replace("/run/logentra-nginx.pid", str(tmp_path / "nginx.pid"))
     source = source.replace("listen 443 ssl", f"listen 127.0.0.1:{tls_port} ssl")
-    source = source.replace("logentra.example.com", "localhost").replace("127.0.0.1:8787", f"127.0.0.1:{app_port}")
+    source = source.replace("app:8787", f"127.0.0.1:{app_port}")
     source = source.replace("/etc/logentra/tls/fullchain.pem", str(certificate))
     source = source.replace("/etc/logentra/tls/privkey.pem", str(key))
     config = tmp_path / "nginx.conf"
@@ -194,8 +195,11 @@ def test_tls_proxy_qualification(tmp_path, db_url):
                 time.sleep(.1)
             else:
                 pytest.fail("TLS proxy failed to reach production readiness")
+            for host in ("LOGBOOK.PLANT.LOCAL", "logbook.plant.local:58443", "192.168.1.50",
+                         "192.168.1.50:58443", "[2001:DB8::50]", "[2001:db8::50]:58443"):
+                assert client.get("/api/ready", headers={"Host": host}).status_code == 200, host
             with pytest.raises(httpx.RemoteProtocolError):
-                client.get("/api/ready", headers={"Host": "unknown.invalid"})
+                client.get("/api/ready", headers={"Host": "unknown.invalid:58443"})
             response = client.get("/api/bootstrap")
             assert response.status_code == 401
             assert response.headers["strict-transport-security"] == "max-age=31536000"

@@ -26,15 +26,18 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    environment:
+      LOGENTRA_PUBLIC_HOST: ${LOGENTRA_PUBLIC_HOST:?Set LOGENTRA_PUBLIC_HOST to the hostname or IP users open}
     command:
       - /bin/sh
       - -ec
       - |
-        sed 's@127.0.0.1:8787@app:8787@g' /etc/logentra/nginx.conf > /etc/nginx/nginx.conf
+        sh /etc/logentra/render-nginx.sh /etc/logentra/nginx.conf > /etc/nginx/nginx.conf
         exec nginx -g 'daemon off;'
     ports:
       - "${LOGENTRA_TLS_BIND:-127.0.0.1}:${LOGENTRA_TLS_PORT:-8443}:443"
     volumes:
+      - ./deployment/render-nginx.sh:/etc/logentra/render-nginx.sh:ro
       - ./deployment/nginx.conf:/etc/logentra/nginx.conf:ro
       - ${LOGENTRA_TLS_DIRECTORY:?Set the TLS certificate directory}:/etc/logentra/tls:ro
     networks: [ingress]

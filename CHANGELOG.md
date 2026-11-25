@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file.
 - Sign off a frozen version of the handover, mark items seen, ask and answer questions, acknowledge with unseen items or return with a reason. In-app and webhook notifications cover reminders and escalation. History is searchable and handovers can be printed or exported to CSV.
 - Alembic applies `0008_qr_tags` and `0009_shift_handover` on startup. Back up the database and attachments before upgrading. See [upgrade and setup](docs/v0.7/OPERATIONS.md).
 
+**Upgrading the HTTPS profile.** Set `LOGENTRA_PUBLIC_HOST` to the hostnames or IPs users open before starting the production Compose overlay. Use spaces between hosts and omit ports. See the [HTTPS upgrade instructions](docs/v0.7/OPERATIONS.md#upgrading-the-https-profile).
+
 ## 0.6.1 – maintenance update
 
 Upgrading from 0.6.0 needs no database changes: pull the new version, rebuild, and run `docker compose up -d` as before.

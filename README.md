@@ -102,6 +102,10 @@ curl -s -X POST http://127.0.0.1:8787/api/migrate/v2 \
 
 Then open **Trends**, choose equipment **P-210** and parameter **Vibration**. You should see four daily points from 10–13 March 2026. The 12 March 08:00 point sits above the 4.5 mm/s max line, is flagged out of range, and shows the operator note (cause, action, initials, and time) in the annotations table under the chart.
 
+## Deployment
+
+**Upgrading the HTTPS profile.** Set `LOGENTRA_PUBLIC_HOST` in the Compose environment or `.env` before upgrading with `compose.production.yaml`. List the hostnames or IPs users open, separated by spaces and without ports. See the [HTTPS upgrade instructions](docs/v0.7/OPERATIONS.md#upgrading-the-https-profile).
+
 ## v0.6.1
 
 A maintenance update to v0.6.0: one-command backup and restore with Docker Compose, friendlier sign-in limits, clear "already exists" messages, and faster lists on larger servers. The application reports v0.6.1. See the [changelog](CHANGELOG.md).
