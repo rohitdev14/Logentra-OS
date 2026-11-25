@@ -92,7 +92,7 @@ class HTTPSecurity:
         scope.setdefault("state", {})["request_id"] = request_id
         started = time.monotonic()
         peer = (scope.get("client") or ("",))[0]
-        is_login = scope["path"].rstrip("/") == "/api/auth/login" and scope["method"] == "POST"
+        is_login = scope["path"].rstrip("/") in {"/api/auth/login", "/q/login"} and scope["method"] == "POST"
         login_key = self.client_key(peer, headers) if is_login else ""
 
         async def secured_send(message):

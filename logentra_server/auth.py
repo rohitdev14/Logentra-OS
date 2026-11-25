@@ -245,6 +245,8 @@ def authenticate(
         # Opaque session token
         tok = db.query(SessionToken).filter(SessionToken.token_hash == hash_token(raw)).one_or_none()
         if tok:
+            if tok.revoked_at:
+                raise HTTPException(status_code=401, detail="Session revoked")
             if tok.expires_at and tok.expires_at <= utcnow_iso():
                 raise HTTPException(status_code=401, detail="Session expired")
             user = db.get(User, tok.user_id)
@@ -275,7 +277,8 @@ def authenticate(
     return Principal(mode="open", username=actor_hint or "api", role_name="admin")
 
 
-def create_session(db: Session, user_id: str, *, days: int = 7) -> tuple[str, str]:
+def create_session(db: Session, user_id: str, *, days: int = 7,
+                   kind: str = "browser", label: str | None = None) -> tuple[str, str]:
     from logentra_server.models import SessionToken
 
     raw = new_session_token()
@@ -286,6 +289,8 @@ def create_session(db: Session, user_id: str, *, days: int = 7) -> tuple[str, st
         id=uid("ses"),
         user_id=user_id,
         token_hash=hash_token(raw),
+        kind=kind,
+        label=label,
         created_at=utcnow_iso(),
         expires_at=expires_s,
         last_used_at=utcnow_iso(),

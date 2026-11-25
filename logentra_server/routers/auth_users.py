@@ -83,35 +83,40 @@ def _site_dict(s: Site) -> dict[str, Any]:
     }
 
 
+_DUMMY_LOGIN_HASH = hash_password("invalid-login-placeholder")
+
+
+def verify_login(db, username, password):
+    username = username.strip()
+    if not username or not password:
+        raise HTTPException(400, "username and password are required")
+    user = (
+        db.query(User)
+        .options(selectinload(User.role))
+        .filter(User.username == username)
+        .one_or_none()
+    )
+    valid = verify_password(password, user.password_hash if user else _DUMMY_LOGIN_HASH)
+    if not user or not user.is_active or not valid:
+        raise HTTPException(401, "Invalid username or password")
+    if int(user.password_hash.split("$")[1]) < PBKDF2_ITERATIONS:
+        user.password_hash = hash_password(password)
+    db.query(SessionToken).filter(
+        SessionToken.user_id == user.id, SessionToken.expires_at <= utcnow_iso()
+    ).delete()
+    return user
+
+
 def build_router(get_db, get_principal, settings) -> APIRouter:
     router = APIRouter()
 
     def current(principal: Principal = Depends(get_principal)) -> Principal:
         return principal
 
-    dummy_hash = hash_password("invalid-login-placeholder")
-
     # ---------- auth (login is public; /me requires a principal) ----------
     @router.post("/api/auth/login", tags=["auth"], summary="Exchange username and password for a session token")
     def login(body: LoginIn, db: Session = Depends(get_db)):
-        username = body.username.strip()
-        password = body.password
-        if not username or not password:
-            raise HTTPException(400, "username and password are required")
-        user = (
-            db.query(User)
-            .options(selectinload(User.role))
-            .filter(User.username == username)
-            .one_or_none()
-        )
-        valid = verify_password(password, user.password_hash if user else dummy_hash)
-        if not user or not user.is_active or not valid:
-            raise HTTPException(401, "Invalid username or password")
-        if int(user.password_hash.split("$")[1]) < PBKDF2_ITERATIONS:
-            user.password_hash = hash_password(password)
-        db.query(SessionToken).filter(
-            SessionToken.user_id == user.id, SessionToken.expires_at <= utcnow_iso()
-        ).delete()
+        user = verify_login(db, body.username, body.password)
         raw, expires = create_session(db, user.id, days=getattr(settings, "session_days", 7) or 7)
         user.last_login_at = utcnow_iso()
         service.audit(db, "login", actor=user.username, user_id=user.id, entity_type="user", entity_id=user.id)

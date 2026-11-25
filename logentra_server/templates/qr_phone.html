@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quick entry · Logentra OS</title>
+<style>
+:root{color-scheme:light dark;--bg:#eef3f8;--panel:#fff;--ink:#17283a;--soft:#465b71;--line:#ccd7e2;--brand:#123759;--action:#096c63;--danger:#993c20;--ok:#166045}
+@media(prefers-color-scheme:dark){:root{--bg:#151c25;--panel:#202b36;--ink:#eef5fa;--soft:#b5c7d8;--line:#415466;--brand:#122943;--action:#19796e;--danger:#ffb18a;--ok:#72d8ae}}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--ink);font:16px system-ui,sans-serif}
+header{background:var(--brand);color:#fff;padding:16px max(16px,calc((100% - 500px)/2));display:flex;justify-content:space-between;gap:1em}
+main{max-width:532px;padding:16px;margin:auto}section,fieldset{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:16px;min-width:0}
+h1,h2,p{margin:0 0 .65em}h1{font-size:24px}h2{font-size:18px}small,.muted{color:var(--soft)}
+label{display:block;font-weight:600;margin-bottom:5px}input,textarea,button,.button{font:inherit;border-radius:8px}input:not([type=checkbox]),textarea{width:100%;min-height:44px;padding:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);margin-bottom:8px}
+textarea{resize:vertical}button,.button{display:inline-block;min-height:44px;padding:10px 14px;border:1px solid transparent;background:var(--action);color:#fff;font-weight:650;cursor:pointer;text-decoration:none}
+button[type=submit]{width:100%}button:disabled{opacity:.65}header button{min-height:auto;padding:0;background:transparent;text-decoration:underline}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:6px 3px;text-align:left;border-bottom:1px solid var(--line)}td:last-child{width:34%}
+.flag{font-size:13px;color:var(--ok)}.flag[data-warn],.error{color:var(--danger)}.error{white-space:pre-wrap}.values{margin-bottom:12px}
+</style>
+<header><strong>Logentra OS</strong><button type="button" id="signout" hidden>Sign out</button></header>
+<main>@@CONTENT@@</main>
+<script type="application/json" id="phone-data">@@DATA@@</script>
+<script>
+const data = JSON.parse(document.getElementById("phone-data").textContent);
+const form = document.querySelector("form");
+const error = document.getElementById("error");
+const csrf = {"X-CSRF-Token": data.csrf};
+
+async function post(url, body, headers = {}) {
+  const response = await fetch(url, {method:"POST", body, headers:{...csrf, ...headers}});
+  const result = await response.json();
+  if (response.status === 401 && url !== "/q/login") {
+    location.reload();
+    throw new Error("Sign in again to continue");
+  }
+  if (!response.ok) {
+    const detail = result.detail;
+    throw new Error(typeof detail === "string" ? detail : Object.entries(detail || {}).map(([key, value]) =>
+      typeof value === "string" ? (data.parameters?.find(p => p.key === key)?.label || key) + ": " + value : value.msg
+    ).join("\n") || "Request failed");
+  }
+  return result;
+}
+
+function uuid() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join("-");
+}
+
+async function shrink(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const scale = Math.min(1, 1600 / Math.max(image.width, image.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    canvas.getContext("2d", {alpha:false}).drawImage(image, 0, 0, canvas.width, canvas.height);
+    let photo;
+    for (const quality of [0.8,0.65,0.5,0.35]) {
+      photo = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (photo && photo.size <= 320000) break;
+    }
+    if (!photo) throw new Error("Could not encode image");
+    return photo;
+  } catch (_) {
+    throw new Error("Could not read " + file.name + ". Choose a photo your browser can open.");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function bindSubmit(handler) {
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = form.querySelector("button[type=submit]");
+    if (button.disabled) return;
+    button.disabled = true;
+    error.textContent = "";
+    try { await handler(); }
+    catch (failure) { error.textContent = failure.message; }
+    finally { button.disabled = false; }
+  });
+}
+
+if (data.screen === "login") {
+  bindSubmit(async () => {
+    await post("/q/login", JSON.stringify({
+      username:form.username.value, password:form.password.value,
+      keep_signed_in:form.keep_signed_in.checked
+    }), {"Content-Type":"application/json"});
+    location.reload();
+  });
+}
+
+if (data.screen === "entry") {
+  const entryId = uuid();
+  if (data.open) {
+    try { form.entered_by.value = localStorage.getItem("logentra-phone-name") || ""; } catch (_) {}
+  } else {
+    const logout = document.getElementById("signout");
+    logout.hidden = false;
+    logout.onclick = async () => {
+      try { await post("/q/logout"); location.reload(); }
+      catch (failure) { error.textContent = failure.message; }
+    };
+  }
+  const inputs = [...form.querySelectorAll("[data-parameter]")];
+  inputs.forEach(input => input.addEventListener("input", () => {
+    const parameter = data.parameters[Number(input.dataset.parameter)];
+    const flag = document.getElementById("flag-" + input.dataset.parameter);
+    const value = Number(input.value.trim().replace(",", "."));
+    const valid = input.value.trim() && Number.isFinite(value);
+    const warn = valid && ((parameter.min !== "" && value < parameter.min)
+      || (parameter.max !== "" && value > parameter.max));
+    flag.textContent = valid ? (warn ? "Out of range" : "OK") : "";
+    flag.toggleAttribute("data-warn", Boolean(warn));
+  }));
+  bindSubmit(async () => {
+    const body = new FormData();
+    body.set("entry_id", entryId);
+    body.set("note", form.note.value);
+    if (data.open) {
+      body.set("entered_by", form.entered_by.value);
+      try { localStorage.setItem("logentra-phone-name", form.entered_by.value); } catch (_) {}
+    }
+    body.set("values", JSON.stringify(Object.fromEntries(inputs.map(input =>
+      [data.parameters[Number(input.dataset.parameter)].key, input.value]))));
+    const photos = [...form.photos.files];
+    if (photos.length > data.photoLimit) throw new Error("Attach at most " + data.photoLimit + " photos");
+    for (const file of photos) body.append("photos", await shrink(file), file.name.replace(/\.[^.]+$/, "") + ".jpg");
+    const saved = await post("/api/qr/" + data.code + "/entry", body);
+    form.hidden = true;
+    document.getElementById("done").hidden = false;
+    document.getElementById("saved-summary").textContent =
+      saved.values.length + " readings · " + saved.values.filter(value => value.out_of_range).length +
+      " out of range · " + saved.photos.length + " photos";
+  });
+}
+</script>
+</html>
