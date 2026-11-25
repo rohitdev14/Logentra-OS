@@ -236,7 +236,6 @@ def list_records(
     )
     if equipment_id:
         query = query.filter(Record.equipment_id == equipment_id)
-    scoped_equipment = None
     if principal and principal.scoped:
         scoped_equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
         query = query.filter(Record.equipment_id.in_(scoped_equipment.statement))
@@ -339,6 +338,7 @@ def list_logs(
     include_notes = principal is None or principal.can("readings.read")
     reading_keys = db.query(Reading.entry_id.label("entry_id"), Reading.equipment_id.label("equipment_id"),
                             func.min(Reading.ts).label("ts"), literal(False).label("is_note"))
+    scoped_equipment = None
     if principal and principal.scoped:
         scoped_equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
         reading_keys = reading_keys.filter(Reading.equipment_id.in_(scoped_equipment.statement))
