@@ -7,9 +7,9 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from logentra_server import shifts
-from logentra_server.models import Role
+from logentra_server.models import Role, User
 from logentra_server.shift_models import (
-    Crew, CrewMember, RosterEntry, ShiftDefinition, ShiftLogCategory, ShiftPattern, SiteHandoverSettings,
+    Crew, CrewMember, RosterEntry, Shift, ShiftDefinition, ShiftLogCategory, ShiftPattern, SiteHandoverSettings,
 )
 from logentra_server.utils import uid, utcnow_iso
 
@@ -66,6 +66,7 @@ class RosterIn(BaseModel):
 
 
 class RosterRepeat(BaseModel):
+    site_id: str | None = None
     first_date: date
     last_date: date
     interval_days: int = Field(7, ge=1, le=90)
@@ -166,6 +167,18 @@ def build_router(get_db, get_principal):
             setattr(row, field, value)
         return shifts.changed(db, principal, row, "shift_definition")
 
+    @router.get("/shift-roster-users")
+    def roster_users(site: str, db: Session = Depends(get_db), principal=Depends(manager)):
+        shifts.site_for(db, site, principal)
+        query = db.query(User).filter(User.is_active == 1, or_(User.site_id == site, User.site_id.is_(None)))
+        if principal.area_id:
+            query = query.filter(or_(User.area_id == principal.area_id, User.area_id.is_(None)))
+        return [{"id": row.id, "name": row.display_name or row.username} for row in query.order_by(User.username)]
+
+    @router.get("/shift-escalation-roles")
+    def escalation_roles(db: Session = Depends(get_db), principal=Depends(manager)):
+        return [name for (name,) in db.query(Role.name).order_by(Role.name)]
+
     @router.get("/crews")
     def crews(db: Session = Depends(get_db), principal=Depends(manager)):
         query = db.query(Crew)
@@ -245,6 +258,9 @@ def build_router(get_db, get_principal):
         )
         if body.area_id:
             query = query.filter(RosterEntry.area_id == body.area_id)
+        if body.site_id:
+            shifts.site_for(db, body.site_id, principal)
+            query = query.filter(ShiftPattern.site_id == body.site_id)
         source = query.all()
         if len(source) * body.repetitions > 2000:
             raise HTTPException(422, "Repeat at most 2,000 roster entries at a time")
@@ -311,10 +327,23 @@ def build_router(get_db, get_principal):
 
     @router.get("/shifts/current")
     def current(area: str | None = None, db: Session = Depends(get_db), principal=Depends(reader)):
-        rows = shifts.current_shifts(db, datetime.now(timezone.utc), principal, area)
+        now = datetime.now(timezone.utc)
+        rows = shifts.current_shifts(db, now, principal, area)
         db.flush()
+        query = db.query(Shift).filter(
+            Shift.ends_at <= shifts.utc_text(now),
+            Shift.status.in_(("active", "handover_draft", "returned")),
+        )
+        if principal.site_id:
+            query = query.filter_by(site_id=principal.site_id)
+        if area or principal.area_id:
+            query = query.filter_by(area_id=principal.area_id or area)
+        if principal.mode != "open" and not principal.can("shifts.manage"):
+            query = query.filter_by(lead_user_id=principal.user_id) if principal.user_id else query.filter(False)
+        recent = query.order_by(Shift.ends_at.desc()).limit(25).all()
         result = [shifts.describe_shift(db, row) for row in rows]
+        older = [shifts.describe_shift(db, row) for row in recent]
         db.commit()
-        return {"items": result}
+        return {"items": result, "recent": older}
 
     return router

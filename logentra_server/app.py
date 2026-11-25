@@ -21,8 +21,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from logentra_server.http_security import HTTPSecurity, read_upload
 
-from logentra_server import __version__, demo, events, migrate, mqtt_worker, seed, service
-from logentra_server.routers import auth_users, documents, qr, readings, shift_log, shifts, work_orders
+from logentra_server import __version__, demo, events, handovers as handover_service, migrate, mqtt_worker, seed, service
+from logentra_server.routers import auth_users, documents, handovers, qr, readings, shift_log, shifts, work_orders
 from logentra_server.config import Settings, load_settings
 from logentra_server.database import init_db, make_engine, make_session_factory
 from logentra_server.models import (
@@ -89,6 +89,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.delivery_worker = delivery
         app.state.mqtt_connected = mqtt_connected
         delivery.start()
+        escalation = handover_service.EscalationWorker(SessionLocal)
+        escalation.start()
         try:
             import anyio
             anyio.to_thread.current_default_thread_limiter().total_tokens = settings.threadpool_size
@@ -100,6 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if mqtt_client:
                 mqtt_client.disconnect()
                 mqtt_client.loop_stop()
+            escalation.stop()
             delivery.stop()
             engine.dispose()
 
@@ -235,6 +238,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(qr.build_router(get_db, get_principal, settings))
     app.include_router(shifts.build_router(get_db, get_principal))
     app.include_router(shift_log.build_router(get_db, get_principal, settings))
+    app.include_router(handovers.build_router(get_db, get_principal))
     app.include_router(work_orders.build_router(get_db, get_principal, settings))
     app.include_router(readings.build_router(get_db, perm, settings, actor_name))
     app.include_router(documents.build_router(get_db, get_principal, settings))

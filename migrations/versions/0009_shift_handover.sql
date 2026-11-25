@@ -165,6 +165,8 @@ CREATE TABLE handover_items (
     detail TEXT NOT NULL,
     severity TEXT NOT NULL,
     auto BOOLEAN NOT NULL DEFAULT false,
+    pinned BOOLEAN NOT NULL DEFAULT false,
+    removed_manually BOOLEAN NOT NULL DEFAULT false,
     removed_at TEXT,
     removed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
     seen_by TEXT REFERENCES users(id) ON DELETE SET NULL,

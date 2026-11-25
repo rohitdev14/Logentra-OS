@@ -107,3 +107,58 @@ def test_qr_migration_round_trip(tmp_path):
     assert "qr_code" not in {col["name"] for col in schema.get_columns("equipment")}
     run_migrations(engine)
     assert "reading_photos" in inspect(engine).get_table_names()
+
+
+def test_postgres_shift_constraints_and_downgrade():
+    import os
+    from uuid import uuid4
+
+    import pytest
+    from sqlalchemy import create_engine, make_url
+    from sqlalchemy.exc import DBAPIError
+
+    source = os.getenv("LOGENTRA_TEST_POSTGRES")
+    if not source:
+        pytest.skip("Set LOGENTRA_TEST_POSTGRES for database trigger verification")
+    name = "shift_" + uuid4().hex
+    admin = create_engine(source, isolation_level="AUTOCOMMIT", hide_parameters=True)
+    with admin.connect() as conn:
+        conn.exec_driver_sql(f"CREATE DATABASE {name}")
+    engine = make_engine(make_url(source).set(database=name).render_as_string(hide_password=False))
+    try:
+        run_migrations(engine)
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO sites (id,name,created_at) VALUES ('site','Northbrook Works','2026')"))
+            conn.execute(text("INSERT INTO shift_patterns VALUES ('pattern','site','Utilities','UTC','2026','2026')"))
+            conn.execute(text("INSERT INTO shift_definitions VALUES ('definition','pattern','A','Day','07:00',720,0)"))
+            conn.execute(text("INSERT INTO crews VALUES ('crew','site','Crew A')"))
+            conn.execute(text("""INSERT INTO shifts (id,site_id,shift_definition_id,date,starts_at,ends_at,crew_id,status)
+                              VALUES ('shift','site','definition','2026-11-25','2026-11-25T07:00:00Z',
+                                      '2026-11-25T19:00:00Z','crew','active')"""))
+            conn.execute(text("""INSERT INTO shift_log_entries
+                              (id,shift_id,event_at,recorded_at,category_id,severity,title,body,author_name,version)
+                              VALUES ('entry','shift','2026','2026','shift_cat_1','info','Pump inspection','','Operator',1)"""))
+            conn.execute(text("""INSERT INTO handovers
+                              (id,outgoing_shift_id,site_id,version,status,summary,signed_off_at,snapshot_json,snapshot_sha256)
+                              VALUES ('handover','shift','site',1,'signed_off','','2026','{}','hash')"""))
+        for statement, message in (
+            ("UPDATE shift_log_entries SET title='Changed' WHERE id='entry'", "append-only"),
+            ("DELETE FROM shift_log_entries WHERE id='entry'", "append-only"),
+            ("UPDATE handovers SET snapshot_json='changed' WHERE id='handover'", "immutable"),
+            ("DELETE FROM handovers WHERE id='handover'", "retained"),
+        ):
+            with pytest.raises(DBAPIError, match=message), engine.begin() as conn:
+                conn.execute(text(statement))
+        with engine.begin() as conn:
+            cfg = alembic_config(engine.url.render_as_string(hide_password=False))
+            cfg.attributes["connection"] = conn
+            command.downgrade(cfg, "0007_performance")
+        assert "shift_log_entries" not in inspect(engine).get_table_names()
+        assert "reading_photos" not in inspect(engine).get_table_names()
+        run_migrations(engine)
+        assert "shift_log_entries" in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.exec_driver_sql(f"DROP DATABASE {name} WITH (FORCE)")
+        admin.dispose()

@@ -179,6 +179,8 @@ class HandoverItem(Base):
     detail: Mapped[str] = mapped_column(Text)
     severity: Mapped[str] = mapped_column(Text)
     auto: Mapped[bool] = mapped_column(Boolean, server_default='false')
+    pinned: Mapped[bool] = mapped_column(Boolean, server_default='false')
+    removed_manually: Mapped[bool] = mapped_column(Boolean, server_default='false')
     removed_at: Mapped[str | None] = mapped_column(Text)
     removed_by: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
     seen_by: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))

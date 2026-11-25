@@ -120,11 +120,7 @@ def materialize(db, slot, now, principal=None):
     roster, definition, pattern, start, end = slot
     current = db.query(Shift).filter_by(shift_definition_id=definition.id, date=roster.date,
                                        area_id=roster.area_id).one_or_none()
-    if current:
-        if current.status == "planned" and start <= now:
-            current.status = "active"
-            current.opened_at = utc_text(now)
-            audited(db, principal, "shift.started", "shift", current.id)
+    if current and current.status != "planned":
         return current
     lead = roster.lead_user_id
     if not lead:
@@ -134,6 +130,14 @@ def materialize(db, slot, now, principal=None):
         lead = next((user.id for user in candidates if (not user.area_id or user.area_id == roster.area_id)
                      and (not user.site_id or user.site_id == pattern.site_id)), None)
     started = start <= now
+    if current:
+        current.starts_at, current.ends_at = utc_text(start), utc_text(end)
+        current.crew_id, current.lead_user_id = roster.crew_id, lead
+        if started:
+            current.status = "active"
+            current.opened_at = utc_text(now)
+            audited(db, principal, "shift.started", "shift", current.id)
+        return current
     insert = sqlite_insert if db.get_bind().dialect.name == "sqlite" else postgres_insert
     current = db.execute(insert(Shift).values(
         id=uid("shift"), site_id=pattern.site_id, area_id=roster.area_id,
@@ -153,14 +157,22 @@ def current_shifts(db, now, principal=None, area=None):
     day = now.date()
     first = (day - timedelta(days=3)).isoformat()
     last = (day + timedelta(days=2)).isoformat()
-    matches = []
+    instant = utc_text(now)
+    query = db.query(Shift).filter(Shift.starts_at <= instant, Shift.ends_at > instant, Shift.status != "planned")
+    if area:
+        query = query.filter(Shift.area_id == area)
+    query = service.apply_scope(query, Shift, principal)
+    matches = {row.id: row for row in query}
+    existing_slots = {(row.shift_definition_id, row.date, row.area_id) for row in matches.values()}
     for slot in slots(db, first, last, area=area, site=principal.site_id if principal else None):
-        roster, _, pattern, start, end = slot
+        roster, definition, pattern, start, end = slot
         if principal and not principal.allows_scope(pattern.site_id, roster.area_id):
             continue
-        if start <= now < end:
-            matches.append(materialize(db, slot, now, principal))
-    return sorted(matches, key=lambda row: (row.area_id or "", row.starts_at), reverse=True)
+        slot_key = (definition.id, roster.date, roster.area_id)
+        if slot_key not in existing_slots and start <= now < end:
+            row = materialize(db, slot, now, principal)
+            matches[row.id] = row
+    return sorted(matches.values(), key=lambda row: (row.area_id or "", row.starts_at), reverse=True)
 
 
 def next_shift(db, outgoing, now):
