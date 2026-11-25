@@ -1377,6 +1377,7 @@
   }
 
   function viewLogbook() {
+    if (state.meta.paginated) return window.LogentraQR.pagedReadingHistory();
     const eqId = ui.logEq || (state.equipment[0] && state.equipment[0].id) || "";
     const eq = eqById(eqId);
     const params = eq ? paramsFor(eq) : [];
@@ -1435,10 +1436,7 @@
               return "<td" + (bad ? " style='color:#b42318;font-weight:700'" : "") + ">" + (v == null || v === "" ? "—" : esc(v)) + (noted ? " *" : "") + "</td>";
             }).join("");
             return "<tr><td>" + esc(l.date) + "</td><td>" + esc(l.time || "") + "</td>" + cells +
-              "<td>" + esc(l.remarks || "") + (l.photos?.length ? '<div class="log-photos">' + l.photos.map(photo =>
-                '<button type="button" class="btn" data-reading-photo="' + esc(photo.id) + '" aria-label="Open photo ' +
-                esc(photo.filename) + '"><img loading="lazy" alt="' + esc(photo.filename) + '"></button>'
-              ).join("") + '</div>' : "") + "</td><td class='no-print'><button class='btn btn-sm btn-danger' data-act='log-del' data-id='" + l.id + "'>Delete</button></td></tr>";
+              "<td>" + esc(l.remarks || "") + window.LogentraQR.readingPhotos(l.photos) + "</td><td class='no-print'><button class='btn btn-sm btn-danger' data-act='log-del' data-id='" + l.id + "'>Delete</button></td></tr>";
           }).join("") + "</tbody></table></div>" : '<p class="empty">No entries for this tag yet.</p>'}
       </div>` : '<p class="empty">Add equipment first.</p>'}
     `;

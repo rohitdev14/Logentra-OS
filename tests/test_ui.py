@@ -315,8 +315,14 @@ def test_browser_retains_catalog_edit_on_conflict(live_url):
         browser.close()
 
 
-def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path):
+def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path, monkeypatch):
     import socket
+    from io import BytesIO
+    from uuid import uuid4
+    from PIL import Image
+    from logentra_server import qr_entries
+
+    monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path / "attachments")
 
     from fastapi.testclient import TestClient
     from playwright.sync_api import sync_playwright
@@ -344,6 +350,17 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path):
             {"id": "browser-denied", "values": {"fld_tag": "BR-DENIED"}},
         ):
             assert client.post("/api/equipment", headers=admin, json=item).status_code == 201
+        assert client.patch("/api/equipment/browser-allowed", headers=admin, json={
+            "params": [{"key": "vibration", "label": "Vibration"}],
+        }).status_code == 200
+        issued = client.post("/api/equipment/qr-codes", headers=admin, json={"ids": ["browser-allowed"]}).json()
+        code = issued["codes"]["browser-allowed"]
+        image = BytesIO()
+        Image.new("RGB", (8, 8)).save(image, "PNG")
+        saved_photo = client.post(f"/api/qr/{code}/entry", headers=admin,
+                                  data={"entry_id": str(uuid4()), "values": '{"vibration":2.0}'},
+                                  files={"photos": ("scoped.png", image.getvalue(), "image/png")})
+        assert saved_photo.status_code == 200, saved_photo.text
         assert client.post("/api/templates", headers=admin, json={
             "id": "browser-template", "name": "Scoped checklist", "kind": "custom",
         }).status_code == 201
@@ -384,6 +401,11 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path):
             recovered = page.request.get(url + "/api/records", headers=admin).json()[0]
             assert recovered["notes"] == "Scoped browser update"
             assert recovered["equipmentId"] == "browser-allowed"
+            page.evaluate("Logbook.goto('logbook')")
+            assert page.locator("#history-equipment option").all_text_contents() == ["BR-ALLOWED"]
+            photo = page.get_by_role("button", name="Open photo scoped.png").locator("img")
+            photo.wait_for()
+            photo.evaluate("(image) => image.decode()")
             browser.close()
     finally:
         server.should_exit = True

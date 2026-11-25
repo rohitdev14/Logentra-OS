@@ -226,8 +226,56 @@
     } catch (error) { host.textContent = error.message; }
   }
 
-  function bindReadingPhotos() {
-    document.querySelectorAll("[data-reading-photo]").forEach(button => {
+  function readingPhotos(photos) {
+    return photos?.length ? '<div class="log-photos">' + photos.map(photo =>
+      `<button type="button" class="btn" data-reading-photo="${esc(photo.id)}" aria-label="Open photo ${esc(photo.filename)}">
+      <img loading="lazy" alt="${esc(photo.filename)}"></button>`
+    ).join("") + '</div>' : "";
+  }
+
+  function pagedReadingHistory() {
+    const state = window.Logbook.getState();
+    const selection = window.Logbook._ui.logEq;
+    const equipment = state.equipmentIndex;
+    return `<h2>Log book</h2><section class="card">
+      ${equipment.length ? `<label class="fld"><span>Equipment</span><select id="history-equipment">${equipment.map(item =>
+        `<option value="${esc(item.id)}" ${item.id === selection ? "selected" : ""}>${esc(item.tag)}</option>`
+      ).join("")}</select></label><div id="paged-log-history" aria-live="polite">Loading reading history…</div>`
+      : "<p>No equipment available.</p>"}</section>`;
+  }
+
+  function bindPagedReadingHistory(host) {
+    const selection = document.getElementById("history-equipment");
+    let version = 0;
+    async function load(page) {
+      const requested = ++version;
+      host.textContent = "Loading reading history…";
+      try {
+        const result = await api.listLogs({equipment_id:selection.value,page,page_size:50});
+        if (!host.isConnected || requested !== version) return;
+        host.innerHTML = `<div class="table-wrap"><table class="data">
+          <thead><tr><th>Date</th><th>Time</th><th>Readings</th><th>Remarks and photos</th></tr></thead>
+          <tbody>${result.items.map(row => `<tr><td>${esc(row.date)}</td><td>${esc(row.time)}</td>
+          <td>${Object.entries(row.readings).map(([key,value]) => esc(key) + ": " + esc(value)).join(" · ")}</td>
+          <td>${esc(row.remarks)}${readingPhotos(row.photos)}</td></tr>`).join("")
+          || '<tr><td colspan="4">No readings for this equipment.</td></tr>'}</tbody></table></div>
+          ${result.pages > 1 ? `<div class="row"><button type="button" class="btn" data-history-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>Previous</button>
+          <span>Page ${page} of ${result.pages}</span>
+          <button type="button" class="btn" data-history-page="${page + 1}" ${page >= result.pages ? "disabled" : ""}>Next</button></div>` : ""}`;
+        host.querySelectorAll("[data-history-page]").forEach(button => {
+          button.onclick = () => load(Number(button.dataset.historyPage));
+        });
+        bindReadingPhotos(host);
+      } catch (error) {
+        if (host.isConnected && requested === version) host.textContent = error.message;
+      }
+    }
+    selection.onchange = () => { window.Logbook._ui.logEq = selection.value; load(1); };
+    load(1);
+  }
+
+  function bindReadingPhotos(root = document) {
+    root.querySelectorAll("[data-reading-photo]").forEach(button => {
       const path = "/api/readings/photos/" + encodeURIComponent(button.dataset.readingPhoto);
       const image = button.querySelector("img");
       const load = () => api.authenticatedFetch(path).then(response => response.blob());
@@ -250,13 +298,18 @@
   }
 
   window.LogentraQR = {
+    readingPhotos, pagedReadingHistory,
     views:{qrTags:viewTags, settings:viewSettings, profile:() =>
       '<h2>Profile</h2><section class="card"><h3>Phone sessions</h3><div id="qr-own-sessions"></div></section>'},
     bind(view) {
       previewObserver?.disconnect();
       document.getElementById("qr-profile").hidden = window.Logbook.getState().me?.mode !== "user";
       if (view === "qrTags") bindTags();
-      if (view === "logbook") bindReadingPhotos();
+      if (view === "logbook") {
+        const history = document.getElementById("paged-log-history");
+        if (history) bindPagedReadingHistory(history);
+        else bindReadingPhotos();
+      }
       if (view === "settings") bindSettings(document.getElementById("qr-url-form"));
       if (view === "profile") sessions(document.getElementById("qr-own-sessions"));
       if (view === "backup" && window.LogbookV4.can("settings.manage")) storage(document.getElementById("qr-storage"));
