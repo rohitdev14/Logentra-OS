@@ -81,15 +81,26 @@ jobs:
           token=$(docker compose exec -T app python run.py create-admin --username ci-admin --password ci-admin-pass >/dev/null && \
             curl -s -X POST -H 'Content-Type: application/json' -d '{"username":"ci-admin","password":"ci-admin-pass"}' \
             http://127.0.0.1:8787/api/auth/login | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          curl --fail --silent -X POST -H "Authorization: Bearer $token" http://127.0.0.1:8787/api/demo >/dev/null
           printf 'restore round trip' > evidence.txt
           did=$(curl -s -H "Authorization: Bearer $token" -F file=@evidence.txt -F title=CI \
             http://127.0.0.1:8787/api/documents | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          code=$(curl --fail --silent -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d '{"ids":["eq_p101"]}' http://127.0.0.1:8787/api/equipment/qr-codes | \
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["codes"]["eq_p101"])')
+          printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGPkCatlYGBgYmBgYGBgAAAKLQDjwA+xCwAAAABJRU5ErkJggg==' | base64 -d > reading.png
+          entry_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
+          photo=$(curl --fail --silent -H "Authorization: Bearer $token" \
+            -F "entry_id=$entry_id" -F 'note=Cooling pump inspection' -F photos=@reading.png \
+            "http://127.0.0.1:8787/api/qr/$code/entry" | python3 -c 'import json,sys; print(json.load(sys.stdin)["photos"][0])')
           docker compose stop app
           docker compose --profile recovery run --rm recovery backup /backups/ci
           docker compose --profile recovery run --rm recovery restore /backups/ci --replace
           docker compose start app
           docker compose up -d --wait app
           test "$(curl -s -H "Authorization: Bearer $token" http://127.0.0.1:8787/api/documents/$did/file)" = "restore round trip"
+          curl --fail --silent -H "Authorization: Bearer $token" "http://127.0.0.1:8787/api/readings/photos/$photo" > restored-reading.png
+          cmp reading.png restored-reading.png
       - name: Verify PostgreSQL profile startup
         env:
           LOGENTRA_POSTGRES_PASSWORD: ci-test-only
