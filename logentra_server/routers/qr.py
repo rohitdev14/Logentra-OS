@@ -3,6 +3,7 @@ from html import escape
 from io import BytesIO
 from secrets import choice
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import segno
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -12,10 +13,10 @@ from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from logentra_server import qr_entries, qr_phone, service
+from logentra_server import qr_entries, qr_phone, service, workorders
 from logentra_server.auth import Principal, create_session, hash_token
-from logentra_server.models import Area, Equipment, QRRetiredCode, Reading, ReadingPhoto, SessionToken, Setting, User
-from logentra_server.phone_auth import PHONE_COOKIE, csrf_token, phone_principal, require_csrf
+from logentra_server.models import Area, Equipment, QREntry, QRRetiredCode, Reading, ReadingPhoto, SessionToken, Setting, User
+from logentra_server.phone_auth import PHONE_COOKIE, phone_principal, require_csrf
 from logentra_server.routers.auth_users import LoginIn, verify_login
 from logentra_server.utils import utcnow_iso
 
@@ -111,7 +112,7 @@ def current_equipment(db, code, principal):
 def render_label(equipment, area, base_url, *, preview=False):
     address = f"{base_url}/q/{equipment.qr_code}" if not preview else "https://example.invalid/label-preview"
     stream = BytesIO()
-    segno.make_qr(address, error="m").save(stream, kind="svg", xmldecl=False, svgns=False, border=4)
+    segno.make_qr(address, error="m").save(stream, kind="svg", xmldecl=False, svgns=False, border=4, omitsize=True)
     svg = stream.getvalue().decode()
     name = next((field.value for field in equipment.values if field.field.key == "name"), "") or ""
     return (
@@ -141,6 +142,13 @@ display:grid;grid-template-columns:repeat(3,63.5mm);grid-template-rows:repeat(7,
 .label small{font-size:7pt;line-height:1.2;display:block;margin-top:1mm}
 @media print{body{background:white}.sheet{margin:0;break-after:page}.sheet:last-child{break-after:auto}.label{outline:none}}
 </style>""" + sheets + "</html>"
+
+
+class PhoneWorkOrder(BaseModel):
+    entry_id: UUID
+    title: str = Field(min_length=1, max_length=250)
+    description: str = Field("", max_length=5000)
+    priority: str = Field("medium", max_length=20)
 
 
 class PhoneLogin(LoginIn):
@@ -245,7 +253,6 @@ def build_router(get_db, get_principal, settings):
                     {}, status=410,
                 )
             return qr_phone.render_phone(request, "<section><h1>QR tag not found</h1></section>", {}, status=404)
-        token = csrf_token(request)
         try:
             principal = phone_principal(db, request, settings)
             principal.require("readings.read", "readings.write")
@@ -253,8 +260,8 @@ def build_router(get_db, get_principal, settings):
         except HTTPException as error:
             if error.status_code == 401:
                 return qr_phone.render_phone(
-                    request, qr_phone.equipment_card(equipment.tag, "", "") + qr_phone.login_form(),
-                    {"screen": "login", "csrf": token},
+                    request, qr_phone.equipment_card(equipment.tag, "", "") + qr_phone.login_form(settings.phone_session_days, request.url.scheme == "https"),
+                    {"screen": "login"},
                 )
             return qr_phone.render_phone(
                 request, "<section><h1>You are not allowed to log readings for this area</h1></section>",
@@ -264,9 +271,10 @@ def build_router(get_db, get_principal, settings):
         db.commit()
         open_mode = principal.mode == "open"
         content = qr_phone.equipment_card(summary["tag"], summary["name"], summary["area"])
-        content += qr_phone.reading_form(summary, open_mode=open_mode, photo_limit=settings.photos_per_entry)
+        content += qr_phone.reading_form(summary, open_mode=open_mode, photo_limit=settings.photos_per_entry,
+                                         can_create_work=principal.can("workorders.create"))
         return qr_phone.render_phone(
-            request, content, {**summary, "screen": "entry", "csrf": token, "open": open_mode,
+            request, content, {**summary, "screen": "entry", "open": open_mode,
                                "photoLimit": settings.photos_per_entry},
         )
 
@@ -290,6 +298,28 @@ def build_router(get_db, get_principal, settings):
         return await qr_entries.save_entry(db, equipment, principal, settings, entry_id, values, note,
                                            entered_by, photos)
 
+    @router.post("/api/qr/{code}/work-order", status_code=201)
+    def raise_work_order(code: str, body: PhoneWorkOrder, request: Request, db: Session = Depends(get_db)):
+        principal = phone_principal(db, request, settings, write=True)
+        principal.require("workorders.create")
+        equipment = current_equipment(db, code, principal)
+        receipt = db.get(QREntry, str(body.entry_id))
+        if not receipt or receipt.equipment_id != equipment.id:
+            raise HTTPException(404, "Quick entry not found")
+        reading = db.query(Reading).filter_by(entry_id=receipt.id, equipment_id=equipment.id, source="qr").order_by(
+            Reading.out_of_range.desc(), Reading.id
+        ).first()
+        try:
+            row = workorders.create_work_order(db, {
+                "title": body.title, "description": body.description, "priority": body.priority,
+                "equipment_id": equipment.id, "site_id": equipment.site_id, "area_id": equipment.area_id,
+                "linked_reading_id": reading.id if reading else None,
+            }, actor=receipt.entered_by if principal.mode == "open" else principal.actor,
+                user_id=principal.user_id, source="qr")
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return {"id": row.id, "title": row.title}
+
     @router.get("/api/readings/photos/{pid}")
     def get_photo(pid: str, request: Request, db: Session = Depends(get_db)):
         principal = phone_principal(db, request, settings)
@@ -305,7 +335,7 @@ def build_router(get_db, get_principal, settings):
                             content_disposition_type="inline")
 
     @router.get("/api/storage")
-    def storage(db: Session = Depends(get_db), principal: Principal = Depends(get_principal)):
+    def storage(principal: Principal = Depends(get_principal)):
         principal.require("settings.manage")
         totals = {}
         for label, folder in (("reading_photos", "readings"), ("shift_log_attachments", "shiftlog"),

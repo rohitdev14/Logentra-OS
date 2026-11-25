@@ -1,5 +1,6 @@
 """Phone-cookie authentication restricted to quick-entry endpoints."""
-from hmac import compare_digest
+from hmac import compare_digest, digest
+import re
 from secrets import token_urlsafe
 from urllib.parse import urlsplit
 
@@ -12,13 +13,29 @@ PHONE_COOKIE = "logentra_phone"
 CSRF_COOKIE = "logentra_phone_csrf"
 
 
-def csrf_token(request):
-    return request.cookies.get(CSRF_COOKIE) or token_urlsafe(32)
+def csrf_secret(request):
+    cookie = request.cookies.get(CSRF_COOKIE, "")
+    return cookie if re.fullmatch(r"[A-Za-z0-9_-]{43}", cookie) else token_urlsafe(32)
 
 
-def set_csrf_cookie(response, request, token):
-    response.set_cookie(CSRF_COOKIE, token, httponly=True, samesite="lax",
+def csrf_token(secret):
+    nonce = token_urlsafe(16)
+    signature = digest(secret.encode(), nonce.encode(), "sha256").hex()
+    return f"{nonce}.{signature}"
+
+
+def set_csrf_cookie(response, request, secret):
+    response.set_cookie(CSRF_COOKIE, secret, httponly=True, samesite="lax",
                         secure=request.url.scheme == "https")
+
+
+def valid_csrf(sent, secret):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43}", secret):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9_-]{22}\.[a-f0-9]{64}", sent):
+        return False
+    nonce, signature = sent.split(".")
+    return compare_digest(signature, digest(secret.encode(), nonce.encode(), "sha256").hex())
 
 
 def require_csrf(request):
@@ -32,8 +49,7 @@ def require_csrf(request):
         )
     except ValueError:
         same_origin = False
-    if (not same_origin or not sent or not expected or not sent.isascii()
-            or not expected.isascii() or not compare_digest(sent, expected)):
+    if not same_origin or not valid_csrf(sent, expected):
         raise HTTPException(403, "Reload the QR page and try again")
 
 

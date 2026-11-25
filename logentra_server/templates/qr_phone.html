@@ -4,14 +4,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Quick entry · Logentra OS</title>
 <style>
-:root{color-scheme:light dark;--bg:#eef3f8;--panel:#fff;--ink:#17283a;--soft:#465b71;--line:#ccd7e2;--brand:#123759;--action:#096c63;--danger:#993c20;--ok:#166045}
-@media(prefers-color-scheme:dark){:root{--bg:#151c25;--panel:#202b36;--ink:#eef5fa;--soft:#b5c7d8;--line:#415466;--brand:#122943;--action:#19796e;--danger:#ffb18a;--ok:#72d8ae}}
+:root{color-scheme:light dark;--bg:#f2f3f7;--panel:#fff;--ink:#191b27;--soft:#566173;--line:#d8dce6;--brand:#28236b;--action:#5245db;--danger:#993c20;--ok:#166045}
+@media(prefers-color-scheme:dark){:root{--bg:#151c25;--panel:#202b36;--ink:#eef5fa;--soft:#b5c7d8;--line:#415466;--brand:#122943;--action:#5147bd;--danger:#ffb18a;--ok:#72d8ae}}
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--ink);font:16px system-ui,sans-serif}
 header{background:var(--brand);color:#fff;padding:16px max(16px,calc((100% - 500px)/2));display:flex;justify-content:space-between;gap:1em}
 main{max-width:532px;padding:16px;margin:auto}section,fieldset{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:16px;min-width:0}
 h1,h2,p{margin:0 0 .65em}h1{font-size:24px}h2{font-size:18px}small,.muted{color:var(--soft)}
 label{display:block;font-weight:600;margin-bottom:5px}input,textarea,button,.button{font:inherit;border-radius:8px}input:not([type=checkbox]),textarea{width:100%;min-height:44px;padding:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);margin-bottom:8px}
-textarea{resize:vertical}button,.button{display:inline-block;min-height:44px;padding:10px 14px;border:1px solid transparent;background:var(--action);color:#fff;font-weight:650;cursor:pointer;text-decoration:none}
+textarea{resize:vertical}select{font:inherit;margin-bottom:12px;padding:8px}details{margin:12px 0}summary{cursor:pointer}#saved-values{padding-left:1.2em}button,.button{display:inline-block;min-height:44px;padding:10px 14px;border:1px solid transparent;background:var(--action);color:#fff;font-weight:650;cursor:pointer;text-decoration:none}
 button[type=submit]{width:100%}button:disabled{opacity:.65}header button{min-height:auto;padding:0;background:transparent;text-decoration:underline}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:6px 3px;text-align:left;border-bottom:1px solid var(--line)}td:last-child{width:34%}
 .flag{font-size:13px;color:var(--ok)}.flag[data-warn],.error{color:var(--danger)}.error{white-space:pre-wrap}.values{margin-bottom:12px}
 </style>
@@ -138,6 +138,37 @@ if (data.screen === "entry") {
     document.getElementById("saved-summary").textContent =
       saved.values.length + " readings · " + saved.values.filter(value => value.out_of_range).length +
       " out of range · " + saved.photos.length + " photos";
+    const values = document.getElementById("saved-values");
+    for (const savedValue of saved.values) {
+      const parameter = data.parameters.find(item => item.key === savedValue.parameter);
+      const item = document.createElement("li");
+      item.textContent = (parameter?.label || savedValue.parameter) + " · " + savedValue.value +
+        (parameter?.unit ? " " + parameter.unit : "") + (savedValue.out_of_range ? " · Out of range" : "");
+      if (savedValue.out_of_range) item.className = "error";
+      values.append(item);
+    }
+    const work = document.getElementById("work-form");
+    if (work) {
+      const raise = document.getElementById("raise-work");
+      raise.onclick = () => { work.hidden = false; raise.hidden = true; work.elements.title.focus(); };
+      work.elements.title.value = "Inspect " + data.tag;
+      work.elements.description.value = saved.note;
+      work.onsubmit = async event => {
+        event.preventDefault();
+        const button = work.querySelector("button[type=submit]");
+        button.disabled = true;
+        const feedback = document.getElementById("work-error");
+        feedback.textContent = "";
+        try {
+          const order = await post("/api/qr/" + data.code + "/work-order",
+            JSON.stringify({...Object.fromEntries(new FormData(work)), entry_id: saved.entry_id}),
+            {"Content-Type":"application/json"});
+          work.hidden = true;
+          document.getElementById("work-result").textContent = "Work order created · " + order.title;
+        } catch (failure) { feedback.textContent = failure.message; }
+        finally { button.disabled = false; }
+      };
+    }
   });
 }
 </script>

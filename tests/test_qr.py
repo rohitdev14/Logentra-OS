@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 from io import BytesIO
+import json
+import re
 from uuid import uuid4
 
 from PIL import Image
@@ -21,8 +23,10 @@ def equipment(client, count=1):
     return eid, issued.json()["codes"][eid]
 
 
-def csrf(client):
-    return {"Origin": str(client.base_url).rstrip("/"), "X-CSRF-Token": client.cookies["logentra_phone_csrf"]}
+def csrf(client, code="ABCDEFGH"):
+    page = client.get(f"/q/{code}")
+    data = re.search(r'<script type="application/json" id="phone-data">(.*?)</script>', page.text).group(1)
+    return {"Origin": str(client.base_url).rstrip("/"), "X-CSRF-Token": json.loads(data)["csrf"]}
 
 
 def test_code_rotation_and_label_sheet(client):
@@ -32,6 +36,7 @@ def test_code_rotation_and_label_sheet(client):
     sheet = client.get("/tags/print", params={"ids": eid, "start": 5})
     assert sheet.status_code == 200, sheet.text
     assert sheet.text.count('class="label') == 21
+    assert "viewBox=" in sheet.text
     assert sheet.text.count('class="label blank"') == 20
     assert sheet.text.index("P-101") > sheet.text.index("<svg")
     replacement = client.post(f"/api/equipment/{eid}/qr-code/rotate").json()["code"]
@@ -56,21 +61,21 @@ def test_quick_entry_photo_and_idempotency(client, tmp_path, monkeypatch):
     Image.new("RGB", (10, 10)).save(image, "PNG")
     photo = image.getvalue()
     assert client.post(path, data=body).status_code == 403
-    assert client.post(path, data=body, headers={**csrf(client), "Origin": "http://example.invalid"}).status_code == 403
-    invalid = client.post(path, data={**body, "values": '{"value_0":"bad"}'}, headers=csrf(client))
+    assert client.post(path, data=body, headers={**csrf(client, code), "Origin": "http://example.invalid"}).status_code == 403
+    invalid = client.post(path, data={**body, "values": '{"value_0":"bad"}'}, headers=csrf(client, code))
     assert invalid.status_code == 422
     assert "value_0" in invalid.json()["detail"]
     files = [("photos", ("photo.png", photo, "image/png"))]
-    assert client.post(path, data=body, files=files * 4, headers=csrf(client)).status_code == 422
+    assert client.post(path, data=body, files=files * 4, headers=csrf(client, code)).status_code == 422
     assert client.post(path, data=body, files={"photos": ("bad.png", b"invalid", "image/png")},
-                       headers=csrf(client)).status_code == 422
+                       headers=csrf(client, code)).status_code == 422
     assert client.post(path, data=body, files={"photos": ("big.png", b"x" * 2097153, "image/png")},
-                       headers=csrf(client)).status_code == 413
-    saved = client.post(path, data=body, files=files, headers=csrf(client))
+                       headers=csrf(client, code)).status_code == 413
+    saved = client.post(path, data=body, files=files, headers=csrf(client, code))
     assert saved.status_code == 200, saved.text
     value, = saved.json()["values"]
     assert value["value"] == 6.2 and value["out_of_range"]
-    assert client.post(path, data=body, files=files, headers=csrf(client)).json() == saved.json()
+    assert client.post(path, data=body, files=files, headers=csrf(client, code)).json() == saved.json()
     pid, = saved.json()["photos"]
     assert client.get(f"/api/readings/photos/{pid}").content == photo
     assert client.get("/api/storage").json()["reading_photos"] == {"files": 1, "bytes": len(photo)}
