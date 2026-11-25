@@ -76,6 +76,7 @@ class RosterRepeat(BaseModel):
 
 class HandoverSettingsIn(BaseModel):
     ack_within_minutes: int = Field(30, ge=1, le=1440)
+    reading_lookback_days: int = Field(7, ge=1, le=365)
     escalate_to_role: str = Field("supervisor", min_length=1, max_length=100)
     signoff_reminder_minutes: int = Field(15, ge=0, le=1440)
 

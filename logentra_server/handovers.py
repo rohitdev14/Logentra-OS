@@ -9,11 +9,11 @@ from fastapi import HTTPException
 from sqlalchemy import update
 
 from logentra_server import events, service, shifts
-from logentra_server.models import Annotation, Equipment, Parameter, Punch, Reading, Record, WorkOrder
+from logentra_server.models import Annotation, AuditLog, Equipment, Parameter, Punch, Reading, Record, WorkOrder
 from logentra_server.routers.shift_log import latest_entries
 from logentra_server.routers.shifts import settings_for
-from logentra_server.shift_models import Handover, HandoverComment, HandoverItem, Shift, ShiftLogEntry
-from logentra_server.utils import uid
+from logentra_server.shift_models import Handover, HandoverComment, HandoverItem, Shift, ShiftLogCategory, ShiftLogEntry
+from logentra_server.utils import parse_ts, uid
 from logentra_server.workorders import OPENISH
 
 log = logging.getLogger("logentra.handover")
@@ -108,57 +108,63 @@ def draft(db, shift, now, principal=None):
     return row
 
 
-def live_candidates(db, shift):
+def live_candidates(db, shift, now=None):
+    now = now or datetime.now(timezone.utc)
+    config = settings_for(db, shift.site_id)
+    cutoff = parse_ts(ts=shifts.utc_text(now - timedelta(days=config.reading_lookback_days)))
     area = (shift.site_id, shift.area_id)
     oor = db.query(Reading, Equipment.tag, Parameter.label).select_from(Reading).join(Equipment, Equipment.id == Reading.equipment_id).outerjoin(
         Parameter, (Parameter.equipment_id == Reading.equipment_id) & (Parameter.key == Reading.parameter_key)
     ).outerjoin(Annotation, Annotation.reading_id == Reading.id).filter(
         Equipment.site_id == area[0], Equipment.area_id == area[1], Reading.out_of_range == 1,
-        Annotation.id.is_(None),
+        Annotation.id.is_(None), Reading.ts >= cutoff, Reading.ts <= parse_ts(ts=shifts.utc_text(now)),
     ).order_by(Reading.ts.desc(), Reading.id)
     for reading, tag, label in oor:
         yield ("oor_reading", reading.id, f"{tag} · {label or reading.parameter_key}",
-               f"{reading.value:g} at {reading.ts}. {reading.remarks or ''}".strip(), "high", True)
+               f"{reading.value:g} at {reading.ts}. {reading.remarks or ''}".strip(), "high", True, reading.ts, None)
     orders = db.query(WorkOrder).filter(
         WorkOrder.site_id == area[0], WorkOrder.area_id == area[1],
         WorkOrder.priority.in_(("urgent", "high")), WorkOrder.status.in_(OPENISH),
     ).order_by(WorkOrder.created_at.desc(), WorkOrder.id)
     for row in orders:
-        yield ("work_order", row.id, row.title, row.description or "", row.priority, True)
+        yield ("work_order", row.id, row.title, row.description or "", row.priority, True, row.created_at, None)
     punches = db.query(Punch, Equipment.tag).select_from(Punch).join(Record, Record.id == Punch.record_id).join(
         Equipment, Equipment.id == Record.equipment_id
     ).filter(Equipment.site_id == area[0], Equipment.area_id == area[1],
              Punch.status.in_(("Open", "In progress"))).order_by(Punch.created_at.desc(), Punch.id)
     for row, tag in punches:
-        yield ("punch", row.id, f"{tag} · Open punch", row.description, row.priority or "medium", True)
+        yield ("punch", row.id, f"{tag} · Open punch", row.description, row.priority or "medium", True, row.raised_at or row.created_at, None)
     logged = latest_entries(db.query(ShiftLogEntry).filter(
         ShiftLogEntry.shift_id == shift.id, ShiftLogEntry.in_handover.is_(True), ShiftLogEntry.voided_at.is_(None)
     )).order_by(ShiftLogEntry.event_at.desc(), ShiftLogEntry.id)
     for row in logged:
-        yield ("log_entry", row.id, row.title, row.body, row.severity, False)
+        category = db.get(ShiftLogCategory, row.category_id)
+        yield ("log_entry", row.id, row.title, row.body, row.severity, False, row.event_at, category.name if category else None)
 
 
-def add_item(db, handover, kind, ref_id, title, detail, severity, auto, order, principal=None, name="system"):
+def add_item(db, handover, kind, ref_id, title, detail, severity, auto, order, principal=None, name="system", *, event_at=None, category=None):
     item = HandoverItem(id=uid("handover_item"), handover_id=handover.id, kind=kind, ref_id=ref_id,
-                        title=title, detail=detail, severity=severity, auto=auto, sort_order=order)
+                        title=title, detail=detail, severity=severity, auto=auto, sort_order=order,
+                        event_at=event_at, category=category)
     db.add(item)
     audit(db, principal, name, "item_added", handover, {"item_id": item.id, "kind": kind, "ref_id": ref_id})
     return item
 
 
-def sync_items(db, handover, shift):
+def sync_items(db, handover, shift, now=None):
     require_state(handover, EDITABLE)
     existing = {(row.kind, row.ref_id): row for row in db.query(HandoverItem).filter_by(handover_id=handover.id)
                 if row.kind != "note"}
     retained = set()
-    for index, (kind, ref_id, title, detail, severity, auto) in enumerate(live_candidates(db, shift)):
+    for index, (kind, ref_id, title, detail, severity, auto, event_at, category) in enumerate(live_candidates(db, shift, now)):
         key = kind, ref_id
         retained.add(key)
         item = existing.get(key)
         if item is None:
-            add_item(db, handover, kind, ref_id, title, detail, severity, auto, index)
+            add_item(db, handover, kind, ref_id, title, detail, severity, auto, index, event_at=event_at, category=category)
         elif not item.removed_manually:
             item.title, item.detail, item.severity = title, detail, severity
+            item.event_at, item.category = event_at, category
             item.removed_at = None
     now = shifts.utc_text(datetime.now(timezone.utc))
     for key, item in existing.items():
@@ -191,10 +197,17 @@ def describe(db, handover, principal=None):
     )
     versions = db.query(Handover).filter_by(outgoing_shift_id=outgoing.id).order_by(Handover.version)
     items = [shifts.columns(row) for row in items_for(db, handover)]
+    audit_events = db.query(AuditLog).filter_by(entity_type="handover", entity_id=handover.id).order_by(
+        AuditLog.ts.desc(), AuditLog.id.desc()
+    ).limit(50)
+    config = settings_for(db, handover.site_id)
     return {
         **shifts.columns(handover), "outgoing": shifts.describe_shift(db, outgoing),
         "incoming": shifts.describe_shift(db, incoming) if incoming else None, "items": items,
         "comments": [shifts.columns(comment) for comment in comments],
+        "ack_window_minutes": config.ack_within_minutes, "escalation_role": config.escalate_to_role,
+        "audit_events": [{"action": entry.action, "actor": entry.actor, "at": entry.ts}
+                         for entry in audit_events],
         "can_edit": bool(principal and can_act(principal, outgoing)),
         "can_acknowledge": bool(principal and can_act_incoming(db, principal, handover)),
         "can_return": bool(principal and can_act_incoming(db, principal, handover, allow_manager=False)),
@@ -210,7 +223,7 @@ def describe(db, handover, principal=None):
 def sign_off(db, handover, principal, now, name):
     require_state(handover, EDITABLE)
     outgoing = db.get(Shift, handover.outgoing_shift_id)
-    sync_items(db, handover, outgoing)
+    sync_items(db, handover, outgoing, now)
     incoming = shifts.next_shift(db, outgoing, now)
     config = settings_for(db, handover.site_id)
     start = datetime.fromisoformat(incoming.starts_at) if incoming else now

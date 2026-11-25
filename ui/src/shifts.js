@@ -50,8 +50,10 @@
   const hostHTML = (title, subtitle, extra = "") => `<div class="row spread"><div><h2>${title}</h2>
     <p class="page-lead">${subtitle}</p></div>${extra}</div><div id="shift-view" aria-live="polite">Loading…</div>`;
   const severityChoices = ["info","low","medium","high","critical"].map(value => [value, value]);
-  const kinds = {oor_reading:"Out-of-range readings", work_order:"Work orders", punch:"Punch items", log_entry:"Shift log", note:"Notes"};
-  const ui = {current:"", logPage:1, category:"", revisions:false, tab:"patterns", site:"",
+  const kinds = {oor_reading:"Out of range", work_order:"Work orders", punch:"Punch items", log_entry:"Log entries", note:"Notes"};
+  const itemKind = item => item.category === "Safety" ? "Safety" : kinds[item.kind];
+  const draftSummaries = new Map();
+  const ui = {current:"", logPage:1, logFilter:"all", incomingFilter:"all", revisions:false, tab:"patterns", site:"",
     historyPage:1, historyQuery:{}, handoverPage:1, handoverQuery:{}};
   const bind = (host, target, fn) => host.querySelectorAll(target).forEach(element => {
     element.onclick = async () => {
@@ -96,6 +98,27 @@
     } catch (error) { popup?.close(); throw error; }
   }
 
+  const timestamp = value => value && !/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value + "Z" : value;
+  const clockTime = (value, zone) => value ? new Date(timestamp(value)).toLocaleTimeString(undefined,
+    {timeZone:zone || "UTC", hour:"2-digit", minute:"2-digit", hourCycle:"h23"}) : "—";
+  const rowTime = (value, severity, zone, content) => `<div class="timeline-row" data-severity="${esc(severity)}">
+    <time class="timeline-clock" datetime="${esc(value)}">${esc(clockTime(value,zone))}</time>
+    <span class="timeline-dot" aria-hidden="true"></span><div class="timeline-card">${content}</div></div>`;
+  const filterChips = (choices, active, attribute) => `<div class="shift-chips" role="group" aria-label="Timeline filters">${choices.map(
+    ([key,label,count]) => btn(label + " " + count,`${attribute}="${esc(key)}" aria-pressed="${key === active}"`)
+  ).join("")}</div>`;
+  const stepper = status => {
+    const current = status === "acknowledged" ? 2 : ["signed_off","returned"].includes(status) ? 1 : 0;
+    return `<ol class="shift-stepper" aria-label="Handover status">${["Draft","Signed off","Acknowledged"].map(
+      (name,index) => `<li class="${index <= current ? "reached" : ""}" ${index === current ? 'aria-current="step"' : ""}>
+        <span>${index + 1}</span>${name}</li>`).join("")}</ol>`;
+  };
+  const shiftName = shift => shift ? [shift.name,shift.crew_name].filter(Boolean).join(" · ") : "Not rostered";
+  const minutesLeft = end => {
+    const remaining = Math.ceil((new Date(end) - Date.now()) / 60000);
+    return remaining > 0 ? remaining + " min left" : "Shift ended";
+  };
+
   function recordCard(entry, row, timezone, editable) {
     const heading = esc(entry.title);
     const evidence = entry.equipment_id ? btn("Equipment", `data-equipment="${esc(entry.equipment_id)}"`) : "";
@@ -111,8 +134,8 @@
       btn("Void", `data-void="${esc(entry.id)}"`),
       btn("Attach", `data-attach="${esc(entry.id)}"`)
     ].join("") : "";
-    return `<article class="card shift-entry"><div class="row spread"><strong>${heading}</strong>
-      <small>${esc(local(entry.event_at,timezone))}</small></div>
+    return `<article class="card shift-entry ${included ? "shift-pinned" : ""}"><div class="row spread"><strong>${heading}</strong>
+      <small>${row ? "" : esc(local(entry.event_at,timezone))}</small></div>
       <p class="shift-meta">${esc(entry.category)} · ${esc(entry.severity)} · ${esc(entry.author_name)}
       ${entry.after_handover ? " · After handover" : ""}${entry.version > 1 ? " · Version " + entry.version : ""}</p>
       <p class="shift-body">${esc(entry.body)}</p>
@@ -160,25 +183,34 @@
 
   function outgoingPanel(row) {
     const editable = row.status === "draft" && lead(row);
-    const groups = Object.entries(kinds).map(([kind, label]) => {
-      const items = row.items.filter(item => item.kind === kind);
+    const groups = ["Safety","Out of range","Work orders","Punch items","Log entries","Notes"].map(label => {
+      const items = row.items.filter(item => itemKind(item) === label);
       if (!items.length) return "";
-      return `<section class="shift-item-group"><h4>${esc(label)} · ${items.length}</h4>${items.map(item =>
-        `<div class="row spread shift-item"><span>${esc(item.title)} ${item.auto ? "<small>Auto</small>" : ""}</span>
+      return `<section class="shift-item-group"><h4>${label}</h4>${items.map(item =>
+        `<div class="shift-item"><div><strong>${esc(item.title)}</strong> ${item.auto ? '<small class="shift-auto">auto</small>' : ""}
+        ${item.detail ? `<p>${esc(item.detail)}</p>` : ""}</div>
         ${editable ? btn("×", `data-remove="${esc(item.id)}" aria-label="Remove ${esc(item.title)}"`) : ""}</div>`).join("")}</section>`;
     }).join("");
     const returned = [...row.versions].reverse().find(item => item.return_reason);
-    return `<section class="card shift-handover"><div class="row spread"><h3>In handover</h3><span>${row.items.length} items</span></div>
-      <p class="shift-steps">Draft → Signed off → Acknowledged</p>
-      <p><strong>${esc(labelStatus(row.status))}</strong> · Version ${row.version}</p>
+    const end = clockTime(row.outgoing.ends_at,row.outgoing.timezone);
+    const incoming = shiftName(row.incoming) + (row.incoming?.lead_name ? " · " + row.incoming.lead_name : "");
+    return `<aside class="stack shift-handover"><section class="card">
+      <div class="row spread"><h3>Sign off handover</h3><small>Version ${row.version}</small></div>
+      ${stepper(row.status)}
       ${returned ? `<p class="shift-banner">Returned: ${esc(returned.return_reason)}</p>` : ""}
+      <dl class="shift-facts"><dt>Pinned</dt><dd>${row.items.length} items</dd>
+      <dt>Incoming</dt><dd>${esc(incoming)}</dd><dt>Shift ends</dt><dd>${esc(end)} · ${esc(minutesLeft(row.outgoing.ends_at))}</dd></dl>
+      ${editable ? `<form id="shift-sign-form" class="stack">${nameField()}${submit("Sign off and hand over")}</form>`
+        : btn("Open handover",`data-open="${esc(row.id)}"`)}
+      <p class="shift-meta">If the handover is still unacknowledged ${row.ack_window_minutes} min after the incoming shift starts,
+      it escalates to the ${esc(row.escalation_role)}.</p>
+      </section><section class="card">
+      <div class="row spread"><h3>In handover</h3><small>${row.items.length} items</small></div>
       ${groups || "<p>No items included.</p>"}
-      ${editable ? `<form id="shift-sign-form" class="stack">${nameField()}
-        ${textarea("Outgoing summary","summary",row.summary,'maxlength="20000"')}
-        <div class="row">${btn("Add note","data-add-note")}${btn("Save draft","data-save-summary")}</div>
-        ${submit("Sign off and hand over")}</form>`
-        : `<p class="shift-body">${esc(row.summary)}</p>${btn("Open handover",`data-open="${esc(row.id)}"`)}`}
-      </section>`;
+      ${editable ? `${textarea("Outgoing summary","summary",draftSummaries.get(row.id) ?? row.summary,'form="shift-sign-form" maxlength="20000"')}
+        <div class="row">${btn("Add note","data-add-note")}${btn("Save draft","data-save-summary")}</div>`
+        : `<p class="shift-body">${esc(row.summary)}</p>`}
+      </section></aside>`;
   }
 
   async function renderLog(host) {
@@ -195,27 +227,53 @@
     const shift = choices.get(ui.current) || choices.values().next().value;
     ui.current = shift.id;
     const path = "/shifts/" + id(shift.id);
-    const [entries, row, categories] = await Promise.all([
-      get(path + "/entries",{page:ui.logPage,page_size:25,revisions:ui.revisions}),
+    const [row,categories] = await Promise.all([
       get(path + "/handover"), get("/shift-log-categories",{site:shift.site_id})
     ]);
+    const entries = await get(path + "/entries",{page:ui.logPage,page_size:25,revisions:ui.revisions,timeline_filter:ui.logFilter});
     if (!host.isConnected || ui.current !== shift.id) return;
     const visibleCategories = categories.filter(category => category.active);
-    const shown = entries.items.filter(entry => !ui.category || entry.category_id === ui.category);
-    host.innerHTML = `<div class="row shift-context">
-      ${select("Shift","selection",[...choices.values()].map(item => [item.id,
-        [item.area_name,item.name,item.crew_name].filter(Boolean).join(" · ")]),shift.id)}
-      <p>${esc(local(shift.starts_at,shift.timezone))} – ${esc(local(shift.ends_at,shift.timezone))} · ${esc(shift.timezone)}
-      ${shift.lead_name ? " · Lead " + esc(shift.lead_name) : ""}</p></div>
+    const extras = row.items.filter(item => item.kind !== "log_entry");
+    const itemFilter = {oor_reading:"readings",work_order:"work_orders",note:"notes"};
+    const counts = {...entries.counts};
+    for (const item of extras) {
+      counts.all++;
+      counts.included++;
+      if (itemFilter[item.kind]) counts[itemFilter[item.kind]]++;
+    }
+    const chips = [["all","All"],["included","In handover"],
+      ...categories.filter(category => counts["category:" + category.id] || ui.logFilter === "category:" + category.id)
+        .map(category => ["category:" + category.id,category.name]),
+      ["readings","Readings"],["work_orders","Work orders"],["notes","Notes"]
+    ].map(([key,label]) => [key,label,counts[key] || 0]);
+    const timeline = entries.items.map(entry => [entry.event_at, entry.severity,
+      recordCard(entry,row,shift.timezone,can("shiftlog.write"))]);
+    if (entries.page === 1) {
+      for (const item of extras) {
+        if (!["all","included",itemFilter[item.kind]].includes(ui.logFilter)) continue;
+        timeline.push([item.event_at,item.severity,`<article class="card shift-entry shift-pinned">
+          <p class="shift-meta">${esc(itemKind(item))} · ${esc(item.severity)}</p><strong>${esc(item.title)}</strong>
+          <p class="shift-body">${esc(item.detail)}</p><small class="shift-auto">In handover</small></article>`]);
+      }
+    }
+    timeline.sort(([left],[right]) => String(timestamp(right) || "").localeCompare(String(timestamp(left) || "")));
+    host.innerHTML = `<div class="shift-context">
+      ${choices.size > 1 ? select("Shift","selection",[...choices.values()].map(item => [item.id,
+        [item.area_name,item.name,item.crew_name].filter(Boolean).join(" · ")]),shift.id) : ""}
+      <p>Outgoing <strong>${esc(shiftName(shift))}</strong> · Incoming <strong>${esc(shiftName(row.incoming))}</strong>
+      ${row.incoming?.lead_name ? " lead " + esc(row.incoming.lead_name) : ""} · Handover due
+      <strong>${esc(clockTime(shift.ends_at,shift.timezone))}</strong> · ${esc(minutesLeft(shift.ends_at))}</p></div>
       <div class="shift-layout"><div class="stack">
        ${can("shiftlog.write") ? `<section class="card"><h3>Add log entry</h3>${composer(visibleCategories)}</section>` : ""}
        <section class="card"><div class="row spread"><h3>Shift timeline</h3>
-       ${select("Category","filter",[["","All categories"],...pairs(categories)],ui.category)}
        <label><input type="checkbox" name="revisions" ${ui.revisions ? "checked" : ""}> Show revisions</label></div>
-       <div class="shift-timeline">${shown.map(entry => recordCard(entry,row,shift.timezone,can("shiftlog.write"))).join("") || "<p>No log entries match.</p>"}</div>
-       ${pager(entries.page,entries.pages)}</section></div>${outgoingPanel(row)}</div>`;
-    host.querySelector("[name=selection]").onchange = event => { ui.current = event.target.value; ui.logPage = 1; refresh(host,renderLog); };
-    host.querySelector("[name=filter]").onchange = event => { ui.category = event.target.value; refresh(host,renderLog); };
+       ${filterChips(chips,ui.logFilter,"data-log-filter")}
+       <div class="shift-timeline">${timeline.map(([at,severity,card]) => rowTime(at,severity,shift.timezone,card)).join("")
+         || "<p>No log entries match.</p>"}</div>
+       ${entries.pages > 1 ? pager(entries.page,entries.pages) : ""}</section></div>${outgoingPanel(row)}</div>`;
+    const selection = host.querySelector("[name=selection]");
+    if (selection) selection.onchange = event => { ui.current = event.target.value; ui.logPage = 1; refresh(host,renderLog); };
+    bind(host,"[data-log-filter]", button => { ui.logFilter = button.dataset.logFilter; ui.logPage = 1; return renderLog(host); });
     host.querySelector("[name=revisions]").onchange = event => { ui.revisions = event.target.checked; ui.logPage = 1; refresh(host,renderLog); };
     bind(host,"[data-page]", button => { ui.logPage = Number(button.dataset.page); return renderLog(host); });
     bind(host,"[data-open]",button => openHandover(button.dataset.open));
@@ -250,10 +308,13 @@
     const handoverPath = "/handovers/" + id(row.id);
     const sign = host.querySelector("#shift-sign-form");
     let savedSummary = row.summary;
+    if (sign) sign.elements.summary.oninput = () => draftSummaries.set(row.id, sign.elements.summary.value);
     async function preserveSummary() {
-      if (sign && sign.summary.value !== savedSummary) {
-        savedSummary = sign.summary.value;
-        await request("PATCH",handoverPath,{summary:savedSummary,...actor(sign)});
+      if (sign && sign.elements.summary.value !== savedSummary) {
+        const summary = sign.elements.summary.value;
+        await request("PATCH",handoverPath,{summary,...actor(sign)});
+        savedSummary = summary;
+        draftSummaries.delete(row.id);
       }
     }
     bind(host,"[data-remove]",async button => {
@@ -275,7 +336,8 @@
     }));
     bind(host,"[data-save-summary]",async () => { await preserveSummary(); book()._toast("Handover draft saved."); });
     onForm(host,"#shift-sign-form",async form => {
-      const result = await request("POST",handoverPath + "/sign-off",{summary:form.summary.value,...actor(form)});
+      const result = await request("POST",handoverPath + "/sign-off",{summary:form.elements.summary.value,...actor(form)});
+      draftSummaries.delete(row.id);
       openHandover(result.id);
     });
   }
@@ -287,6 +349,7 @@
   }
 
   function openHandover(identifier) {
+    ui.incomingFilter = "all";
     book().goto("handoverDetail",{handoverId:identifier});
   }
 
@@ -298,34 +361,65 @@
     const editable = row.status === "signed_off" && lead(row,true);
     const canReturn = row.status === "signed_off" && lead(row,true,false);
     const outgoing = row.outgoing;
-    host.innerHTML = `<section class="shift-banner"><strong>${esc(labelStatus(row.status))}</strong> ·
-      ${esc(outgoing.area_name)} · ${esc(outgoing.name)} · ${esc(outgoing.crew_name)} · Version ${row.version}
-      ${row.ack_due_at ? " · Acknowledge by " + esc(local(row.ack_due_at,outgoing.timezone)) : ""}</section>
+    const seenCount = row.items.filter(item => item.seen_at).length;
+    const questions = new Set(row.comments.filter(message => message.kind === "question").map(message => message.item_id));
+    const questionCount = row.comments.filter(message => message.kind === "question").length;
+    const visibleItems = row.items.filter(item => ui.incomingFilter === "all" ||
+      (ui.incomingFilter === "unseen" && !item.seen_at) || (ui.incomingFilter === "questions" && questions.has(item.id)));
+    const eventLabels = {opened:"opened the handover",signed_off:"signed off",acknowledged:"acknowledged",
+      returned:"returned the handover",question:"asked a question",answer:"answered a question",item_seen:"marked an item seen",
+      item_added:"added an item",item_removed:"removed an item",summary_changed:"updated the summary",
+      reminder_sent:"sent a reminder",escalated:"escalated the handover"};
+    host.innerHTML = `<div class="row spread shift-context"><p>From <strong>${esc(shiftName(outgoing))}</strong>
+      ${outgoing.lead_name ? " lead " + esc(outgoing.lead_name) : ""} · To <strong>${esc(shiftName(row.incoming))}</strong>
+      · ${esc(outgoing.area_name)} · Version ${row.version}</p>${btn("Print / PDF","data-report")}</div>
+      <section class="shift-banner ${row.status === "signed_off" ? "shift-waiting" : ""}">
+      <strong>${row.status === "signed_off" ? (editable ? "Waiting for you" : "Awaiting acknowledgement") : esc(labelStatus(row.status))}</strong>
+      ${row.signed_off_at ? " · Signed off by " + esc(row.signed_off_name) + " at " + esc(clockTime(row.signed_off_at,outgoing.timezone)) : ""}
+      ${row.ack_due_at && row.status === "signed_off" ? " · Acknowledge by " + esc(clockTime(row.ack_due_at,outgoing.timezone))
+        + " (" + row.ack_window_minutes + " min after shift start) or it escalates to the " + esc(row.escalation_role) + "." : ""}</section>
       <div class="shift-layout"><div class="stack">
-      <section class="card"><h3>Outgoing summary</h3><p class="shift-body">${esc(row.summary || "No summary entered.")}</p></section>
-      <section class="card"><h3>Handover items · ${row.items.length}</h3>
-      ${row.items.map(item => `<article class="card shift-entry"><h4>${esc(item.title)}</h4>
-        <p class="shift-meta">${esc(kinds[item.kind])} · ${esc(item.severity)} · ${item.seen_at ? "Seen" : "Unseen"}</p><p class="shift-body">${esc(item.detail)}</p>
+      <section class="card"><div class="row spread"><h3>Outgoing summary</h3>
+      ${row.signed_off_name ? `<small>${esc(row.signed_off_name)} · ${esc(clockTime(row.signed_off_at,outgoing.timezone))}</small>` : ""}</div>
+      <p class="shift-body">${esc(row.summary || "No summary entered.")}</p></section>
+      <section class="card"><div class="row spread"><h3>Handover items</h3><small>${seenCount} of ${row.items.length} seen</small></div>
+      ${filterChips([["all","All",row.items.length],["unseen","Not seen",row.items.length-seenCount],
+        ["questions","Questions",questionCount]],ui.incomingFilter,"data-incoming-filter")}
+      <div class="shift-timeline">${visibleItems.map(item => rowTime(item.event_at,item.severity,outgoing.timezone,
+        `<article class="card shift-entry shift-pinned"><div class="row spread">
+        <p class="shift-meta">${esc(itemKind(item))} · ${esc(item.severity)}</p>
+        ${item.seen_at ? '<small class="shift-seen">✓ Seen</small>' : editable ? btn("Mark seen",`data-seen="${esc(item.id)}"`) : '<small>Unseen</small>'}
+        </div><h4>${esc(item.title)}</h4><p class="shift-body">${esc(item.detail)}</p>
         ${row.comments.filter(msg => msg.item_id === item.id).map(msg =>
-          `<p><strong>${esc(msg.kind)} · ${esc(msg.author_name)}</strong> ${esc(msg.body)}
-          ${msg.kind === "question" && lead(row) ? btn("Answer",`data-answer="${esc(msg.id)}"`) : ""}</p>`).join("")}
-        ${editable ? `<div class="row">${!item.seen_at ? btn("Seen",`data-seen="${esc(item.id)}"`) : ""}
-          ${btn("Ask a question",`data-question="${esc(item.id)}"`)}</div>` : ""}</article>`).join("") || "<p>No items included.</p>"}
-      </section></div><div class="stack"><section class="card"><h3>Handover record</h3>
-      ${row.signed_off_at ? `<p>Signed off by ${esc(row.signed_off_name)} · ${esc(local(row.signed_off_at,outgoing.timezone))}</p>` : ""}
+          `<div class="shift-question"><strong>${esc(msg.author_name)}</strong>
+          <small>${esc(clockTime(msg.created_at,outgoing.timezone))} · ${esc(msg.kind)}</small>
+          <p class="shift-body">${esc(msg.body)}</p>
+          ${msg.kind === "question" && lead(row) ? btn("Answer",`data-answer="${esc(msg.id)}"`) : ""}</div>`).join("")}
+        ${editable ? btn("Ask a question",`data-question="${esc(item.id)}"`) : ""}</article>`
+      )).join("") || "<p>No items match this filter.</p>"}</div></section></div>
+      <aside class="stack">
+      ${editable ? `<section class="card shift-handover"><h3>Acknowledge handover</h3>${stepper(row.status)}
+      <form id="shift-ack-form" class="stack">${nameField()}${textarea("Comment (optional)","comment")}
+      ${submit("Acknowledge")}</form>
+      <p class="shift-meta">${row.items.length - seenCount} unseen items. Unseen items are recorded at acknowledgement.</p>
+      ${canReturn ? `<form id="shift-return-form" class="shift-return stack">
+        ${textarea("Return to outgoing lead · reason required","reason","","required")}
+        ${submit("Return handover")}</form>` : ""}</section>` : ""}
+      <section class="card"><h3>Audit trail</h3>
+      <ul class="shift-audit">${row.audit_events.map(event => `<li><time>${esc(clockTime(event.at,outgoing.timezone))}</time>
+        <span>${esc(event.actor)} ${esc(eventLabels[event.action.split(".").at(-1)] || labelStatus(event.action))}</span></li>`).join("")}</ul>
       ${row.acknowledged_at ? `<p>Acknowledged by ${esc(row.acknowledged_name)} · ${esc(local(row.acknowledged_at,outgoing.timezone))}
       ${row.late ? " · Late" : ""}${row.acknowledged_after_start ? " · After incoming shift start" : ""}</p><p>Unseen at acknowledgement · ${row.unseen_count}</p><p>${esc(row.ack_comment)}</p>` : ""}
       ${row.return_reason ? `<p>Returned by ${esc(row.returned_name)} · ${esc(row.return_reason)}</p>` : ""}
       ${row.snapshot_sha256 ? `<p>Snapshot SHA-256 <code>${esc(row.snapshot_sha256)}</code></p>` : ""}
-      <div class="row">${btn("Print report","data-report")}${row.status === "draft" ? btn("Open shift log","data-outgoing") : ""}</div>
+      ${row.status === "draft" ? btn("Open shift log","data-outgoing") : ""}
       <h4>Versions</h4>${row.versions.map(version => `<p>${btn("Version " + version.version + " · " +
         labelStatus(version.status), `data-version="${esc(version.id)}"`)} ${esc(version.return_reason || "")}</p>`).join("")}
-      </section>
-      ${editable ? `<section class="card"><h3>Acknowledge handover</h3>
-      <p>${row.items.filter(item => !item.seen_at).length} unseen items. Unseen items are recorded at acknowledgement.</p>
-      <form id="shift-ack-form" class="stack">${nameField()}${textarea("Comment (optional)","comment")}
-      <div class="row">${submit("Acknowledge")}${canReturn ? btn("Return","data-return") : ""}</div></form></section>` : ""}
-      </div></div>`;
+      </section></aside></div>`;
+    bind(host,"[data-incoming-filter]",button => {
+      ui.incomingFilter = button.dataset.incomingFilter;
+      return renderHandover(host);
+    });
     bind(host,"[data-report]",() => fileFetch("/api" + path + "/report","",true));
     bind(host,"[data-version]",button => openHandover(button.dataset.version));
     bind(host,"[data-outgoing]",() => { ui.current = row.outgoing_shift_id; book().goto("shiftLog"); });
@@ -342,10 +436,10 @@
       await request("POST","/handover-comments/" + id(button.dataset.answer) + "/answer",{...formData(form),...actor(form)});
       await renderHandover(host);
     }));
-    bind(host,"[data-return]",() => dialogForm("Return handover",nameField() + textarea("Return reason","reason","", "required"),async form => {
-      const draft = await request("POST",path + "/return",{...formData(form),...actor(form)});
+    onForm(host,"#shift-return-form",async form => {
+      const draft = await request("POST",path + "/return",{...formData(form),...actor(ackForm)});
       openHandover(draft.id);
-    }));
+    });
     onForm(host,"#shift-ack-form",async form => {
       await request("POST",path + "/acknowledge",{...formData(form),...actor(form)});
       await renderHandover(host);
@@ -505,6 +599,7 @@
       const [config, roles] = await Promise.all([get(path),get("/shift-escalation-roles")]);
       designated.innerHTML = section("Handover & escalation",setupForm("handover-settings",
         input("Acknowledge within (minutes)","ack_within_minutes","number",config.ack_within_minutes,'min="1" max="1440" required') +
+        input("Out-of-range reading lookback (days)","reading_lookback_days","number",config.reading_lookback_days,'min="1" max="365" required') +
         select("First escalation role","escalate_to_role",roles.map(role => [role,role]),config.escalate_to_role) +
         input("Sign-off reminder before shift end (minutes)","signoff_reminder_minutes","number",config.signoff_reminder_minutes,
           'min="0" max="1440" required'),"Save settings") +
@@ -621,7 +716,7 @@
 
   window.LogentraShifts = {
     views:{
-      shiftLog:() => hostHTML("Shift log","Record operations and prepare the outgoing handover.",
+      shiftLog:() => hostHTML("Shift log and handover","Record operations and prepare the outgoing handover.",
         btn("Shift log history",'data-act="goto" data-view="shiftHistory"')),
       shiftHistory:() => hostHTML("Shift log history","Find entries, amendments and voided records.",
         btn("Current shift",'data-act="goto" data-view="shiftLog"')),

@@ -164,6 +164,8 @@ CREATE TABLE handover_items (
     title TEXT NOT NULL,
     detail TEXT NOT NULL,
     severity TEXT NOT NULL,
+    event_at TEXT,
+    category TEXT,
     auto BOOLEAN NOT NULL DEFAULT false,
     pinned BOOLEAN NOT NULL DEFAULT false,
     removed_manually BOOLEAN NOT NULL DEFAULT false,
@@ -207,6 +209,7 @@ CREATE INDEX ix_shift_log_comments_entry_id ON shift_log_comments(entry_id);
 CREATE TABLE site_handover_settings (
     site_id TEXT REFERENCES sites(id) ON DELETE CASCADE NOT NULL,
     ack_within_minutes INTEGER NOT NULL DEFAULT 30,
+    reading_lookback_days INTEGER NOT NULL DEFAULT 7,
     escalate_to_role TEXT NOT NULL DEFAULT 'supervisor',
     signoff_reminder_minutes INTEGER NOT NULL DEFAULT 15,
     PRIMARY KEY (site_id)

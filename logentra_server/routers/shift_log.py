@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from logentra_server import qr_entries, service, shifts
@@ -16,7 +16,7 @@ from logentra_server.http_security import read_upload
 from logentra_server.models import Equipment, Punch, Reading, WorkOrder
 from logentra_server.pagination import count_rows, page_result
 from logentra_server.shift_models import (
-    Handover, Shift, ShiftLogAttachment, ShiftLogCategory, ShiftLogComment, ShiftLogEntry,
+    Handover, HandoverItem, Shift, ShiftLogAttachment, ShiftLogCategory, ShiftLogComment, ShiftLogEntry,
 )
 from logentra_server.utils import uid, utcnow_iso
 
@@ -171,7 +171,7 @@ def build_router(get_db, get_principal, settings):
 
     @router.get("/shifts/{shift_id}/entries")
     def entries(shift_id: str, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
-                revisions: bool = False, db: Session = Depends(get_db), principal=Depends(reader)):
+                revisions: bool = False, timeline_filter: str | None = None, db: Session = Depends(get_db), principal=Depends(reader)):
         shift = shift_for(db, shift_id, principal)
         query = db.query(ShiftLogEntry).filter_by(shift_id=shift_id)
         if not revisions:
@@ -183,7 +183,33 @@ def build_router(get_db, get_principal, settings):
                 ShiftLogEntry.shift_id == shift_id,
                 (ShiftLogEntry.shift_id == previous) & ShiftLogEntry.after_handover.is_(True),
             )))
-        return entries_page(db, query, page, page_size)
+        if timeline_filter is None:
+            return entries_page(db, query, page, page_size)
+        handover_id = select(Handover.id).where(Handover.outgoing_shift_id == shift_id).order_by(
+            Handover.version.desc()).limit(1).scalar_subquery()
+        included = select(HandoverItem.id).where(
+            HandoverItem.handover_id == handover_id, HandoverItem.kind == "log_entry",
+            HandoverItem.ref_id == ShiftLogEntry.id, HandoverItem.removed_at.is_(None),
+        ).exists()
+        kind = case((ShiftLogEntry.reading_id.is_not(None), "readings"),
+                    (ShiftLogEntry.work_order_id.is_not(None), "work_orders"), else_="notes")
+        counts = {"all": 0, "included": 0, "readings": 0, "work_orders": 0, "notes": 0}
+        totals = query.with_entities(ShiftLogEntry.category_id, kind, included, func.count()).group_by(
+            ShiftLogEntry.category_id, kind, included)
+        for category_id, entry_kind, pinned, count in totals:
+            key = "category:" + category_id
+            counts[key] = counts.get(key, 0) + count
+            counts["all"] += count
+            counts[entry_kind] += count
+            if pinned:
+                counts["included"] += count
+        if timeline_filter == "included":
+            query = query.filter(included)
+        elif timeline_filter in {"readings", "work_orders", "notes"}:
+            query = query.filter(kind == timeline_filter)
+        elif timeline_filter.startswith("category:"):
+            query = query.filter(ShiftLogEntry.category_id == timeline_filter.removeprefix("category:"))
+        return {**entries_page(db, query, page, page_size), "counts": counts}
 
     @router.post("/shifts/{shift_id}/entries", status_code=201)
     def add_entry(shift_id: str, body: EntryIn, db: Session = Depends(get_db), principal=Depends(writer)):

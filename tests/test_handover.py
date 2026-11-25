@@ -145,3 +145,23 @@ def test_rostered_leads_and_area_permissions(client):
     assert client.post(path + "/acknowledge", headers=tokens["outgoing"]).status_code == 403
     assert client.post(path + "/return", headers=tokens["supervisor"], json={"reason":"Wrong lead"}).status_code == 403
     assert client.post(path + "/acknowledge", headers=tokens["incoming"]).status_code == 200
+
+
+def test_reading_lookback_uses_site_setting(client):
+    shift = rostered_shift(client)
+    seeded_evidence(client)
+    now = datetime.now(timezone.utc)
+    with client.app.state.SessionLocal.begin() as db:
+        for days in (3, 9):
+            service.ingest_readings(db, [{"id": f"reading_{days}_days", "equipment_id": "eq_pump",
+                                         "parameter": "vibration", "value": 8,
+                                         "ts": (now - timedelta(days=days)).isoformat()}], commit=False)
+    path = f"/api/shifts/{shift['id']}/handover"
+    default = client.get(path).json()
+    candidates = {item["ref_id"] for item in default["items"]}
+    assert "reading_3_days" in candidates
+    assert "reading_9_days" not in candidates
+    response = client.put("/api/sites/site_north/handover-settings", json={"reading_lookback_days": 2})
+    assert response.status_code == 200, response.text
+    updated = client.get(path).json()
+    assert not {item["ref_id"] for item in updated["items"]} & {"reading_3_days", "reading_9_days"}

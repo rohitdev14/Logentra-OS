@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from logentra_server import handovers, service, shifts
 from logentra_server.pagination import count_rows, page_result
 from logentra_server.routers.shift_log import MessageIn, Severity, actor, nonblank, shift_for
-from logentra_server.shift_models import Handover, HandoverComment, HandoverItem, Shift, ShiftLogEntry
+from logentra_server.shift_models import Handover, HandoverComment, HandoverItem, Shift, ShiftLogCategory, ShiftLogEntry
 from logentra_server.utils import uid
 
 
@@ -128,7 +128,7 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
             raise HTTPException(409, "This shift has not started")
         row = handovers.draft(db, shift, clock(), principal)
         if row.status == "draft":
-            handovers.sync_items(db, row, shift)
+            handovers.sync_items(db, row, shift, clock())
         handovers.audit(db, principal, actor(principal), "opened", row)
         return finish(db, row, principal)
 
@@ -228,6 +228,7 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
     def add_item(identifier: str, body: ItemIn, db: Session = Depends(get_db), principal=Depends(reader)):
         row = edit(db, identifier, principal)
         shift = db.get(Shift, row.outgoing_shift_id)
+        event_at, category = shifts.utc_text(clock()), None
         if body.kind == "note":
             title, text, severity = nonblank(body.title, "Title"), body.detail, body.severity
         elif body.kind == "log_entry":
@@ -235,11 +236,14 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
             if entry.shift_id != shift.id or entry.voided_at:
                 raise HTTPException(404, "Shift log entry not found")
             title, text, severity = entry.title, entry.body, entry.severity
+            event_at = entry.event_at
+            log_category = db.get(ShiftLogCategory, entry.category_id)
+            category = log_category.name if log_category else None
         else:
-            match = next((item for item in handovers.live_candidates(db, shift) if item[:2] == (body.kind, body.ref_id)), None)
+            match = next((item for item in handovers.live_candidates(db, shift, clock()) if item[:2] == (body.kind, body.ref_id)), None)
             if not match:
                 raise HTTPException(404, "Handover source item not found")
-            _, _, title, text, severity, _ = match
+            _, _, title, text, severity, _, event_at, category = match
         existing = (db.query(HandoverItem).filter_by(handover_id=row.id, kind=body.kind, ref_id=body.ref_id).first()
                     if body.kind != "note" else None)
         name = actor(principal, body.author_name)
@@ -250,7 +254,8 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
             handovers.audit(db, principal, name, "item_added", row, {"item_id": existing.id, "restored": True})
         else:
             item = handovers.add_item(db, row, body.kind, body.ref_id, title, text, severity, False,
-                                      len(handovers.items_for(db, row, removed=True)), principal, name)
+                                      len(handovers.items_for(db, row, removed=True)), principal, name,
+                                      event_at=event_at, category=category)
             item.pinned = True
         return finish(db, row, principal)
 

@@ -178,6 +178,8 @@ class HandoverItem(Base):
     title: Mapped[str] = mapped_column(Text)
     detail: Mapped[str] = mapped_column(Text)
     severity: Mapped[str] = mapped_column(Text)
+    event_at: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(Text)
     auto: Mapped[bool] = mapped_column(Boolean, server_default='false')
     pinned: Mapped[bool] = mapped_column(Boolean, server_default='false')
     removed_manually: Mapped[bool] = mapped_column(Boolean, server_default='false')
@@ -224,5 +226,6 @@ class SiteHandoverSettings(Base):
     __tablename__ = "site_handover_settings"
     site_id: Mapped[str] = mapped_column(Text, ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True)
     ack_within_minutes: Mapped[int] = mapped_column(Integer, server_default='30')
+    reading_lookback_days: Mapped[int] = mapped_column(Integer, server_default='7')
     escalate_to_role: Mapped[str] = mapped_column(Text, server_default='supervisor')
     signoff_reminder_minutes: Mapped[int] = mapped_column(Integer, server_default='15')
