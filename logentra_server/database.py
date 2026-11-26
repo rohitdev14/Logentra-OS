@@ -91,9 +91,21 @@ def run_migrations(engine) -> None:
                 command.stamp(cfg, "0001_initial")
 
         cfg = alembic_config(url)
-        with engine.begin() as conn:
+        with engine.connect() as conn:
+            if conn.dialect.name == "sqlite":
+                # Alembic rebuilds the parent table during batch alters. Keep its children.
+                conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
             cfg.attributes["connection"] = conn
-            command.upgrade(cfg, "head")
+            try:
+                command.upgrade(cfg, "head")
+                if conn.dialect.name == "sqlite" and conn.exec_driver_sql("PRAGMA foreign_key_check").first():
+                    raise RuntimeError("Migration left invalid SQLite foreign keys")
+                conn.commit()
+            finally:
+                if conn.dialect.name == "sqlite":
+                    conn.rollback()
+                    conn.exec_driver_sql("PRAGMA foreign_keys=ON")
     finally:
         if lock_conn is not None:
             try:

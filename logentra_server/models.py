@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, Index, Integer, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from logentra_server.database import Base
@@ -126,6 +126,9 @@ class TemplateItem(Base):
 
 class Record(Base):
     __tablename__ = "records"
+    __table_args__ = (CheckConstraint(
+        "status IN ('draft', 'submitted', 'returned', 'approved')", name="ck_records_status",
+    ),)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     __mapper_args__ = {"version_id_col": revision}
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -140,6 +143,18 @@ class Record(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft", index=True)
+    submitted_at: Mapped[str | None] = mapped_column(Text)
+    submitted_by: Mapped[str | None] = mapped_column(Text)
+    submitted_by_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    approved_at: Mapped[str | None] = mapped_column(Text)
+    approved_by: Mapped[str | None] = mapped_column(Text)
+    approved_by_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    returned_at: Mapped[str | None] = mapped_column(Text)
+    returned_by: Mapped[str | None] = mapped_column(Text)
+    returned_by_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
+    return_comment: Mapped[str | None] = mapped_column(Text)
+    approval_comment: Mapped[str | None] = mapped_column(Text)
     equipment: Mapped[Equipment | None] = relationship(back_populates="records")
     columns: Mapped[list[RecordColumn]] = relationship(
         back_populates="record", cascade="all, delete-orphan", order_by="RecordColumn.sort_order"

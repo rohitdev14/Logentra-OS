@@ -124,11 +124,25 @@ CREATE TABLE records (
     equipment_id   TEXT REFERENCES equipment(id) ON DELETE SET NULL,
     notes          TEXT,
     created_at     TEXT NOT NULL,
-    updated_at     TEXT NOT NULL
+    updated_at     TEXT NOT NULL,
+    revision       INTEGER NOT NULL DEFAULT 1,
+    status         TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'returned', 'approved')),
+    submitted_at   TEXT,
+    submitted_by   TEXT,
+    submitted_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    approved_at    TEXT,
+    approved_by    TEXT,
+    approved_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    returned_at    TEXT,
+    returned_by    TEXT,
+    returned_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    return_comment TEXT,
+    approval_comment TEXT
 );
 
 CREATE INDEX ix_records_equipment ON records(equipment_id);
 CREATE INDEX ix_records_template ON records(template_id);
+CREATE INDEX ix_records_status ON records(status);
 
 CREATE TABLE record_columns (
     id          TEXT PRIMARY KEY,

@@ -22,6 +22,7 @@ PERMISSIONS: list[str] = [
     "equipment.write",
     "records.read",
     "records.write",
+    "records.approve",
     "templates.read",
     "templates.write",
     "readings.read",
@@ -57,7 +58,7 @@ _TECH = _READ + (
 )
 _SUPER = _TECH + (
     "equipment.write", "templates.write", "workorders.assign", "workorders.close",
-    "documents.approve", "audit.read", "webhooks.manage", "shifts.manage",
+    "records.approve", "documents.approve", "audit.read", "webhooks.manage", "shifts.manage",
 )
 
 BUILTIN_ROLES: dict[str, tuple[str, tuple[str, ...]]] = {
