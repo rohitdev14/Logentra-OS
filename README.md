@@ -7,7 +7,7 @@ The logbook that stays yours.
 [![Tests](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml/badge.svg)](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**v0.7.0.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
+**v0.7.1.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
 
 **Logentra OS** is **Log**book + **Eng**ineering + **Tra**ceability. It is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
 
@@ -34,7 +34,7 @@ It runs on your machine. There is no hosted account.
 - **Shift log and handover** with crew rosters, append-only entries, versioned sign-off, acknowledgement, return, and escalation
 
 - **Equipment register** with user-defined columns (text, number, date, dropdown) and spreadsheet-like grid editing
-- **Record templates** you design yourself (commissioning, inspection, maintenance, or anything else): custom rows and result columns, instantiate per asset, punches, sign-off, print
+- **Record templates** you design yourself (commissioning, inspection, maintenance, or anything else): custom rows and result columns, instantiate per asset, add punches, submit for approval, and print with the audit trail
 - **Log book and trends** with optional min/max limits, annotations (cause, action, initials, time), and unacknowledged out-of-range flags
 - **Local database** — SQLite by default (a single file, zero setup); PostgreSQL via a connection string
 - **Work orders** with a Kanban board and a status workflow (open → in progress → on hold → done → closed), assignment, due dates, comments, labour notes, attachment metadata, and optional auto-create from out-of-range readings
@@ -43,7 +43,7 @@ It runs on your machine. There is no hosted account.
 - **Users, roles, and permissions** — built-in admin / supervisor / technician / viewer roles, custom roles from a permission list, optional site/area scope, session login, and API keys bound to a user. A dev / single-user mode (the default) still runs with no login.
 - **REST API** with OpenAPI / Swagger docs, optional API key or user tokens, bulk ingest, time-range queries, server-side pagination, and CSV/JSON export
 - **Inputs:** the UI, CSV/Excel import, a simple IoT webhook, and an optional MQTT subscriber
-- **Outputs:** REST and CSV, direct SQL (for Grafana), and outbound webhooks on out-of-range events, work-order changes, and document approval events
+- **Outputs:** REST and CSV, direct SQL (for Grafana), and outbound webhooks on out-of-range events, work-order changes, and record and document approval events
 - **Scales to 5,000+ equipment** with indexes, pagination, Alembic migrations, and a load-test script (see [docs/postgres.md](docs/postgres.md) and [docs/load-test-results.json](docs/load-test-results.json))
 - **Optional starter packs** (generic plant equipment, plus a generic semiconductor-utilities pack) — not loaded unless you choose them
 - **v0.2 offline app** included at [`standalone/Logbook.html`](standalone/Logbook.html) for a no-server, browser-only workflow; a v0.2 JSON backup can be imported into the database-backed app
@@ -212,6 +212,8 @@ erDiagram
 
 Interactive docs when the server is running: [http://127.0.0.1:8787/docs](http://127.0.0.1:8787/docs).
 
+Use `GET /api/records?status=submitted` to find records awaiting review, `GET /api/records/{id}` to open one, and `GET /api/records/{id}/audit` to read its audit trail. The `POST /api/records/{id}/submit`, `/approve` and `/return` endpoints take the current record `revision`. Return requires a `comment`. Use `POST /api/sites` or `PATCH /api/sites/{id}` to set a site's timezone. See the [0.7 operations guide](docs/v0.7/OPERATIONS.md).
+
 ![API documentation](docs/images/api-docs.png)
 
 ```bash
@@ -221,7 +223,7 @@ curl -s "http://127.0.0.1:8787/api/readings?tag=P-101&parameter=vibration&from=2
 curl -s "http://127.0.0.1:8787/api/events/out-of-range?unacknowledged=true"
 curl -s -X POST http://127.0.0.1:8787/api/ingest/readings \
   -H 'Content-Type: application/json' \
-  -d '{"tag":"P-101","parameter":"flow","value":52.1,"ts":"2026-11-23T08:30:00"}'
+  -d '{"tag":"P-101","parameter":"flow","value":52.1,"ts":"2026-11-23T08:30:00Z"}'
 
 # Work orders (also in docs/integrations.md)
 curl -s -X POST http://127.0.0.1:8787/api/work-orders \

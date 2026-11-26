@@ -162,3 +162,118 @@ def test_postgres_shift_constraints_and_downgrade():
         with admin.connect() as conn:
             conn.exec_driver_sql(f"DROP DATABASE {name} WITH (FORCE)")
         admin.dispose()
+
+
+def _assert_v071_migration(engine, config):
+    from logentra_server.utils import loads
+
+    command.upgrade(config, "0009_shift_handover")
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO sites (id, name, created_at) VALUES
+            ('northbrook', 'Northbrook Works', '2026'), ('utc', 'Training site', '2026'), ('london', 'Workshop', '2026')
+        """))
+        conn.execute(text("""
+            INSERT INTO shift_patterns (id, site_id, name, timezone, created_at, updated_at) VALUES
+            ('sg_day', 'northbrook', 'Day', 'Asia/Singapore', '2026', '2026'),
+            ('sg_night', 'northbrook', 'Night', 'Asia/Singapore', '2026', '2026'),
+            ('utc_day', 'utc', 'Day', 'UTC', '2026', '2026'),
+            ('uk_day', 'london', 'Day', 'Europe/London', '2026', '2026')
+        """))
+        conn.execute(text("""
+            INSERT INTO equipment (id, tag, site_id, created_at, updated_at) VALUES
+            ('pump', 'P-101', 'northbrook', '2026', '2026'), ('tank', 'TK-03', 'utc', '2026', '2026'),
+            ('ct', 'CT-2', 'london', '2026', '2026')
+        """))
+        conn.execute(text("""
+            INSERT INTO readings (id, entry_id, equipment_id, parameter_key, ts, value, source, created_at) VALUES
+            ('manual', 'm', 'pump', 'vibration', '2026-11-26T10:30:00', 8, 'manual', '2026'),
+            ('qr', 'q', 'pump', 'vibration', '2026-11-26T02:30:00', 8, 'qr', '2026'),
+            ('api', 'a', 'pump', 'vibration', '2026-11-26T10:30:00', 8, 'api', '2026'),
+            ('utc', 'u', 'tank', 'level', '2026-11-26T10:30:00', 2, 'demo', '2026'),
+            ('fold', 'f', 'ct', 'flow', '2026-10-25T01:30:00', 2, 'import', '2026'),
+            ('gap', 'g', 'ct', 'flow', '2026-03-29T01:30:00', 2, 'import', '2026')
+        """))
+        conn.execute(text("""
+            INSERT INTO records (id, equipment_id, created_at, updated_at) VALUES ('signed', 'pump', '2026', '2026')
+        """))
+        conn.execute(text("""
+            INSERT INTO signoffs (id, record_id, name, signed_at) VALUES ('sign', 'signed', 'Amir Rahman', '2026-11-26')
+        """))
+        conn.execute(text("""
+            INSERT INTO record_items (id, record_id, label) VALUES ('item', 'signed', 'Inspect coupling guard')
+        """))
+        conn.execute(text("""
+            INSERT INTO roles (id, name, permissions, created_at, updated_at)
+            VALUES ('custom', 'Engineering review', '["documents.approve"]', '2026', '2026')
+        """))
+    run_migrations(engine)
+    with engine.begin() as conn:
+        assert dict(conn.execute(text("SELECT id, ts FROM readings")).all()) == {
+            "manual": "2026-11-26T02:30:00", "qr": "2026-11-26T02:30:00", "api": "2026-11-26T10:30:00",
+            "utc": "2026-11-26T10:30:00", "fold": "2026-10-25T00:30:00", "gap": "2026-03-29T01:30:00",
+        }
+        assert conn.execute(text("SELECT timezone FROM sites WHERE id='northbrook'")).scalar() == "Asia/Singapore"
+        assert conn.execute(text("SELECT status, approved_by, approved_at FROM records")).one() == (
+            "approved", "Amir Rahman", "2026-11-26",
+        )
+        assert conn.execute(text("SELECT id FROM record_items")).scalar() == "item"
+        permissions = conn.execute(text("SELECT permissions FROM roles WHERE id='custom'")).scalar()
+        assert loads(permissions) == ["documents.approve", "records.approve"]
+        actor, entity, detail = conn.execute(text("""
+            SELECT actor, entity_type, detail FROM audit_log WHERE action='readings.timezone_backfill'
+        """)).one()
+        assert (actor, entity, loads(detail)) == ("migration", "reading", {"Asia/Singapore": 1, "Europe/London": 2})
+        conn.execute(text("UPDATE sites SET timezone='UTC' WHERE id='northbrook'"))
+        conn.execute(text("""
+            INSERT INTO readings (id, entry_id, equipment_id, parameter_key, ts, value, source, created_at)
+            VALUES ('new', 'n', 'pump', 'vibration', '2026-11-26T02:30:00', 8, 'manual', '2026')
+        """))
+    command.downgrade(config, "0009_shift_handover")
+    with engine.connect() as conn:
+        assert dict(conn.execute(text("SELECT id, ts FROM readings")).all()) == {
+            "manual": "2026-11-26T10:30:00", "qr": "2026-11-26T02:30:00", "api": "2026-11-26T10:30:00",
+            "utc": "2026-11-26T10:30:00", "new": "2026-11-26T02:30:00",
+            "fold": "2026-10-25T01:30:00", "gap": "2026-03-29T01:30:00",
+        }
+        assert conn.execute(text("SELECT name FROM signoffs")).scalar() == "Amir Rahman"
+        assert conn.execute(text("SELECT id FROM record_items")).scalar() == "item"
+        assert loads(conn.execute(text("SELECT permissions FROM roles WHERE id='custom'")).scalar()) == ["documents.approve"]
+    assert "status" not in {col["name"] for col in inspect(engine).get_columns("records")}
+    assert "timezone" not in {col["name"] for col in inspect(engine).get_columns("sites")}
+
+
+def test_v071_migration_preserves_legacy_evidence_on_sqlite(tmp_path, monkeypatch):
+    monkeypatch.delenv("LOGENTRA_TIMEZONE", raising=False)
+    url = f"sqlite:///{tmp_path}/v071.db"
+    engine = make_engine(url)
+    try:
+        _assert_v071_migration(engine, alembic_config(url))
+    finally:
+        engine.dispose()
+
+
+def test_v071_migration_preserves_legacy_evidence_on_postgres(monkeypatch):
+    import os
+    from uuid import uuid4
+
+    import pytest
+    from sqlalchemy import create_engine, make_url
+
+    source = os.getenv("LOGENTRA_TEST_POSTGRES")
+    if not source:
+        pytest.skip("Set LOGENTRA_TEST_POSTGRES for record approval and timezone migration verification")
+    monkeypatch.delenv("LOGENTRA_TIMEZONE", raising=False)
+    name = "v071_" + uuid4().hex
+    admin = create_engine(source, isolation_level="AUTOCOMMIT", hide_parameters=True)
+    with admin.connect() as conn:
+        conn.exec_driver_sql(f"CREATE DATABASE {name}")
+    url = make_url(source).set(database=name).render_as_string(hide_password=False)
+    engine = make_engine(url)
+    try:
+        _assert_v071_migration(engine, alembic_config(url))
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.exec_driver_sql(f"DROP DATABASE {name} WITH (FORCE)")
+        admin.dispose()

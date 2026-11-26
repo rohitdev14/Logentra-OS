@@ -315,9 +315,11 @@ def test_browser_retains_catalog_edit_on_conflict(live_url):
         browser.close()
 
 
-def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path, monkeypatch):
+def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monkeypatch):
     import socket
+    from datetime import datetime, timedelta
     from io import BytesIO
+    from zoneinfo import ZoneInfo
     from uuid import uuid4
     from PIL import Image
     from logentra_server import qr_entries
@@ -325,7 +327,7 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path, monkey
     monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path / "attachments")
 
     from fastapi.testclient import TestClient
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import expect, sync_playwright
     from logentra_server.app import create_app
     from logentra_server.config import Settings
 
@@ -339,19 +341,42 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path, monkey
         }).json()["token"]
         admin = {"Authorization": "Bearer " + token}
         assert client.post("/api/sites", headers=admin, json={
-            "id": "browser-site", "name": "Browser site", "areas": [{"id": "browser-zone", "name": "Zone"}],
+            "id": "browser-site", "name": "Northbrook Works", "timezone": "Asia/Singapore", "areas": [{"id": "browser-zone", "name": "Zone"}],
         }).status_code == 201
         assert client.post("/api/users", headers=admin, json={
-            "username": "scoped-browser", "password": "synthetic-scoped-browser", "role": "technician",
+            "username": "scoped-browser", "display_name": "Lena Tan", "password": "synthetic-scoped-browser",
+            "role": "technician",
             "site_id": "browser-site", "area_id": "browser-zone",
         }).status_code == 201
+        assert client.post("/api/users", headers=admin, json={
+            "username": "review-browser", "display_name": "Amir Rahman", "password": "synthetic-scoped-browser",
+            "role": "supervisor", "site_id": "browser-site", "area_id": "browser-zone",
+        }).status_code == 201
+
+        def create(path, data):
+            response = client.post("/api/" + path, headers=admin, json=data)
+            assert response.status_code == 201, response.text
+            return response.json()
+
+        singapore = ZoneInfo("Asia/Singapore")
+        start = datetime.now(singapore) - timedelta(minutes=35)
+        pattern = create("shift-patterns", {"site_id": "browser-site", "name": "Utilities", "timezone": singapore.key})
+        definition = create(f"shift-patterns/{pattern['id']}/definitions", {
+            "code": "A", "name": "Utilities shift", "start_time": start.strftime("%H:%M"), "duration_minutes": 180,
+        })
+        crew = create("crews", {"site_id": "browser-site", "name": "Crew A"})
+        roster = client.put("/api/roster", headers=admin, json=[{
+            "shift_definition_id": definition["id"], "date": start.date().isoformat(),
+            "area_id": "browser-zone", "crew_id": crew["id"],
+        }])
+        assert roster.status_code == 200, roster.text
         for item in (
-            {"id": "browser-allowed", "values": {"fld_tag": "BR-ALLOWED"}, "site_id": "browser-site", "area_id": "browser-zone"},
-            {"id": "browser-denied", "values": {"fld_tag": "BR-DENIED"}},
+            {"id": "browser-allowed", "values": {"fld_tag": "P-101"}, "site_id": "browser-site", "area_id": "browser-zone"},
+            {"id": "browser-denied", "values": {"fld_tag": "P-102"}},
         ):
             assert client.post("/api/equipment", headers=admin, json=item).status_code == 201
         assert client.patch("/api/equipment/browser-allowed", headers=admin, json={
-            "params": [{"key": "vibration", "label": "Vibration"}],
+            "params": [{"key": "vibration", "label": "Vibration", "max": 5, "unit": "mm/s"}],
         }).status_code == 200
         issued = client.post("/api/equipment/qr-codes", headers=admin, json={"ids": ["browser-allowed"]}).json()
         code = issued["codes"]["browser-allowed"]
@@ -362,7 +387,12 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path, monkey
                                   files={"photos": ("scoped.png", image.getvalue(), "image/png")})
         assert saved_photo.status_code == 200, saved_photo.text
         assert client.post("/api/templates", headers=admin, json={
-            "id": "browser-template", "name": "Scoped checklist", "kind": "custom",
+            "id": "browser-template", "name": "Pump commissioning", "kind": "commissioning",
+            "columns": [
+                {"id": "browser-result", "key": "result", "label": "Result", "type": "passfail"},
+                {"id": "browser-reading", "key": "reading", "label": "Reading", "type": "number"},
+            ],
+            "rows": [{"id": "browser-item", "label": "Inspect coupling guard"}],
         }).status_code == 201
 
     with socket.socket() as listener:
@@ -381,15 +411,19 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path, monkey
         assert server.started
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel=os.getenv("LOGENTRA_TEST_BROWSER_CHANNEL"))
-            page = browser.new_page()
-            page.goto(url)
-            page.fill("#login-user", "scoped-browser")
-            page.fill("#login-pass", "synthetic-scoped-browser")
-            page.get_by_role("button", name="Sign in").click()
-            page.locator("#login-gate").wait_for(state="hidden")
+            def login(username):
+                page = browser.new_page(timezone_id="Europe/London")
+                page.goto(url)
+                page.fill("#login-user", username)
+                page.fill("#login-pass", "synthetic-scoped-browser")
+                page.get_by_role("button", name="Sign in").click()
+                page.locator("#login-gate").wait_for(state="hidden")
+                return page
+
+            page = login("scoped-browser")
             page.evaluate("Logbook.goto('records')")
             page.get_by_role("button", name="New record").click()
-            assert page.locator("#m-eq option").all_text_contents() == ["BR-ALLOWED"]
+            assert page.locator("#m-eq option").all_text_contents() == ["P-101"]
             with page.expect_response(lambda response: response.url.endswith("/api/sync")) as created:
                 page.locator("#m-go").click()
             assert created.value.ok
@@ -402,10 +436,56 @@ def test_scoped_technician_creates_and_edits_record_in_chromium(tmp_path, monkey
             assert recovered["notes"] == "Scoped browser update"
             assert recovered["equipmentId"] == "browser-allowed"
             page.evaluate("Logbook.goto('logbook')")
-            assert page.locator("#history-equipment option").all_text_contents() == ["BR-ALLOWED"]
+            assert page.locator("#history-equipment option").all_text_contents() == ["P-101"]
             photo = page.get_by_role("button", name="Open photo scoped.png").locator("img")
             photo.wait_for()
             photo.evaluate("(image) => image.decode()")
+            now = datetime.now(singapore)
+            expect(page.locator("#log-date")).to_have_value(now.date().isoformat())
+            assert page.locator("#log-time").input_value() in {
+                (now + timedelta(minutes=delta)).strftime("%H:%M") for delta in (-1, 0, 1)
+            }
+            local = now - timedelta(minutes=30)
+            page.locator("#log-date").fill(local.date().isoformat())
+            page.locator("#log-time").fill(local.strftime("%H:%M"))
+            page.locator('input[data-param="vibration"]').fill("8.2")
+            with page.expect_response(lambda response: response.url.endswith("/api/readings/bulk")) as saved:
+                page.get_by_role("button", name="Save entry").click()
+            assert saved.value.ok
+            page.get_by_role("button", name="Shift log", exact=True).click()
+            expect(page.locator(".shift-item").get_by_text(f"8.2 mm/s at {local.strftime('%H:%M')}", exact=False)).to_be_visible()
+
+            page.evaluate("Logbook.goto('records')")
+            page.get_by_role("button", name="Open", exact=True).click()
+            page.get_by_role("radio", name="Fail").check()
+            page.locator(".check-item input[type=number]").fill("8.2")
+            page.get_by_role("button", name="Add punch").click()
+            page.locator("#m-desc").fill("Replace coupling guard")
+            with page.expect_response(lambda response: response.url.endswith("/api/sync")) as saved:
+                page.locator("#m-save").click()
+            assert saved.value.ok
+            page.get_by_role("button", name="Submit for approval").click()
+            expect(page.get_by_text("Waiting for approval", exact=True)).to_be_visible()
+            expect(page.locator("#rec-notes")).to_be_disabled()
+            expect(page.get_by_role("button", name="Add punch")).to_have_count(0)
+
+            reviewer = login("review-browser")
+            reviewer.evaluate("Logbook.goto('records')")
+            reviewer.get_by_role("button", name="Open", exact=True).click()
+            reviewer.get_by_role("button", name="Approve", exact=True).click()
+            dialog = reviewer.get_by_role("dialog")
+            expect(dialog.get_by_text("Replace coupling guard")).to_be_visible()
+            dialog.get_by_label("Comment (optional)").fill("Checked on rounds")
+            dialog.get_by_role("button", name="Approve", exact=True).click()
+            expect(reviewer.locator(".pill.ok").get_by_text("Approved", exact=True)).to_be_visible()
+            expect(reviewer.locator("#rec-notes")).to_be_disabled()
+            expect(reviewer.get_by_role("radio", name="Fail")).to_be_disabled()
+            trail = reviewer.locator("#record-audit")
+            expect(trail.get_by_text("Amir Rahman", exact=False).first).to_be_visible()
+            expect(trail.get_by_text("Lena Tan", exact=False).first).to_be_visible()
+            expect(trail).not_to_contain_text("review-browser")
+            expect(trail).not_to_contain_text("scoped-browser")
+            expect(trail.get_by_text("Raised punch: Replace coupling guard")).to_be_visible()
             browser.close()
     finally:
         server.should_exit = True
