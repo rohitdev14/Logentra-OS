@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import and_, exists, func, literal, or_, tuple_
@@ -43,8 +44,10 @@ from logentra_server.utils import as_float, dumps, loads, out_of_range, parse_ts
 
 def audit(db: Session, action: str, *, actor: str | None = "api", entity_type: str | None = None,
           entity_id: str | None = None, detail: Any = None, user_id: str | None = None) -> None:
+    at = (datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+          if entity_type == "record" else utcnow_iso())
     db.add(AuditLog(
-        id=uid("aud"), ts=utcnow_iso(), actor=actor, user_id=user_id, action=action,
+        id=uid("aud"), ts=at, actor=actor, user_id=user_id, action=action,
         entity_type=entity_type, entity_id=entity_id, detail=dumps(detail) if detail is not None else None,
     ))
 
@@ -223,6 +226,7 @@ def list_records(
     *,
     q: str | None = None,
     equipment_id: str | None = None,
+    status: str | None = None,
     page: int | None = None,
     page_size: int | None = None,
     paginate: bool = False,
@@ -234,6 +238,8 @@ def list_records(
         selectinload(Record.punches),
         selectinload(Record.signoff),
     )
+    if status:
+        query = query.filter(Record.status == status)
     if equipment_id:
         query = query.filter(Record.equipment_id == equipment_id)
     if principal and principal.scoped:
@@ -413,6 +419,8 @@ def template_to_ui(t: Template) -> dict[str, Any]:
 
 
 def record_to_ui(r: Record) -> dict[str, Any]:
+    from logentra_server.records import display_name
+
     cols = sorted(r.columns, key=lambda x: x.sort_order)
     items_out = []
     for it in sorted(r.items, key=lambda x: x.sort_order):
@@ -433,6 +441,12 @@ def record_to_ui(r: Record) -> dict[str, Any]:
             "options": loads(c.options, []) or [],
         } for c in cols],
         "items": items_out, "punches": punches,
+        "status": r.status,
+        "submittedBy": display_name(r.submitter, r.submitted_by), "submittedAt": r.submitted_at,
+        "submittedById": r.submitted_by_id,
+        "approvedBy": display_name(r.approver, r.approved_by), "approvedAt": r.approved_at,
+        "returnedBy": display_name(r.returner, r.returned_by), "returnedAt": r.returned_at,
+        "returnComment": r.return_comment, "approvalComment": r.approval_comment,
         "signoffName": r.signoff.name if r.signoff else "",
         "signoffDate": r.signoff.signed_at[:10] if r.signoff else "",
     }
@@ -718,103 +732,140 @@ def upsert_templates(db: Session, items: list[dict[str, Any]]) -> None:
     db.flush()
 
 
-def upsert_records(db: Session, items: list[dict[str, Any]]) -> None:
+def _record_fields(data, previous, now):
+    fields = {**(previous or {}), **data}
+    columns = [{
+        "id": col.get("id") or uid("col"), "key": col.get("key") or f"c{index}",
+        "label": col.get("label") or "Column", "type": col.get("type") or "text",
+        "options": col.get("options") or [],
+    } for index, col in enumerate(fields.get("columns") or [])]
+    items = [{
+        "id": item.get("id") or uid("it"), "label": item.get("label") or "Item", "hint": item.get("hint") or "",
+        "values": {key: str(value) for key, value in (item.get("values") or {}).items() if value not in (None, "")},
+    } for item in fields.get("items") or []]
+    existing_punches = {punch["id"]: punch for punch in (previous or {}).get("punches", [])}
+    punches = []
+    for punch in fields.get("punches") or []:
+        identifier = punch.get("id") or uid("pn")
+        original = existing_punches.get(identifier)
+        punches.append({
+            "id": identifier, "description": punch.get("description") or "", "priority": punch.get("priority") or "",
+            "status": punch.get("status") or "Open", "owner": punch.get("owner") or "",
+            "raised": original["raised"] if original else punch.get("raised") or punch.get("raised_at") or "",
+            "closed": punch.get("closed") or punch.get("closed_at") or "",
+        })
+    return {
+        "templateId": fields.get("templateId") or "",
+        "templateName": fields.get("templateName") or "",
+        "kind": fields.get("kind") or "",
+        "equipmentId": fields.get("equipmentId") or (previous or {}).get("equipmentId") or "",
+        "createdAt": ((previous or fields).get("createdAt") or now)[:10],
+        "notes": fields.get("notes") or "",
+        "columns": columns, "items": items, "punches": punches,
+    }
+
+
+def _replace_checklist(db, row, columns, items):
+    row.items.clear()
+    db.flush()
+    row.columns.clear()
+    db.flush()
+    col_map = {}
+    for index, col in enumerate(columns):
+        identifier = col["id"]
+        if identifier in col_map:
+            raise HTTPException(422, "Duplicate checklist column ID")
+        column = RecordColumn(
+            id=uid("col") if db.get(RecordColumn, identifier) else identifier,
+            key=col["key"], label=col["label"], type=col["type"],
+            options=dumps(col["options"]), sort_order=index,
+        )
+        row.columns.append(column)
+        col_map[identifier] = column.id
+    db.flush()
+    seen = set()
+    for index, item in enumerate(items):
+        identifier = item["id"]
+        if identifier in seen:
+            raise HTTPException(422, "Duplicate checklist item ID")
+        seen.add(identifier)
+        row.items.append(RecordItem(
+            id=uid("it") if db.get(RecordItem, identifier) else identifier,
+            label=item["label"], hint=item["hint"], sort_order=index,
+            values=[RecordValue(column_id=col_map[key], value=value) for key, value in item["values"].items()
+                    if key in col_map],
+        ))
+
+
+def _save_punches(row, data, now):
+    existing = {punch.id: punch for punch in row.punches}
+    saved = []
+    seen = set()
+    for values in data:
+        identifier = values["id"]
+        if identifier in seen:
+            raise HTTPException(422, "Duplicate punch ID")
+        seen.add(identifier)
+        punch = existing.get(identifier)
+        if punch is None:
+            punch = Punch(id=identifier, created_at=now, raised_at=values["raised"])
+        punch.description = values["description"]
+        punch.priority = values["priority"]
+        punch.status = values["status"]
+        punch.owner = values["owner"]
+        punch.closed_at = values["closed"]
+        saved.append(punch)
+    row.punches = saved
+
+
+def upsert_records(db: Session, items: list[dict[str, Any]], *, actor="api", user_id=None,
+                   legacy_signoffs: bool = False) -> int:
+    from logentra_server import records
+
     now = utcnow_iso()
+    changes = 0
     for rec in items or []:
         rid = rec.get("id") or uid("rec")
         row = db.get(Record, rid)
-        if not row:
-            row = Record(
-                id=rid, template_id=rec.get("templateId") or None,
-                template_name=rec.get("templateName") or "",
-                kind=rec.get("kind") or "", equipment_id=rec.get("equipmentId") or None,
-                notes=rec.get("notes") or "", created_at=rec.get("createdAt") or now, updated_at=now,
-            )
-            db.add(row)
-            db.flush()
-        else:
-            previous = record_to_ui(row)
-            changed = any(rec[key] != previous[key] for key in previous.keys() & rec.keys() - {"revision"})
-            if not changed:
+        previous = record_to_ui(row) if row else None
+        signoff_fields = ("signoffName", "signoffDate")
+        signature = [(rec[key] if key in rec else (previous or {}).get(key)) or "" for key in signoff_fields]
+        signature_changed = signature != [(previous or {}).get(key, "") for key in signoff_fields]
+        if signature_changed and not legacy_signoffs:
+            raise HTTPException(422, "Use Submit for approval to sign records")
+        current = _record_fields(rec, previous, now)
+        old_fields = _record_fields({}, previous, now) if previous else {}
+        if row:
+            if current == old_fields and not signature_changed:
                 continue
-            if row.signoff:
-                raise HTTPException(409, "Signed records cannot be changed")
+            if row.status in records.LOCK_MESSAGES:
+                raise HTTPException(409, records.LOCK_MESSAGES[row.status])
             if rec.get("revision") != row.revision:
-                raise HTTPException(409, "Record changed. Reload before saving.")
-            audit(db, "revise", entity_type="record", entity_id=rid, detail=previous)
+                raise HTTPException(409, records.REVISION_CONFLICT)
+            audit(db, "revise", actor=actor, user_id=user_id, entity_type="record", entity_id=rid, detail=previous)
             row.revision += 1
-            row.template_name = rec.get("templateName", row.template_name)
-            row.kind = rec.get("kind", row.kind)
-            row.equipment_id = rec.get("equipmentId", row.equipment_id) or row.equipment_id
-            row.notes = rec.get("notes", row.notes)
-            row.updated_at = now
-            db.flush()
-        if "columns" in rec or "items" in rec:
-            col_ids = [c.id for c in db.query(RecordColumn).filter_by(record_id=rid).all()]
-            item_ids = [i.id for i in db.query(RecordItem).filter_by(record_id=rid).all()]
-            if col_ids or item_ids:
-                qv = db.query(RecordValue)
-                if item_ids:
-                    qv = qv.filter(RecordValue.item_id.in_(item_ids))
-                elif col_ids:
-                    qv = qv.filter(RecordValue.column_id.in_(col_ids))
-                qv.delete(synchronize_session=False)
-            db.query(RecordItem).filter_by(record_id=rid).delete()
-            db.query(RecordColumn).filter_by(record_id=rid).delete()
-            db.flush()
-        col_map: dict[str, str] = {}
-        if "columns" in rec:
-            for i, c in enumerate(rec.get("columns") or []):
-                old_id = c.get("id") or uid("col")
-                new_id = old_id
-                if db.get(RecordColumn, new_id) or new_id in col_map.values():
-                    new_id = uid("col")
-                col_map[old_id] = new_id
-                db.add(RecordColumn(
-                    id=new_id, record_id=rid, key=c.get("key") or f"c{i}",
-                    label=c.get("label") or "Column", type=c.get("type") or "text",
-                    options=dumps(c.get("options") or []), sort_order=i,
-                ))
-            db.flush()
-        if "items" in rec:
-            for i, it in enumerate(rec.get("items") or []):
-                old_iid = it.get("id") or uid("it")
-                new_iid = old_iid
-                if db.get(RecordItem, new_iid):
-                    new_iid = uid("it")
-                item = RecordItem(
-                    id=new_iid, record_id=rid,
-                    label=it.get("label") or "Item", hint=it.get("hint") or "", sort_order=i,
-                )
-                db.add(item)
-                db.flush()
-                for cid, val in (it.get("values") or {}).items():
-                    db.add(RecordValue(
-                        item_id=item.id, column_id=col_map.get(cid, cid),
-                        value="" if val is None else str(val),
-                    ))
-        if "punches" in rec:
-            db.query(Punch).filter_by(record_id=rid).delete()
-            for p in rec.get("punches") or []:
-                db.add(Punch(
-                    id=p.get("id") or uid("pn"), record_id=rid,
-                    description=p.get("description") or "", priority=p.get("priority") or "",
-                    status=p.get("status") or "Open", owner=p.get("owner") or "",
-                    raised_at=p.get("raised") or p.get("raised_at") or "",
-                    closed_at=p.get("closed") or p.get("closed_at") or "",
-                    created_at=now,
-                ))
-        name = rec.get("signoffName") or ""
-        date = rec.get("signoffDate") or ""
-        existing = db.query(Signoff).filter_by(record_id=rid).one_or_none()
-        if name and date:
-            if existing:
-                existing.name, existing.signed_at = name, date
-            else:
-                db.add(Signoff(id=uid("sg"), record_id=rid, name=name, signed_at=date))
-        elif existing and not name:
-            db.delete(existing)
+        else:
+            row = Record(id=rid, created_at=rec.get("createdAt") or now)
+            db.add(row)
+        row.template_id = current["templateId"] or None
+        row.template_name = current["templateName"]
+        row.kind = current["kind"]
+        row.equipment_id = current["equipmentId"] or None
+        row.notes = current["notes"]
+        row.updated_at = now
+        if old_fields.get("columns") != current["columns"] or old_fields.get("items") != current["items"]:
+            _replace_checklist(db, row, current["columns"], current["items"])
+        if old_fields.get("punches") != current["punches"]:
+            _save_punches(row, current["punches"], now)
+        db.flush()
+        records.audit_save(db, row, previous, record_to_ui(row), actor=actor, user_id=user_id)
+        if signature_changed and all(signature):
+            row.status = "approved"
+            row.approved_by, row.approved_at = signature
+            records.sign_record(db, row, *signature, actor=actor, user_id=user_id)
+        changes += 1
     db.flush()
+    return changes
 
 
 def upsert_presets(db: Session, presets: dict[str, list]) -> None:
@@ -829,15 +880,6 @@ def upsert_presets(db: Session, presets: dict[str, list]) -> None:
             ))
     db.flush()
 
-
-def require_signoff_permission(db: Session, principal, record: dict) -> None:
-    if not record.get("signoffName") or not record.get("signoffDate"):
-        return
-    old = db.get(Record, record["id"]) if record.get("id") else None
-    if not old or not old.signoff or (
-        old.signoff.name != record["signoffName"] or old.signoff.signed_at[:10] != record["signoffDate"]
-    ):
-        principal.require("signoff")
 
 def scoped_equipment_input(db, principal, payload):
     if not principal.scoped:
@@ -870,7 +912,8 @@ def require_record_scope(db, principal, record_id, equipment_id=None):
             raise HTTPException(404, "Equipment not found")
 
 def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui",
-                 expected: str | None = None, commit: bool = True, principal=None) -> dict[str, Any]:
+                 expected: str | None = None, commit: bool = True, principal=None,
+                 user_id: str | None = None, legacy_signoffs: bool = False) -> dict[str, Any]:
     revision = advance_catalog(db, expected)
     if principal:
         if principal.scoped:
@@ -880,7 +923,6 @@ def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui",
                 state["equipment"] = [scoped_equipment_input(db, principal, item) for item in state["equipment"]]
         for record in state.get("records", []):
             require_record_scope(db, principal, record.get("id"), record.get("equipmentId"))
-            require_signoff_permission(db, principal, record)
     ensure_default_fields(db)
     if "equipmentFields" in state:
         _upsert_fields(db, state["equipmentFields"])
@@ -888,12 +930,13 @@ def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui",
         upsert_equipment_list(db, state["equipment"])
     if "templates" in state:
         upsert_templates(db, state["templates"])
-    if "records" in state:
-        upsert_records(db, state["records"])
+    record_changes = upsert_records(db, state.get("records", []), actor=actor, user_id=user_id,
+                                    legacy_signoffs=legacy_signoffs)
     if "paramPresets" in state:
         upsert_presets(db, state["paramPresets"])
-    set_setting(db, "updated_at", utcnow_iso())
-    audit(db, "sync", actor=actor, entity_type="catalog", detail={"keys": list(state.keys())})
+    if record_changes or set(state) - {"records"}:
+        set_setting(db, "updated_at", utcnow_iso())
+        audit(db, "sync", actor=actor, user_id=user_id, entity_type="catalog", detail={"keys": list(state.keys())})
     if commit:
         db.commit()
     else:
@@ -1238,6 +1281,8 @@ def clear_all(db: Session, *, actor: str = "ui") -> None:
         WorkOrderLabour,
     )
     advance_catalog(db)
+    if db.query(Record.id).filter(Record.status == "submitted").first():
+        raise HTTPException(409, "This operation would remove records waiting for approval")
     if db.query(Signoff).first() or db.query(Document).filter(
         or_(Document.locked == 1, Document.status == "approved")
     ).first():

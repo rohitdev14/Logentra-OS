@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from logentra_server import service
 
 
-def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor: str = "migrate") -> dict[str, Any]:
+def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor: str = "migrate",
+               user_id: str | None = None) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Expected a JSON object (a v0.2 backup).")
     # Accept a raw state or a wrapper {state: ...}
@@ -23,7 +24,7 @@ def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor
         "records": state.get("records") or [],
         "paramPresets": state.get("paramPresets") or {},
     }
-    service.sync_catalog(db, catalog, actor=actor, commit=False)
+    service.sync_catalog(db, catalog, actor=actor, commit=False, legacy_signoffs=True, user_id=user_id)
 
     items = []
     for log in state.get("logs") or []:

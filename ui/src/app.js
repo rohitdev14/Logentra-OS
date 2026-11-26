@@ -64,7 +64,7 @@
     }).formatToParts(date).map(({ type, value }) => [type, value]));
     return { date: fields.year + "-" + fields.month + "-" + fields.day, time: fields.hour + ":" + fields.minute };
   }
-  function nowLocal(equipment = eqById(ui.logEq)) {
+  function nowLocal(equipment = eqById(ui.logEq) || state.equipmentIndex?.find(row => row.id === ui.logEq)) {
     return zonedDateTime(new Date(), equipmentTimezone(equipment));
   }
   function todayISO(equipment) { return nowLocal(equipment).date; }
@@ -233,6 +233,7 @@
         toast("Could not save to the database: " + err.message);
       }
     });
+    return saveQueue;
   }
 
   async function resumeAfterLogin(user) {
@@ -1037,7 +1038,8 @@
 
   function statusPill(st) {
     const map = {
-      signed: ["pill-pass", "Signed"], ready: ["pill-pass", "Ready for sign-off"],
+      signed: ["pill-pass", "Signed"], ready: ["pill-pass", window.LogbookAPI ? "Ready to submit" : "Ready for sign-off"],
+      submitted: ["review", "Submitted"], approved: ["ok", "Approved"], returned: ["high", "Returned"],
       wip: ["pill-wip", "In progress"], not: ["pill-not", "Not started"],
       Open: ["pill-open", "Open"], "In progress": ["pill-wip", "In progress"],
       Closed: ["pill-closed", "Closed"], Deferred: ["pill-na", "Deferred"],
@@ -1053,6 +1055,7 @@
     return { done, total: items.length, pct: items.length ? Math.round((done / items.length) * 100) : 0 };
   }
   function recordStatus(rec) {
+    if (window.LogbookAPI && rec.status && rec.status !== "draft") return rec.status;
     if (rec.signoffName && rec.signoffDate) return "signed";
     const p = recordProgress(rec);
     if (p.done === 0) return "not";
@@ -1110,7 +1113,7 @@
 
   function viewDashboard() {
     const punches = openPunches();
-    const openR = state.records.filter((c) => recordStatus(c) !== "signed").length;
+    const openR = state.records.filter((c) => !["signed", "approved"].includes(recordStatus(c))).length;
     const weekStart = addDays(todayISO(), -6);
     const weekLogs = state.logs.filter((l) => l.date >= weekStart).length;
     let unack = 0;
@@ -1297,6 +1300,130 @@
     `;
   }
 
+  function recordEditable(rec) {
+    return !window.LogbookAPI ||
+      (!["submitted", "approved"].includes(rec.status) && window.LogbookV4.can("records.write"));
+  }
+  function recordZone(rec) {
+    return equipmentTimezone(recordAssets().find(asset => asset.id === rec.equipmentId));
+  }
+  function recordClock(at, zone) {
+    if (!at || at.length === 10) return at || "";
+    const instant = new Date(at);
+    if (Number.isNaN(instant.valueOf())) return at;
+    const { date, time } = zonedDateTime(instant, zone);
+    return date + " " + time;
+  }
+  function reviewRecord(rec) {
+    const me = state.me;
+    return rec.status === "submitted" && window.LogbookV4.can("records.approve") &&
+      (me?.mode === "open" || rec.submittedById !== me?.id);
+  }
+  function openRecordPunches(rec) {
+    return rec.punches.filter(punch => ["Open", "In progress"].includes(punch.status));
+  }
+  function recordApproval(rec, zone) {
+    const steps = [
+      ["Submitted", rec.submittedAt, rec.submittedBy],
+      ["Returned", rec.returnedAt, rec.returnedBy, rec.returnComment],
+      ["Approved", rec.approvedAt, rec.approvedBy, rec.approvalComment],
+    ].filter(([, at]) => at).sort((left, right) => left[1].localeCompare(right[1]));
+    return `<h3>Approval</h3>
+      ${steps.map(([label, at, name, comment]) => `<p><strong>${label} by ${esc(name)}</strong> ·
+        ${esc(recordClock(at, zone))}${comment ? " · " + esc(comment) : ""}</p>`).join("")}
+      ${steps.length ? "" : "<p>Draft</p>"}`;
+  }
+
+  async function loadRecordAudit(host, rec) {
+    await saveQueue;
+    if (!host.isConnected) return;
+    try {
+      const trail = await window.LogbookAPI.getRecordAudit(rec.id);
+      if (!host.isConnected) return;
+      const zone = recordZone(rec);
+      host.innerHTML = trail.filter(event => event.action !== "revise").map(event => {
+        const { id, at, label, actor_name: name, detail } = event;
+        const when = recordClock(at, zone);
+        const changes = detail.changes || [];
+        return `<div class="timeline-row" data-event="${esc(id)}">
+          <time class="timeline-clock" datetime="${esc(at)}" title="${esc(when)}">${esc(when.slice(11))}</time>
+          <span class="timeline-dot" aria-hidden="true"></span><div class="timeline-card">
+            <article class="card shift-entry"><p class="tiny">${esc(when.slice(0, 10))} · ${esc(name)}</p>
+              ${changes.length ? `<details><summary>${esc(label)}</summary><ul>${changes.map(change =>
+                `<li>${esc(change.item)} · ${esc(change.column)}: ${esc(change.from || "—")} → ${esc(change.to || "—")}</li>`).join("")}</ul>
+                ${detail.truncated ? `<p class="tiny">${detail.truncated} additional changes</p>` : ""}</details>` : `<p>${esc(label)}</p>`}
+            </article></div></div>`;
+      }).join("") || "<p>No changes recorded yet.</p>";
+    } catch (err) {
+      if (host.isConnected) host.textContent = err.message;
+    }
+  }
+
+  function updateSavedRecord(record) {
+    const index = state.records.findIndex(row => row.id === record.id);
+    if (index !== -1) state.records[index] = record;
+    const saved = JSON.parse(savedCatalog.records || "[]");
+    const savedIndex = saved.findIndex(row => row.id === record.id);
+    if (savedIndex !== -1) saved[savedIndex] = record;
+    savedCatalog.records = JSON.stringify(saved);
+  }
+
+  async function openRecord(btn) {
+    const id = btn.dataset.id;
+    const activeState = state;
+    btn.disabled = true;
+    try {
+      await saveQueue;
+      if (window.LogbookAPI && !dirtyCatalog) {
+        const record = await window.LogbookAPI.getRecord(id);
+        if (state !== activeState || !btn.isConnected) return;
+        updateSavedRecord(record);
+      }
+      if (state !== activeState || !btn.isConnected) return;
+      ui.recordId = id;
+      ui.view = "recordEdit";
+      render();
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function actOnRecord(action, btn) {
+    const rec = state.records.find(row => row.id === ui.recordId);
+    if (!rec || ui.pendingRecordAction) return;
+    ui.pendingRecordAction = true;
+    btn.disabled = true;
+    try {
+      let comment = "";
+      if (action === "submit") {
+        if (!recordEditable(rec)) return;
+        collectRecordEdits();
+        await persist();
+        if (dirtyCatalog) return;
+      } else {
+        if (!reviewRecord(rec)) return;
+        const punches = action === "approve" ? openRecordPunches(rec) : [];
+        comment = await window.LogbookV5.commentRequired(action, {punches});
+        if (comment === null) return;
+        await saveQueue;
+      }
+      const method = {submit: "submitRecord", approve: "approveRecord", return: "returnRecord"}[action];
+      const activeState = state;
+      const { catalogRevision, ...updated } = await window.LogbookAPI[method](rec.id, {revision: rec.revision, comment});
+      if (state !== activeState) return;
+      state.meta.catalogRevision = catalogRevision;
+      updateSavedRecord(updated);
+      render();
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      ui.pendingRecordAction = false;
+      btn.disabled = false;
+    }
+  }
+
   function viewRecords() {
     const rows = state.records.slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     return `
@@ -1310,30 +1437,31 @@
       <div class="card">
         ${rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Opened</th><th>Template</th><th>Tag</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>' +
           rows.map((r) => {
-            const eq = eqById(r.equipmentId);
+            const eq = recordAssets().find(asset => asset.id === r.equipmentId);
             const p = recordProgress(r);
             return "<tr><td>" + esc(r.createdAt || "—") + "</td><td>" + esc(r.templateName || "") + "</td><td class='tag'>" +
-              esc(eq ? eqTag(eq) : "?") + "</td><td>" + p.done + "/" + p.total + "</td><td>" + statusPill(recordStatus(r)) +
-              "</td><td class='no-print'><button class='btn btn-sm btn-primary' data-act='rec-open' data-id='" + r.id + "'>Open</button> " +
-              "<button class='btn btn-sm btn-danger' data-act='rec-del' data-id='" + r.id + "'>Delete</button></td></tr>";
+              esc(eq ? (eq.tag || eqTag(eq)) : "?") + "</td><td>" + p.done + "/" + p.total + "</td><td>" + statusPill(recordStatus(r)) +
+              "</td><td class='no-print'><button class='btn btn-sm btn-primary' data-act='rec-open' data-id='" + esc(r.id) + "'>Open</button> " +
+              (recordEditable(r) ? "<button class='btn btn-sm btn-danger' data-act='rec-del' data-id='" + esc(r.id) + "'>Delete</button>" : "") + "</td></tr>";
           }).join("") + "</tbody></table></div>" : '<p class="empty">No records yet.</p>'}
       </div>
     `;
   }
 
-  function fieldControl(col, value, attrs) {
+  function fieldControl(col, value, attrs, locked) {
     const v = value == null ? "" : String(value);
+    const disabled = locked ? " disabled" : "";
     if (col.type === "passfail") {
-      return '<div class="result-row">' + ["Pass", "Fail", "NA"].map((r) =>
-        '<label><input type="radio" name="' + attrs + '" value="' + r + '"' + (v === r ? " checked" : "") + "> " + r + "</label>"
+      return '<div class="result-row" role="group" aria-label="' + esc(col.label) + '">' + ["Pass", "Fail", "NA"].map((r) =>
+        '<label><input type="radio" name="' + attrs + '" value="' + r + '"' + (v === r ? " checked" : "") + disabled + "> " + r + "</label>"
       ).join("") + "</div>";
     }
     if (col.type === "select") {
-      return '<select data-col="' + col.id + '"><option value=""></option>' +
+      return '<select data-col="' + col.id + '"' + disabled + '><option value=""></option>' +
         (col.options || []).map((o) => '<option' + (v === o ? " selected" : "") + ">" + esc(o) + "</option>").join("") + "</select>";
     }
     const typ = col.type === "number" ? "number" : col.type === "date" ? "date" : "text";
-    return '<input type="' + typ + '" data-col="' + col.id + '" value="' + esc(v) + '"' + (col.type === "number" ? ' step="any"' : "") + ">";
+    return '<input type="' + typ + '" data-col="' + col.id + '" value="' + esc(v) + '"' + (col.type === "number" ? ' step="any"' : "") + disabled + ">";
   }
 
   function viewRecordEdit() {
@@ -1343,6 +1471,9 @@
     const tag = eq ? eqTag(eq) : (recordAssets().find((asset) => asset.id === rec.equipmentId) || {}).tag;
     const p = recordProgress(rec);
     const cols = rec.columns || [];
+    const editable = recordEditable(rec);
+    const api = window.LogbookAPI;
+    const zone = recordZone(rec);
     return `
       <div class="print-only print-head">
         <h1>Record — ${esc(tag || "")} · ${esc(rec.templateName || "")}</h1>
@@ -1353,17 +1484,25 @@
           <button class="btn btn-sm" data-act="goto" data-view="records">← All records</button>
           <h2 style="margin-top:.4rem">${esc(tag || "Unknown")} — ${esc(rec.templateName || "")}</h2>
           <p class="tiny">${esc(eq ? eqCat(eq) : "")} · ${esc(eq ? eqVal(eq, "location") : "")} · opened ${esc(rec.createdAt || "—")} · ${esc(kindLabel(rec.kind))}</p>
+          ${api && rec.status === "approved" ? `<p class="tiny">Approved by ${esc(rec.approvedBy)} ·
+            ${esc(recordClock(rec.approvedAt, zone))} · Record locked</p>` : ""}
+          ${api && rec.status === "submitted" && !reviewRecord(rec) ? '<p class="tiny">Waiting for approval</p>' : ""}
         </div>
         <div class="row">
           <button class="btn" data-act="rec-print">Print / PDF</button>
-          <button class="btn btn-primary" data-act="rec-save">Save</button>
+          ${editable ? '<button class="btn btn-primary" data-act="rec-save">Save</button>' : ""}
+          ${api && editable ? '<button class="btn btn-primary" data-act="rec-submit">Submit for approval</button>' : ""}
+          ${api && reviewRecord(rec) ? `<button class="btn success btn-primary" data-act="rec-approve">Approve</button>
+            <button class="btn warn" data-act="rec-return">Return for changes</button>` : ""}
         </div>
       </div>
+      ${api && rec.status === "returned" ? `<div class="shift-banner" role="status">
+        Returned by ${esc(rec.returnedBy)} · ${esc(recordClock(rec.returnedAt, zone))}: ${esc(rec.returnComment)}</div>` : ""}
       <div class="card" style="margin-bottom:1rem">
         <div class="tiny">Progress</div>
         <div class="progress" style="margin-top:.3rem"><span style="width:${p.pct}%"></span></div>
         <p class="tiny" style="margin-top:.3rem">${p.done} of ${p.total} items with a result · ${statusPill(recordStatus(rec))}</p>
-        <label class="fld" style="margin-top:.7rem"><span>Notes</span><textarea id="rec-notes">${esc(rec.notes || "")}</textarea></label>
+        <label class="fld" style="margin-top:.7rem"><span>Notes</span><textarea id="rec-notes" ${editable ? "" : "disabled"}>${esc(rec.notes || "")}</textarea></label>
       </div>
       <div class="card">
         <h3>Items</h3>
@@ -1374,31 +1513,37 @@
               <div class="check-text">${esc(it.label)}</div>
               ${it.hint ? '<div class="check-method">' + esc(it.hint) + "</div>" : ""}
               <div class="form-grid" style="margin-top:.4rem">
-                ${cols.map((c) => '<label class="fld"><span>' + esc(c.label) + "</span>" +
-                  fieldControl(c, it.values ? it.values[c.id] : "", "res-" + i + "-" + c.id) + "</label>").join("")}
+                ${cols.map((c) => {
+                  const element = c.type === "passfail" ? "div" : "label";
+                  return `<${element} class="fld"><span>${esc(c.label)}</span>
+                    ${fieldControl(c, it.values?.[c.id], "res-" + i + "-" + c.id, !editable)}</${element}>`;
+                }).join("")}
               </div>
             </div>
           </div>
         `).join("") || '<p class="empty">This record has no items.</p>'}
       </div>
       <div class="card" style="margin-top:1rem">
-        <div class="row spread"><h3>Punch list</h3><button class="btn btn-sm no-print" data-act="punch-add">Add punch</button></div>
+        <div class="row spread"><h3>Punch list</h3>${editable ? '<button class="btn btn-sm no-print" data-act="punch-add">Add punch</button>' : ""}</div>
         ${(rec.punches || []).length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Description</th><th>Priority</th><th>Status</th><th>Raised</th><th>Owner</th><th class="no-print"></th></tr></thead><tbody>' +
           (rec.punches || []).map((p, i) =>
             "<tr><td>" + esc(p.description) + "</td><td>" + esc(p.priority) + "</td><td>" + statusPill(p.status) +
             "</td><td>" + esc(p.raised || "") + "</td><td>" + esc(p.owner || "") +
-            "</td><td class='no-print'><button class='btn btn-sm' data-act='punch-edit' data-i='" + i + "'>Edit</button> " +
-            "<button class='btn btn-sm btn-danger' data-act='punch-del' data-i='" + i + "'>Delete</button></td></tr>"
+            "</td><td class='no-print'>" + (editable ?
+              "<button class='btn btn-sm' data-act='punch-edit' data-i='" + i + "'>Edit</button> " +
+              "<button class='btn btn-sm btn-danger' data-act='punch-del' data-i='" + i + "'>Delete</button>" : "") + "</td></tr>"
           ).join("") + "</tbody></table></div>" : '<p class="empty">No punches.</p>'}
       </div>
       <div class="card" style="margin-top:1rem">
-        <h3>Sign-off</h3>
+        ${api ? recordApproval(rec, zone) : `<h3>Sign-off</h3>
         <div class="form-grid">
           <label class="fld"><span>Name / role</span><input id="rec-sign-name" value="${esc(rec.signoffName || "")}"></label>
           <label class="fld"><span>Date</span><input id="rec-sign-date" type="date" value="${esc(rec.signoffDate || "")}"></label>
-        </div>
+        </div>`}
         <p class="tiny" style="margin-top:.6rem">A record of checks, not a certified design or PE stamp.</p>
       </div>
+      ${api ? `<section class="card" style="margin-top:1rem"><h3>Audit trail</h3>
+        <div class="shift-timeline" id="record-audit" aria-live="polite">Loading audit trail…</div></section>` : ""}
     `;
   }
 
@@ -1854,7 +1999,7 @@
     box.querySelector("#m-go").addEventListener("click", () => {
       const tpl = state.templates.find((t) => t.id === document.getElementById("m-tpl").value);
       const eq = assets.find((asset) => asset.id === document.getElementById("m-eq").value);
-      const cols = clone(tpl.columns || []).map((c) => Object.assign({}, c, { id: c.id || uid("col") }));
+      const cols = clone(tpl.columns || []).map((c) => Object.assign({}, c, { id: window.LogbookAPI ? uid("col") : c.id || uid("col") }));
       const rec = {
         id: uid("rec"),
         templateId: tpl.id,
@@ -1896,7 +2041,7 @@
             <select id="m-st">${["Open", "In progress", "Closed", "Deferred"].map((s) =>
               "<option" + (p.status === s ? " selected" : "") + ">" + s + "</option>").join("")}</select>
           </label>
-          <label class="fld"><span>Raised</span><input id="m-raised" type="date" value="${esc(p.raised || todayISO())}"></label>
+          <label class="fld"><span>Raised</span><input id="m-raised" type="date" value="${esc(p.raised || todayISO())}" ${window.LogbookAPI && index != null ? "disabled" : ""}></label>
           <label class="fld"><span>Owner</span><input id="m-owner" value="${esc(p.owner || "")}"></label>
         </div>
         <div class="row spread"><button class="btn" data-close="1">Cancel</button><button class="btn btn-primary" id="m-save">Save</button></div>
@@ -1996,7 +2141,7 @@
 
   function collectRecordEdits() {
     const rec = state.records.find((r) => r.id === ui.recordId);
-    if (!rec) return;
+    if (!rec || !recordEditable(rec)) return;
     const notes = document.getElementById("rec-notes");
     if (notes) rec.notes = notes.value;
     const sn = document.getElementById("rec-sign-name");
@@ -2076,6 +2221,11 @@
 
   /* ---------- bind + events ---------- */
   function bindView() {
+    if (ui.view === "recordEdit") {
+      const audit = document.getElementById("record-audit");
+      const record = state.records.find(row => row.id === ui.recordId);
+      if (audit && record) loadRecordAudit(audit, record);
+    }
     if (ui.view === "trends") {
       const el = document.getElementById("chart");
       const eq = eqById(ui.logEq || (state.equipment[0] && state.equipment[0].id));
@@ -2253,21 +2403,53 @@
       ui.view = "import"; render(); return;
     }
     if (act === "rec-start") { if (ui.view === "templates") collectTplMeta(), persist(); modalStartRecord(); return; }
-    if (act === "rec-open") { ui.recordId = btn.dataset.id; ui.view = "recordEdit"; render(); return; }
+    if (act === "rec-open") {
+      openRecord(btn);
+      return;
+    }
+    if (["rec-submit", "rec-approve", "rec-return"].includes(act)) {
+      actOnRecord(act.slice(4), btn);
+      return;
+    }
     if (act === "rec-del") {
-      if (!confirm("Delete this record?")) return;
-      if (window.LogbookAPI) { deleteCatalog("records", btn.dataset.id); return; }
-      state.records = state.records.filter((r) => r.id !== btn.dataset.id);
+      const rec = state.records.find(row => row.id === btn.dataset.id);
+      if (!rec || !recordEditable(rec) || !confirm("Delete this record?")) return;
+      if (window.LogbookAPI) { deleteCatalog("records", rec.id); return; }
+      state.records = state.records.filter(row => row.id !== rec.id);
       persist(); render(); return;
     }
-    if (act === "rec-save") { collectRecordEdits(); persist(); render(); return; }
-    if (act === "rec-print") { collectRecordEdits(); persist(); window.print(); return; }
-    if (act === "punch-add") { const rec = state.records.find((r) => r.id === ui.recordId); if (rec) { collectRecordEdits(); modalPunch(rec, null); } return; }
-    if (act === "punch-edit") { const rec = state.records.find((r) => r.id === ui.recordId); if (rec) { collectRecordEdits(); modalPunch(rec, Number(btn.dataset.i)); } return; }
-    if (act === "punch-del") {
-      const rec = state.records.find((r) => r.id === ui.recordId);
-      if (!rec || !confirm("Delete this punch?")) return;
-      collectRecordEdits(); rec.punches.splice(Number(btn.dataset.i), 1); persist(); render(); return;
+    if (act === "rec-save") {
+      collectRecordEdits();
+      Promise.resolve(persist()).then(() => { if (ui.view === "recordEdit" && !dirtyCatalog) render(); });
+      return;
+    }
+    if (act === "rec-print") {
+      const rec = state.records.find(row => row.id === ui.recordId);
+      if (!window.LogbookAPI) { collectRecordEdits(); persist(); window.print(); return; }
+      const host = document.getElementById("record-audit");
+      if (rec && host) {
+        if (recordEditable(rec)) {
+          collectRecordEdits();
+          persist();
+        }
+        loadRecordAudit(host, rec).then(() => { if (host.isConnected) window.print(); });
+      }
+      return;
+    }
+    if (["punch-add", "punch-edit", "punch-del"].includes(act)) {
+      const rec = state.records.find(row => row.id === ui.recordId);
+      if (!rec || !recordEditable(rec)) return;
+      const index = Number(btn.dataset.i);
+      if (act === "punch-del") {
+        if (!confirm("Delete this punch?")) return;
+        collectRecordEdits();
+        rec.punches.splice(index, 1);
+        persist(); render();
+      } else {
+        collectRecordEdits();
+        modalPunch(rec, act === "punch-add" ? null : index);
+      }
+      return;
     }
     if (act === "goto-trend") { ui.view = "trends"; render(); return; }
     if (act === "dismiss-timezone") {

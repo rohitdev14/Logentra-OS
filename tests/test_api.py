@@ -66,12 +66,16 @@ def test_templates_and_records(client: TestClient):
         "equipmentId": "eq_t", "kind": "inspection",
         "columns": [{"id": "c1", "key": "result", "label": "Result", "type": "passfail"}],
         "items": [{"id": "i1", "label": "Look over the unit", "values": {"c1": "Pass"}}],
-        "signoffName": "A. Tester", "signoffDate": "2026-11-22",
     })
     assert rec.status_code == 201
     got = rec.json()
-    assert got["signoffName"] == "A. Tester"
+    assert got["status"] == "draft"
     assert got["items"][0]["values"]["c1"] == "Pass"
+    submitted = client.post("/api/records/rec_1/submit", json={"revision": got["revision"]})
+    assert submitted.status_code == 200, submitted.text
+    approved = client.post("/api/records/rec_1/approve", json={"revision": submitted.json()["revision"]},
+                           headers={"X-Logentra-Actor": "A. Tester"})
+    assert approved.status_code == 200, approved.text
     assert client.delete("/api/records/rec_1").status_code == 409
     assert client.get("/api/records").json()[0]["signoffName"] == "A. Tester"
 

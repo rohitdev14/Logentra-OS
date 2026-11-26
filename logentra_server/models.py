@@ -156,6 +156,9 @@ class Record(Base):
     returned_by_id: Mapped[str | None] = mapped_column(Text, ForeignKey("users.id", ondelete="SET NULL"))
     return_comment: Mapped[str | None] = mapped_column(Text)
     approval_comment: Mapped[str | None] = mapped_column(Text)
+    submitter: Mapped[User | None] = relationship(foreign_keys=[submitted_by_id], lazy="selectin")
+    approver: Mapped[User | None] = relationship(foreign_keys=[approved_by_id], lazy="selectin")
+    returner: Mapped[User | None] = relationship(foreign_keys=[returned_by_id], lazy="selectin")
     equipment: Mapped[Equipment | None] = relationship(back_populates="records")
     columns: Mapped[list[RecordColumn]] = relationship(
         back_populates="record", cascade="all, delete-orphan", order_by="RecordColumn.sort_order"

@@ -181,7 +181,7 @@
             const limit = a.max != null ? " · max " + a.max : (a.min != null ? " · min " + a.min : "");
             return "<tr class='" + (a.acknowledged ? "" : "unack-row") + "'><td><b>" + esc(a.tag) + "</b> " + esc(a.parameter) + " " + esc(a.value) + esc(limit) +
               "<div class='tiny'>" + (a.acknowledged ? esc(a.cause || "Acknowledged") : "Unacknowledged") + "</div></td>" +
-              "<td class='tiny' style='text-align:right;white-space:nowrap'>" + esc(fmtWhen(a.ts, global.Logbook.equipmentTimezone(global.Logbook.getState().equipmentIndex.find(e => e.id === a.equipment_id)))) + "</td></tr>";
+              "<td class='tiny' style='text-align:right;white-space:nowrap'>" + esc(fmtWhen(a.ts, global.Logbook.equipmentTimezone(global.Logbook.getState().equipmentIndex?.find(e => e.id === a.equipment_id)))) + "</td></tr>";
           }).join("") + "</tbody></table></div>" : '<p class="empty">No out-of-range alerts.</p>'}
         </div>
         <div class="card queue-card">
@@ -535,7 +535,41 @@
     global.Logbook.goto("approvalDetail", { docId: doc.id });
   }
 
-  async function commentRequired(action) {
+  async function commentRequired(action, options) {
+    if (options) {
+      const approve = action === "approve";
+      const dialog = document.createElement("dialog");
+      const label = approve ? "Approve record" : "Return for changes";
+      dialog.className = "shift-dialog";
+      dialog.innerHTML = `<form method="dialog" class="stack">
+        <h3>${label}</h3>
+        ${options.punches?.length ? `<div class="shift-banner">
+          <strong>Open punches</strong><ul>${options.punches.map(punch => `<li>${esc(punch.description)}</li>`).join("")}</ul></div>` : ""}
+        <label class="fld"><span>${approve ? "Comment (optional)" : "Comment (required)"}</span>
+          <textarea name="comment" maxlength="10000" ${approve ? "" : "required"}></textarea>
+        </label><div class="row">
+          <button class="btn" value="cancel" formnovalidate>Cancel</button>
+          <button class="btn btn-primary ${approve ? "success" : "warn"}" value="save">${approve ? "Approve" : "Return"}</button>
+        </div></form>`;
+      const input = dialog.querySelector("textarea");
+      dialog.querySelector("form").onsubmit = event => {
+        if (!approve && event.submitter?.value === "save" && !input.value.trim()) {
+          event.preventDefault();
+          input.setCustomValidity("A comment is required.");
+          input.reportValidity();
+        }
+      };
+      input.oninput = () => input.setCustomValidity("");
+      document.body.append(dialog);
+      return new Promise(resolve => {
+        dialog.addEventListener("close", () => {
+          const result = dialog.returnValue === "save" ? input.value.trim() : null;
+          dialog.remove();
+          resolve(result);
+        }, {once: true});
+        dialog.showModal();
+      });
+    }
     const existing = (document.getElementById("doc-comment") || {}).value;
     if (action === "approve") return existing || "";
     const text = existing || prompt(action === "reject" ? "Rejection comment (required)" : "Describe the changes required");
@@ -729,5 +763,5 @@
   if (global.LogbookAPI) {
     loadDash().catch(() => {});
   }
-  global.LogbookV5 = { cache, loadDash, loadDocs, viewDashboard };
+  global.LogbookV5 = { cache, loadDash, loadDocs, viewDashboard, commentRequired };
 })(typeof window !== "undefined" ? window : globalThis);

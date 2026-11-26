@@ -6,12 +6,8 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from logentra_server import service
+from logentra_server import service, sitetime
 from logentra_server.utils import utcnow_iso
-
-
-def _today() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
 
 
 def _add_days(iso: str, delta: int) -> str:
@@ -67,9 +63,9 @@ def _simple_pdf(title: str, lines: list[str]) -> bytes:
     return bytes(out)
 
 
-def load_demo(db: Session, *, actor: str = "ui") -> dict:
+def load_demo(db: Session, *, actor: str = "ui", user_id: str | None = None) -> dict:
     service.clear_all(db, actor=actor)
-    today = _today()
+    today = sitetime.today_local(sitetime.zone_for_site(db, "site_northbrook"))
     start = _add_days(today, -20)
     now = utcnow_iso()
 
@@ -173,7 +169,7 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
                      "values": {"col_result": "Pass", "col_reading": "52", "col_unit": "m³/h", "col_remarks": ""}},
                 ],
                 "punches": [],
-                "signoffName": "A. Rahman (demo)",
+                "signoffName": "Amir Rahman",
                 "signoffDate": _add_days(today, -3),
                 "notes": "Fictional completed inspection.",
             },
@@ -222,7 +218,7 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
             ],
         },
     }
-    service.sync_catalog(db, state, actor=actor)
+    service.sync_catalog(db, state, actor=actor, legacy_signoffs=True, user_id=user_id)
 
     from logentra_server.models import Area, Equipment, Site
     site = db.get(Site, "site_northbrook")
@@ -265,7 +261,7 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
                     "date": date,
                     "time": "08:30",
                     "value": round(v * 100) / 100,
-                    "entered_by": "A. Rahman (demo)",
+                    "entered_by": "Amir Rahman",
                     "source": "demo",
                 }
                 if eid == "eq_p101" and key == "vibration" and day == 8:
@@ -338,9 +334,9 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
         document_type="commissioning_test_sheet",
         equipment_id="eq_p101",
         record_id="rec_demo_1",
-        actor="A. Rahman (demo)",
+        actor="Amir Rahman",
     )
-    docs.submit_document(db, doc, route_id=comm.id, actor="A. Rahman (demo)")
+    docs.submit_document(db, doc, route_id=comm.id, actor="Amir Rahman")
 
     # A second document still in draft so the submit panel can be demonstrated
     photo_pdf = _simple_pdf("AHU-12 filter inspection photos (index, fictional)", [
@@ -355,7 +351,7 @@ def load_demo(db: Session, *, actor: str = "ui") -> dict:
         mime="application/pdf",
         document_type="inspection_photos",
         equipment_id="eq_ahu12",
-        actor="A. Rahman (demo)",
+        actor="Amir Rahman",
     )
 
     service.set_setting(db, "demo", "1")

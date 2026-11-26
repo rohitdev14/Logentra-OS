@@ -204,17 +204,22 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend, monkeypatch):
         conn.execute(text("INSERT INTO equipment (id, tag, created_at, updated_at) VALUES ('old_asset', 'OLD-1', '2025', '2025')"))
     with make_client(Settings(database_url=source)) as client:
         assert client.get("/api/equipment/old_asset").json()["id"] == "old_asset"
-        assert client.post("/api/records", json={"id": "new_record", "notes": "preserve"}).status_code == 201
+        record = client.post("/api/records", json={
+            "id": "new_record", "notes": "preserve",
+            "columns": [{"id": "result", "type": "passfail"}],
+            "items": [{"id": "check", "values": {"result": "Pass"}}],
+        })
+        assert record.status_code == 201, record.text
         reading = client.post("/api/readings", json={
             "id": "r-restored", "equipment_id": "old_asset", "parameter": "pressure", "value": 5,
         })
         assert reading.status_code == 201, reading.text
         work_order = client.post("/api/work-orders", json={"title": "Restorable work", "equipment_id": "old_asset"}).json()
-        updated = client.post("/api/records", json={
-            "id": "new_record", "revision": 1, "notes": "preserve",
-            "signoffName": "Synthetic engineer", "signoffDate": "2026-01-02",
-        })
-        assert updated.status_code == 201, updated.text
+        submitted = client.post("/api/records/new_record/submit", json={"revision": record.json()["revision"]})
+        assert submitted.status_code == 200, submitted.text
+        updated = client.post("/api/records/new_record/approve", json={"revision": submitted.json()["revision"]},
+                              headers={"X-Logentra-Actor": "Amir Rahman"})
+        assert updated.status_code == 200, updated.text
         assert client.post("/api/users", json={
             "username": "recovery-viewer", "password": "synthetic-recovery-password", "role": "viewer",
         }).status_code == 201
@@ -257,8 +262,8 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend, monkeypatch):
     with make_client(Settings(database_url=destination)) as client:
         assert client.get("/api/equipment/old_asset").json()["id"] == "old_asset"
         record = client.get("/api/records").json()[0]
-        assert record["notes"] == "preserve" and record["revision"] == 2
-        assert record["signoffName"] == "Synthetic engineer"
+        assert record["notes"] == "preserve" and record["revision"] == 3
+        assert record["signoffName"] == "Amir Rahman"
         assert client.get("/api/readings").json()["readings"][0]["id"] == "r-restored"
         assert client.get(f"/api/work-orders/{work_order['id']}").json()["title"] == "Restorable work"
         assert client.get(f"/api/documents/{did}/file").content == b"approved evidence"

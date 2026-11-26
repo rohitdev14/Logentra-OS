@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 from logentra_server.http_security import HTTPSecurity, read_upload
 
+from logentra_server import records as record_service
 from logentra_server import __version__, demo, events, handovers as handover_service, migrate, mqtt_worker, seed, service
 from logentra_server.routers import auth_users, documents, handovers, qr, readings, shift_log, shifts, work_orders
 from logentra_server.config import Settings, load_settings
@@ -137,7 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(StaleDataError)
     async def stale_write(_request, _error):
-        return JSONResponse({"detail": "The record changed. Reload before saving."}, status_code=409)
+        return JSONResponse({"detail": record_service.REVISION_CONFLICT}, status_code=409)
 
     app.state.settings = settings
     app.state.engine = engine
@@ -283,11 +284,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 principal.require(permission)
         if settings.profile == "production" and catalog_revision is None:
             raise HTTPException(428, "If-Match catalog revision is required")
-        return service.sync_catalog(db, state, actor=actor_name(request), expected=catalog_revision, principal=principal)
+        return service.sync_catalog(db, state, actor=actor_name(request), user_id=actor_user_id(request),
+                                    expected=catalog_revision, principal=principal)
 
     @app.post("/api/demo", tags=["catalog"], summary="Replace catalog+readings with the fictional generic-plant demo", dependencies=manage_settings)
     def post_demo(request: Request, db: Session = Depends(get_db)):
-        return demo.load_demo(db, actor=actor_name(request))
+        return demo.load_demo(db, actor=actor_name(request), user_id=actor_user_id(request))
 
     @app.delete("/api/data", tags=["catalog"], summary="Clear all user data (keeps empty default columns, users, and roles)", dependencies=manage_settings)
     def delete_data(request: Request, db: Session = Depends(get_db)):
@@ -302,7 +304,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         try:
             data = await request.json()
-            return migrate.migrate_v2(db, data, replace=replace, actor=actor_name(request))
+            return migrate.migrate_v2(db, data, replace=replace, actor=actor_name(request), user_id=actor_user_id(request))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -316,7 +318,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import json as _json
         try:
             data = _json.loads((await read_upload(file, settings.upload_limit_bytes)).decode("utf-8-sig"))
-            return migrate.migrate_v2(db, data, replace=replace, actor=actor_name(request))
+            return migrate.migrate_v2(db, data, replace=replace, actor=actor_name(request), user_id=actor_user_id(request))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -396,6 +398,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Equipment not found")
         if db.query(Signoff).join(Record).filter(Record.equipment_id == eq.id).first():
             raise HTTPException(409, "Equipment is linked to signed evidence")
+        if db.query(Record.id).filter(Record.equipment_id == eq.id, Record.status == "submitted").first():
+            raise HTTPException(409, "Equipment is linked to a record waiting for approval")
         service.protect_document_links(db, Document.equipment_id, eq.id)
         db.delete(eq)
         service.audit(db, "delete", actor=actor_name(request), entity_type="equipment", entity_id=eq.id)
@@ -431,6 +435,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Template not found")
         if db.query(Signoff).join(Record).filter(Record.template_id == t.id).first():
             raise HTTPException(409, "Template is linked to signed evidence")
+        if db.query(Record.id).filter(Record.template_id == t.id, Record.status == "submitted").first():
+            raise HTTPException(409, "Template is linked to a record waiting for approval")
         db.delete(t)
         service.audit(db, "delete", actor=actor_name(request), entity_type="template", entity_id=tid)
         db.commit()
@@ -442,11 +448,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db: Session = Depends(get_db),
         q: str | None = None,
         equipment_id: str | None = None,
+        status: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
     ):
         return service.list_records(
-            db, q=q, equipment_id=equipment_id, page=page, page_size=page_size,
+            db, q=q, equipment_id=equipment_id, status=status, page=page, page_size=page_size,
             paginate=page is not None, principal=getattr(request.state, "principal", None),
         )
 
@@ -454,27 +461,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_record(body: dict[str, Any], request: Request, db: Session = Depends(get_db)):
         service.advance_catalog(db)
         service.require_record_scope(db, request.state.principal, body.get("id"), body.get("equipmentId"))
-        service.require_signoff_permission(db, request.state.principal, body)
-        service.upsert_records(db, [body])
-        rid = body.get("id")
-        r = db.get(Record, rid) if rid else db.query(Record).order_by(Record.created_at.desc()).first()
-        service.audit(db, "create", actor=actor_name(request), entity_type="record", entity_id=r.id if r else None)
+        rid = body.get("id") or uid("rec")
+        service.upsert_records(db, [{**body, "id": rid}], actor=actor_name(request), user_id=actor_user_id(request))
         db.commit()
-        return service.record_to_ui(r)
+        return service.record_to_ui(db.get(Record, rid))
+
+    @app.get("/api/records/{rid}", tags=["records"], dependencies=perm("records.read", scoped=True))
+    def get_record(rid: str, request: Request, db: Session = Depends(get_db)):
+        return service.record_to_ui(record_service.get_scoped(db, rid, request.state.principal))
+
+    @app.post("/api/records/{rid}/submit", tags=["records"], dependencies=perm("records.write", scoped=True))
+    def submit_record(rid: str, body: record_service.ActionIn, request: Request, db: Session = Depends(get_db)):
+        return record_service.submit_record(db, rid, request.state.principal, body.revision, body.comment)
+
+    @app.post("/api/records/{rid}/approve", tags=["records"], dependencies=perm("records.approve", scoped=True))
+    def approve_record(rid: str, body: record_service.ActionIn, request: Request, db: Session = Depends(get_db)):
+        return record_service.approve_record(db, rid, request.state.principal, body.revision, body.comment)
+
+    @app.post("/api/records/{rid}/return", tags=["records"], dependencies=perm("records.approve", scoped=True))
+    def return_record(rid: str, body: record_service.ActionIn, request: Request, db: Session = Depends(get_db)):
+        return record_service.return_record(db, rid, request.state.principal, body.revision, body.comment)
+
+    @app.get("/api/records/{rid}/audit", tags=["records"], dependencies=perm("records.read", scoped=True))
+    def record_audit(rid: str, request: Request, db: Session = Depends(get_db)):
+        return record_service.list_audit(db, record_service.get_scoped(db, rid, request.state.principal))
 
     @app.delete("/api/records/{rid}", tags=["records"], dependencies=perm("records.write", scoped=True))
     def delete_record(rid: str, request: Request, db: Session = Depends(get_db),
                          catalog_revision: str | None = Header(None, alias="If-Match")):
         service.advance_catalog(db, catalog_revision)
-        r = db.get(Record, rid)
-        if not r:
-            raise HTTPException(404, "Record not found")
-        service.require_record_scope(db, request.state.principal, rid)
-        if r.signoff:
-            raise HTTPException(409, "Signed records cannot be deleted")
+        r = record_service.get_scoped(db, rid, request.state.principal)
+        if r.status in record_service.LOCK_MESSAGES:
+            raise HTTPException(409, record_service.LOCK_MESSAGES[r.status])
         service.protect_document_links(db, Document.record_id, r.id)
         db.delete(r)
-        service.audit(db, "delete", actor=actor_name(request), entity_type="record", entity_id=rid, detail=service.record_to_ui(r))
+        service.audit(db, "delete", actor=actor_name(request), user_id=actor_user_id(request), entity_type="record", entity_id=rid, detail=service.record_to_ui(r))
         db.commit()
         return {"ok": True}
 
