@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.7.1 – Site time and record approval
+
+- Log book times are now stored in UTC and shown in the site's timezone. Out-of-range readings from the desktop log book now appear in the shift handover.
+- Back up before upgrading. Set each site's timezone in Settings → Sites, or set `LOGENTRA_TIMEZONE` before upgrading. The upgrade converts existing desktop, import and demo readings to UTC using that timezone.
+- API and webhook `ts` values use UTC with a `Z` suffix. The `date` and `time` fields use site-local time.
+- Records can be submitted for approval, approved or returned. Approved records are locked. Supervisors and admins have the new `records.approve` permission.
+- Each record has an audit trail.
+- Alembic applies `0010_record_approval` and `0011_site_timezone` on startup.
+
 ## 0.7.0 – QR tags and shift handover
 
 - Print equipment QR tags on A4 21-up sheets. Scanning a tag opens the equipment's phone entry form or compact table with live limit checks, notes, photo uploads, and revocable phone sign-in.

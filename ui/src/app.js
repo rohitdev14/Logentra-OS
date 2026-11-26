@@ -5,9 +5,9 @@
   const STORE_KEY = "logbook.v2"; // used only as a fallback cache if the API is unreachable
   const LEGACY_KEY = "facilityLogbook.v1";
   const _prod = window.LOGENTRA_PRODUCT || window.LOGBOOK_PRODUCT || {};
-  const APP_VERSION = _prod.version || "0.7.0";
+  const APP_VERSION = _prod.version || "0.7.1";
   const PRODUCT_NAME = _prod.name || "Logentra OS";
-  const RELEASE_LABEL = _prod.label || "v0.7.0";
+  const RELEASE_LABEL = _prod.label || "v0.7.1";
 
   const FIELD_TYPES = [
     { id: "text", label: "Text" },
