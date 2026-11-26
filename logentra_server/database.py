@@ -46,8 +46,8 @@ def make_engine(
     return engine
 
 
-def make_session_factory(engine) -> sessionmaker[Session]:
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+def make_session_factory(engine, *, timezone: str = "UTC") -> sessionmaker[Session]:
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, info={"timezone": timezone})
 
 
 def alembic_config(url: str | None = None):

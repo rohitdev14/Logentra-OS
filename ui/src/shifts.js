@@ -512,7 +512,7 @@
     };
     if (!site) {
       designated.innerHTML = section("Create a site", can("users.manage")
-        ? setupForm("shift-site-create", input("Site name","name","text","","required"), "Create site")
+        ? setupForm("shift-site-create", input("Site name","name","text","","required") + input("IANA timezone","timezone","text",""), "Create site")
         : "<p>Ask an administrator to create a site.</p>");
       onForm(designated,"#shift-site-create",async form => { await api.createSite(formData(form)); await renderAdmin(host); });
       return;
@@ -525,7 +525,7 @@
       const path = pattern ? "/shift-patterns/" + id(pattern.id) : "";
       const definitions = pattern ? await get(path + "/definitions") : [];
       const patternFields = row => input("Pattern name","name","text",row?.name,"required") +
-        input("IANA timezone","timezone","text",row?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,"required");
+        input("IANA timezone","timezone","text",row?.timezone || site.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,"required");
       const definitionFields = row => input("Code","code","text",row?.code,"required") +
         input("Shift name","name","text",row?.name,"required") + input("Start time","start_time","time",row?.start_time,"required") +
         input("Duration in minutes","duration_minutes","number",row?.duration_minutes || 720,'required min="1" max="1440"');

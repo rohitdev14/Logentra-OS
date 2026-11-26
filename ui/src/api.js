@@ -156,6 +156,8 @@
     revokeApiKey: (uid, kid) => req("DELETE", "/users/" + encodeURIComponent(uid) + "/api-keys/" + encodeURIComponent(kid)),
     listSites: () => req("GET", "/sites"),
     createSite: (body) => req("POST", "/sites", body),
+    updateSite: (id, body) => req("PATCH", "/sites/" + encodeURIComponent(id), body),
+    getEquipment: (id) => req("GET", "/equipment/" + encodeURIComponent(id)),
     listLogs: (params) => req("GET", "/logs" + qs(params)),
     dashboard: () => req("GET", "/dashboard"),
     listDocuments: (params) => req("GET", "/documents" + qs(params)),

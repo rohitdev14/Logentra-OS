@@ -1781,6 +1781,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     revokeApiKey: (uid, kid) => req("DELETE", "/users/" + encodeURIComponent(uid) + "/api-keys/" + encodeURIComponent(kid)),
     listSites: () => req("GET", "/sites"),
     createSite: (body) => req("POST", "/sites", body),
+    updateSite: (id, body) => req("PATCH", "/sites/" + encodeURIComponent(id), body),
+    getEquipment: (id) => req("GET", "/equipment/" + encodeURIComponent(id)),
     listLogs: (params) => req("GET", "/logs" + qs(params)),
     dashboard: () => req("GET", "/dashboard"),
     listDocuments: (params) => req("GET", "/documents" + qs(params)),
@@ -1871,18 +1873,24 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   function uid(prefix) {
     return (prefix || "id") + "_" + Math.random().toString(36).slice(2, 7) + Date.now().toString(36);
   }
-  function todayISO() {
-    const d = new Date();
-    const z = (n) => String(n).padStart(2, "0");
-    return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+  function equipmentTimezone(equipment) {
+    return window.LogbookAPI ? state.meta.siteTimezones?.[equipment?.site_id] || state.meta.timezone : undefined;
   }
-  function nowTime() {
-    const d = new Date();
-    const z = (n) => String(n).padStart(2, "0");
-    return z(d.getHours()) + ":" + z(d.getMinutes());
+  function zonedDateTime(date, timeZone) {
+    const fields = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    }).formatToParts(date).map(({ type, value }) => [type, value]));
+    return { date: fields.year + "-" + fields.month + "-" + fields.day, time: fields.hour + ":" + fields.minute };
   }
+  function nowLocal(equipment = eqById(ui.logEq)) {
+    return zonedDateTime(new Date(), equipmentTimezone(equipment));
+  }
+  function todayISO(equipment) { return nowLocal(equipment).date; }
+  function nowTime(equipment) { return nowLocal(equipment).time; }
   function nowDateTime() {
-    return todayISO() + "T" + nowTime();
+    const { date, time } = nowLocal();
+    return date + "T" + time;
   }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function num(v) {
@@ -2891,7 +2899,14 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     if (v4 && v4.views) Object.assign(views, v4.views);
     Object.assign(views, window.LogentraQR?.views || {}, window.LogentraShifts?.views || {});
     const groupMap = { handoverDetail: "handover", shiftHistory: "shiftLog", qrTags: "equipment", recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
-    root.innerHTML = (views[ui.view] || viewDashboard)();
+    const missingZones = state.meta.sitesMissingTimezone || [];
+    const showNotice = window.LogbookAPI && state.auth_mode === "users" && missingZones.length &&
+      ui.dismissedTimezoneNotice !== missingZones.join(",");
+    root.innerHTML = (showNotice ? `<div class="shift-banner no-print row spread" role="status">
+      <span>Set your site timezone so log times are shown correctly</span><div class="row">
+      <button class="btn btn-sm" data-act="goto" data-view="settings">Settings</button>
+      <button class="btn btn-sm" data-act="dismiss-timezone">Dismiss</button></div></div>` : "")
+      + (views[ui.view] || viewDashboard)();
     document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
       const group = groupMap[ui.view] || ui.view;
       b.classList.toggle("active", b.dataset.view === group);
@@ -3206,6 +3221,33 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     `;
   }
 
+  function logEntryForm(eq) {
+    const params = paramsFor(eq);
+    const { date, time } = nowLocal(eq);
+    return `
+      <div class="card no-print" style="margin-top:1rem">
+        <h3>New entry</h3>
+        <div class="form-grid">
+          <label class="fld"><span>Date</span><input id="log-date" type="date" value="${date}"></label>
+          <label class="fld"><span>Time</span><input id="log-time" type="time" value="${time}"></label>
+          <label class="fld"><span>Entered by</span><input id="log-by" placeholder="Name or initials"></label>
+          <label class="fld span-2"><span>Remarks</span><input id="log-remarks" placeholder="Optional"></label>
+        </div>
+        <div class="form-grid" style="margin-top:.7rem">
+          ${params.map((p) => {
+            const lim = [];
+            if (p.min != null && p.min !== "") lim.push("min " + p.min);
+            if (p.max != null && p.max !== "") lim.push("max " + p.max);
+            return '<label class="fld"><span>' + esc(p.label) + (p.unit ? " (" + esc(p.unit) + ")" : "") +
+              (lim.length ? ' <span class="tiny">' + esc(lim.join(", ")) + "</span>" : "") +
+              '</span><input type="number" step="any" data-param="' + esc(p.key) + '"></label>';
+          }).join("") || '<p class="tiny">No parameters yet. Click “Edit parameters / limits” to add some.</p>'}
+        </div>
+        <div class="row" style="margin-top:.8rem"><button class="btn btn-primary" data-act="log-add" data-id="${esc(eq.id)}">Save entry</button></div>
+      </div>
+    `;
+  }
+
   function viewLogbook() {
     if (state.meta.paginated) return window.LogentraQR.pagedReadingHistory();
     const eqId = ui.logEq || (state.equipment[0] && state.equipment[0].id) || "";
@@ -3233,26 +3275,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         </div>
       </div>
       ${eq ? `
-      <div class="card no-print" style="margin-top:1rem">
-        <h3>New entry</h3>
-        <div class="form-grid">
-          <label class="fld"><span>Date</span><input id="log-date" type="date" value="${todayISO()}"></label>
-          <label class="fld"><span>Time</span><input id="log-time" type="time" value="${nowTime()}"></label>
-          <label class="fld"><span>Entered by</span><input id="log-by" placeholder="Name or initials"></label>
-          <label class="fld span-2"><span>Remarks</span><input id="log-remarks" placeholder="Optional"></label>
-        </div>
-        <div class="form-grid" style="margin-top:.7rem">
-          ${params.map((p) => {
-            const lim = [];
-            if (p.min != null && p.min !== "") lim.push("min " + p.min);
-            if (p.max != null && p.max !== "") lim.push("max " + p.max);
-            return '<label class="fld"><span>' + esc(p.label) + (p.unit ? " (" + esc(p.unit) + ")" : "") +
-              (lim.length ? ' <span class="tiny">' + esc(lim.join(", ")) + "</span>" : "") +
-              '</span><input type="number" step="any" data-param="' + esc(p.key) + '"></label>';
-          }).join("") || '<p class="tiny">No parameters yet. Click “Edit parameters / limits” to add some.</p>'}
-        </div>
-        <div class="row" style="margin-top:.8rem"><button class="btn btn-primary" data-act="log-add">Save entry</button></div>
-      </div>
+      ${(!window.LogbookAPI || window.LogbookV4.can("readings.write")) ? logEntryForm(eq) : ""}
       <div class="card" style="margin-top:1rem">
         <div class="row spread"><h3>History (${entries.length})</h3>
           <button type="button" class="btn no-print" data-act="logs-print">Print / PDF</button></div>
@@ -4066,8 +4089,13 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       collectRecordEdits(); rec.punches.splice(Number(btn.dataset.i), 1); persist(); render(); return;
     }
     if (act === "goto-trend") { ui.view = "trends"; render(); return; }
+    if (act === "dismiss-timezone") {
+      ui.dismissedTimezoneNotice = (state.meta.sitesMissingTimezone || []).join(",");
+      btn.closest(".shift-banner").remove();
+      return;
+    }
     if (act === "log-add") {
-      const eq = eqById(document.getElementById("log-eq").value);
+      const eq = eqById(btn.dataset.id) || ui.pagedLogEquipment;
       if (!eq) return;
       const readings = {};
       document.querySelectorAll("input[data-param]").forEach((inp) => {
@@ -4076,16 +4104,23 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       if (!Object.keys(readings).length) { toast("Enter at least one reading."); return; }
       const entry = {
         id: uid("log"), equipmentId: eq.id,
-        date: document.getElementById("log-date").value || todayISO(),
-        time: document.getElementById("log-time").value || nowTime(),
+        date: document.getElementById("log-date").value || todayISO(eq),
+        time: document.getElementById("log-time").value || nowTime(eq),
         readings, remarks: document.getElementById("log-remarks").value.trim(),
         enteredBy: document.getElementById("log-by").value.trim(), annotations: {}
       };
-      state.logs.push(entry);
       const after = () => { render(); toast("Log entry saved."); };
       if (window.LogbookAPI) {
-        window.LogbookAPI.postLog(entry).then(after).catch((err) => toast("Save failed: " + err.message));
-      } else { persist(); after(); }
+        btn.disabled = true;
+        window.LogbookAPI.postLog(entry).then(async (result) => {
+          if (!result.added) throw new Error("No readings were saved");
+          if (!state.meta.paginated) {
+            const result = await window.LogbookAPI.listLogs({equipment_id: eq.id, q: entry.id});
+            state.logs.push(...result.items);
+          }
+          after();
+        }).catch((err) => { btn.disabled = false; toast("Save failed: " + err.message); });
+      } else { state.logs.push(entry); persist(); after(); }
       return;
     }
     if (act === "log-del") {
@@ -4301,6 +4336,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       } else render();
     },
     applyPack, handleImportFile, tableFromFile,
+    equipmentTimezone, zonedDateTime, logEntryForm,
     drawTrend, trendPoints, eqById, paramsFor, eqTag, eqVal, outOfRange, annotOf, cssVar,
     // test hook: set import wizard and run
     importTable: (kind, rows, mapping, extra) => {
@@ -5063,18 +5099,20 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     if (global.Logbook && global.Logbook._toast) return global.Logbook._toast(msg);
     console.log(msg);
   }
-  function fmtWhen(ts) {
+  function fmtWhen(ts, timeZone = global.Logbook.getState().meta.timezone) {
     if (!ts) return "";
-    const s = String(ts).replace("T", " ");
-    const day = s.slice(0, 10);
-    const now = new Date();
-    const z = (n) => String(n).padStart(2, "0");
-    const today = now.getFullYear() + "-" + z(now.getMonth() + 1) + "-" + z(now.getDate());
-    const y = new Date(now); y.setDate(y.getDate() - 1);
-    const yest = y.getFullYear() + "-" + z(y.getMonth() + 1) + "-" + z(y.getDate());
-    if (day === today) return s.slice(11, 16) || "Today";
-    if (day === yest) return "Yesterday";
-    return s.slice(0, 16);
+    let iso = String(ts).replace(" ", "T");
+    if (iso.length === 10) iso += "T00:00:00";
+    if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(iso)) iso += "Z";
+    const instant = new Date(iso);
+    if (Number.isNaN(instant.valueOf())) return String(ts);
+    const { zonedDateTime } = global.Logbook;
+    const { date, time } = zonedDateTime(instant, timeZone);
+    const today = zonedDateTime(new Date(), timeZone).date;
+    const yesterday = new Date(Date.parse(today) - 86400000).toISOString().slice(0, 10);
+    if (date === today) return time;
+    if (date === yesterday) return "Yesterday";
+    return date + " " + time;
   }
   function initials(name) {
     const parts = String(name || "?").trim().split(/\s+/);
@@ -5224,7 +5262,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
             const limit = a.max != null ? " · max " + a.max : (a.min != null ? " · min " + a.min : "");
             return "<tr class='" + (a.acknowledged ? "" : "unack-row") + "'><td><b>" + esc(a.tag) + "</b> " + esc(a.parameter) + " " + esc(a.value) + esc(limit) +
               "<div class='tiny'>" + (a.acknowledged ? esc(a.cause || "Acknowledged") : "Unacknowledged") + "</div></td>" +
-              "<td class='tiny' style='text-align:right;white-space:nowrap'>" + esc(fmtWhen(a.ts)) + "</td></tr>";
+              "<td class='tiny' style='text-align:right;white-space:nowrap'>" + esc(fmtWhen(a.ts, global.Logbook.equipmentTimezone(global.Logbook.getState().equipmentIndex.find(e => e.id === a.equipment_id)))) + "</td></tr>";
           }).join("") + "</tbody></table></div>" : '<p class="empty">No out-of-range alerts.</p>'}
         </div>
         <div class="card queue-card">
@@ -5952,7 +5990,8 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       <input type="url" name="publicUrl" placeholder="http://logbook.plant.local" maxlength="500"></label>
       <p>Use a hostname that phones on your network can reach.</p>
       <p id="qr-url-warning" hidden>Changing this address can prevent previously printed labels from opening.</p>
-      <p id="qr-settings-feedback" role="status"></p><button class="btn btn-primary" disabled>Save address</button></form></section>`;
+      <p id="qr-settings-feedback" role="status"></p><button class="btn btn-primary" disabled>Save address</button></form></section>
+      ${window.LogbookV4.can("users.manage") ? '<section class="card"><h3>Sites</h3><div id="site-settings"></div></section>' : ""}`;
   }
 
   async function bindSettings(form) {
@@ -5973,6 +6012,52 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         finally { button.disabled = false; }
       };
     } catch (error) { status.textContent = error.message; }
+  }
+
+  async function bindSites(host, selectedId) {
+    try {
+      const sites = await api.listSites();
+      if (!host.isConnected) return;
+      const site = selectedId === undefined ? sites[0] : sites.find(row => row.id === selectedId);
+      host.innerHTML = `<label class="fld"><span>Site</span><select id="settings-site">
+        <option value="">New site</option>${sites.map(row =>
+          `<option value="${esc(row.id)}" ${row === site ? "selected" : ""}>${esc(row.name)}</option>`).join("")}
+        </select></label>
+        <form id="site-form" class="form-grid">
+          <label class="fld"><span>Site name</span><input name="name" value="${esc(site?.name)}" required></label>
+          <label class="fld"><span>IANA timezone</span><input name="timezone" value="${esc(site?.timezone)}" placeholder="Asia/Singapore"></label>
+          <div class="row"><button class="btn btn-primary">${site ? "Save site" : "Create site"}</button></div>
+          <p role="status"></p>
+        </form>`;
+      host.querySelector("select").onchange = event => bindSites(host, event.target.value);
+      const form = host.querySelector("form");
+      form.onsubmit = async event => {
+        event.preventDefault();
+        const status = form.querySelector('[role="status"]');
+        const button = form.querySelector("button");
+        const body = Object.fromEntries(new FormData(form));
+        button.disabled = true;
+        try {
+          const saved = await (site ? api.updateSite(site.id, body) : api.createSite(body));
+          const state = window.Logbook.getState();
+          const meta = state.meta;
+          if (state.me?.site_id === saved.id) meta.timezone = saved.timezone || meta.installTimezone;
+          meta.siteTimezones[saved.id] = saved.timezone || meta.installTimezone;
+          meta.sitesMissingTimezone = meta.sitesMissingTimezone.filter(id => id !== saved.id);
+          if (!saved.timezone) meta.sitesMissingTimezone.push(saved.id);
+          for (const entry of state.logs) {
+            const equipment = state.equipmentIndex.find(row => row.id === entry.equipmentId);
+            if (entry.ts && equipment?.site_id === saved.id) {
+              Object.assign(entry, window.Logbook.zonedDateTime(new Date(entry.ts), meta.siteTimezones[saved.id]));
+            }
+          }
+          window.Logbook._ui.siteSettingsId = saved.id;
+          window.Logbook.render();
+          window.Logbook._toast("Site saved.");
+        } catch (error) { status.textContent = error.message; }
+        finally { button.disabled = false; }
+      };
+    } catch (error) { host.textContent = error.message; }
   }
 
   async function sessions(host, user) {
@@ -6018,7 +6103,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       ${equipment.length ? '<button type="button" class="btn no-print" data-act="logs-print">Print / PDF</button>' : ""}</div><section class="card">
       ${equipment.length ? `<label class="fld"><span>Equipment</span><select id="history-equipment">${equipment.map(item =>
         `<option value="${esc(item.id)}" ${item.id === selection ? "selected" : ""}>${esc(item.tag)}</option>`
-      ).join("")}</select></label><div id="paged-log-history" aria-live="polite">Loading reading history…</div>`
+      ).join("")}</select></label><div id="paged-log-entry"></div><div id="paged-log-history" aria-live="polite">Loading reading history…</div>`
       : "<p>No equipment available.</p>"}</section>`;
   }
 
@@ -6049,8 +6134,25 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         if (host.isConnected && requested === version) host.textContent = error.message;
       }
     }
-    selection.onchange = () => { window.Logbook._ui.logEq = selection.value; load(1); };
-    load(1);
+    async function selectEquipment() {
+      const id = selection.value;
+      const book = window.Logbook;
+      book._ui.logEq = id;
+      load(1);
+      if (!window.LogbookV4.can("readings.write")) return;
+      const entry = document.getElementById("paged-log-entry");
+      entry.textContent = "";
+      try {
+        const equipment = await api.getEquipment(id);
+        if (!entry.isConnected || id !== selection.value) return;
+        book._ui.pagedLogEquipment = equipment;
+        entry.innerHTML = book.logEntryForm(equipment);
+      } catch (error) {
+        if (entry.isConnected && id === selection.value) entry.textContent = error.message;
+      }
+    }
+    selection.onchange = selectEquipment;
+    selectEquipment();
   }
 
   function bindReadingPhotos(root = document) {
@@ -6089,7 +6191,11 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         if (history) bindPagedReadingHistory(history);
         else bindReadingPhotos();
       }
-      if (view === "settings") bindSettings(document.getElementById("qr-url-form"));
+      if (view === "settings") {
+        bindSettings(document.getElementById("qr-url-form"));
+        const host = document.getElementById("site-settings");
+        if (host) bindSites(host, window.Logbook._ui.siteSettingsId ?? window.Logbook.getState().me?.site_id ?? undefined);
+      }
       if (view === "profile") sessions(document.getElementById("qr-own-sessions"));
       if (view === "backup" && window.LogbookV4.can("settings.manage")) storage(document.getElementById("qr-storage"));
       if (view === "users") document.querySelectorAll("[data-qr-user]").forEach(button => {
@@ -6620,7 +6726,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     };
     if (!site) {
       designated.innerHTML = section("Create a site", can("users.manage")
-        ? setupForm("shift-site-create", input("Site name","name","text","","required"), "Create site")
+        ? setupForm("shift-site-create", input("Site name","name","text","","required") + input("IANA timezone","timezone","text",""), "Create site")
         : "<p>Ask an administrator to create a site.</p>");
       onForm(designated,"#shift-site-create",async form => { await api.createSite(formData(form)); await renderAdmin(host); });
       return;
@@ -6633,7 +6739,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       const path = pattern ? "/shift-patterns/" + id(pattern.id) : "";
       const definitions = pattern ? await get(path + "/definitions") : [];
       const patternFields = row => input("Pattern name","name","text",row?.name,"required") +
-        input("IANA timezone","timezone","text",row?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,"required");
+        input("IANA timezone","timezone","text",row?.timezone || site.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,"required");
       const definitionFields = row => input("Code","code","text",row?.code,"required") +
         input("Shift name","name","text",row?.name,"required") + input("Start time","start_time","time",row?.start_time,"required") +
         input("Duration in minutes","duration_minutes","number",row?.duration_minutes || 720,'required min="1" max="1440"');

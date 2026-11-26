@@ -62,7 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_overflow=None if settings.sqlalchemy_url.startswith("sqlite") else settings.db_max_overflow,
         pool_timeout=settings.db_pool_timeout,
     )
-    SessionLocal = make_session_factory(engine)
+    SessionLocal = make_session_factory(engine, timezone=settings.timezone)
     init_db(engine)
     # seed roles, optional first admin, default fields, startup webhooks
     with SessionLocal() as db:
@@ -516,8 +516,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             notes = service.note_log_query(db, request.state.principal, tag=tag, ts_from=ts_from, ts_to=ts_to)
             notes = notes.add_columns(Equipment.tag).order_by(QREntry.created_at, QREntry.id)
             for receipt, equipment_tag in notes:
-                entry = service.note_log_entry(receipt)
-                w.writerow([equipment_tag, receipt.equipment_id, entry["date"], entry["time"], receipt.created_at,
+                entry = service.note_log_entry(db, receipt)
+                w.writerow([equipment_tag, receipt.equipment_id, entry["date"], entry["time"], entry["ts"],
                             "Note", None, None, None, 0, 0, receipt.note, receipt.entered_by, "qr",
                             None, None, None, None, None, receipt.id])
         data = buf.getvalue().encode("utf-8-sig")

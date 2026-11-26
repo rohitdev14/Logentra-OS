@@ -17,6 +17,9 @@ host: 127.0.0.1
 port: 8787
 open_browser: true
 
+# Default IANA timezone for equipment without a site timezone.
+timezone: UTC
+
 # SQLite is the default — a single file, zero setup.
 database_url: sqlite:///data/logentra.db
 

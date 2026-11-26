@@ -42,7 +42,7 @@ def _create_admin(argv: list[str]) -> int:
     settings = load_settings()
     engine = make_engine(settings.sqlalchemy_url)
     init_db(engine)
-    SessionLocal = make_session_factory(engine)
+    SessionLocal = make_session_factory(engine, timezone=settings.timezone)
     with SessionLocal() as db:
         try:
             user = seed.create_admin_user(

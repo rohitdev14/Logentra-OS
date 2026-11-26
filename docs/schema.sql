@@ -293,7 +293,8 @@ CREATE TABLE sites (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     code        TEXT,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    timezone    TEXT
 );
 CREATE UNIQUE INDEX uq_sites_code ON sites(code);
 

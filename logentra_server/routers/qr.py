@@ -18,6 +18,7 @@ from logentra_server.auth import Principal, create_session, hash_token
 from logentra_server.models import Area, Equipment, QREntry, QRRetiredCode, Reading, ReadingPhoto, SessionToken, Setting, Site, User
 from logentra_server.phone_auth import PHONE_COOKIE, phone_principal, require_csrf
 from logentra_server.routers.auth_users import LoginIn, verify_login
+from logentra_server import sitetime
 from logentra_server.utils import utcnow_iso
 
 QR_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -97,7 +98,9 @@ def qr_summary(db, equipment):
         ).first()
         params.append({**service.param_to_ui(param), "last": last[0] if last else None})
     return {"id": equipment.id, "tag": equipment.tag, **label,
-            "last_logged_at": latest.ts if latest else None, "last_logged_by": latest.entered_by if latest else None,
+            "last_logged_at": sitetime.utc_iso_z(latest.ts) if latest else None,
+            "last_logged_by": latest.entered_by if latest else None,
+            "timezone": sitetime.zone_for_equipment(db, equipment).key,
             "code": equipment.qr_code, "parameters": params,
             "layout": "form" if len(params) <= QUICK_FORM_MAX_PARAMS else "table"}
 

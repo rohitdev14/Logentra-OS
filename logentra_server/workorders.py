@@ -17,6 +17,7 @@ from logentra_server.models import (
     WorkOrderLabour,
 )
 from logentra_server.pagination import clamp_page, count_rows, page_result
+from logentra_server import sitetime
 from logentra_server.utils import uid, utcnow_iso
 
 STATUSES = ("open", "in_progress", "on_hold", "done", "closed")
@@ -484,6 +485,9 @@ def maybe_auto_create(db: Session, reading, tag: str, parameter_label: str | Non
         )
         if existing:
             return None
+    zone = sitetime.zone_for_equipment(db, reading.equipment)
+    date, clock = sitetime.utc_text_to_local(reading.ts, zone)
+    local_time = f"{date} {clock} ({zone.key})"
     ctx = {
         "tag": tag or "",
         "parameter": reading.parameter_key,
@@ -491,16 +495,16 @@ def maybe_auto_create(db: Session, reading, tag: str, parameter_label: str | Non
         "value": reading.value,
         "min": reading.limit_min,
         "max": reading.limit_max,
-        "ts": reading.ts,
+        "ts": sitetime.utc_iso_z(reading.ts),
     }
     title_t = rule.title_template or "Out of range: {tag} {parameter} = {value}"
     desc_t = rule.description_template or "Auto-created from an out-of-range reading at {ts}."
     try:
         title = title_t.format(**ctx)
-        desc = desc_t.format(**ctx)
+        desc = desc_t.format(**{**ctx, "ts": local_time})
     except (KeyError, IndexError, ValueError):
         title = f"Out of range: {tag} {reading.parameter_key} = {reading.value}"
-        desc = f"Auto-created from an out-of-range reading at {reading.ts}."
+        desc = f"Auto-created from an out-of-range reading at {local_time}."
     return create_work_order(
         db,
         {

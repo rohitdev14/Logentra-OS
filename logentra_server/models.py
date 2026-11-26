@@ -341,6 +341,7 @@ class Site(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     code: Mapped[str | None] = mapped_column(Text, unique=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    timezone: Mapped[str | None] = mapped_column(Text)
     areas: Mapped[list[Area]] = relationship(back_populates="site", cascade="all, delete-orphan")
 
 
@@ -651,6 +652,7 @@ class QRRetiredCode(Base):
 
 class QREntry(Base):
     __tablename__ = "qr_entries"
+    equipment: Mapped[Equipment] = relationship()
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     equipment_id: Mapped[str] = mapped_column(Text, ForeignKey("equipment.id", ondelete="CASCADE"))
     note: Mapped[str] = mapped_column(Text)

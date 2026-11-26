@@ -116,7 +116,7 @@ def test_idempotent_ingestion(client):
     assert client.post("/api/readings", json=reading).json()["added"] == 1
     assert client.post("/api/readings", json=reading).json()["added"] == 0
     assert client.post("/api/readings", json={**reading, "value": 4}).status_code == 409
-    assert client.get("/api/readings", params={"tag": "A"}).json()["readings"][0]["ts"] == "2026-03-01T02:00:00"
+    assert client.get("/api/readings", params={"tag": "A"}).json()["readings"][0]["ts"] == "2026-03-01T02:00:00Z"
 
 
 def test_destination_restrictions(db_url, monkeypatch):

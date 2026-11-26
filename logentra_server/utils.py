@@ -5,6 +5,9 @@ import math
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
+
+from logentra_server.sitetime import UTC, local_to_utc_text, today_local, utc_iso_z
 
 
 def uid(prefix: str = "id") -> str:
@@ -15,28 +18,21 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def parse_ts(date: str | None = None, time: str | None = None, ts: str | None = None) -> str:
-    """Normalize offset-bearing input to UTC and treat legacy naive input as UTC."""
-    raw = str(ts).strip() if ts else f"{(date or '').strip() or _today()}T{(time or '').strip() or '00:00'}"
-    parsed = datetime.fromisoformat(raw)
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed.isoformat(timespec="seconds")
+def parse_ts(
+    date: str | None = None, time: str | None = None, ts: str | None = None, *, zone: ZoneInfo = UTC,
+) -> str:
+    """Store naive UTC text as YYYY-MM-DDTHH:MM:SS.
 
-
-def split_ts(ts: str) -> tuple[str, str]:
-    s = (ts or "").replace("Z", "")
-    if "T" in s:
-        d, rest = s.split("T", 1)
-        return d, rest[:5]
-    if " " in s:
-        d, rest = s.split(" ", 1)
-        return d, rest[:5]
-    return s[:10], "00:00"
-
-
-def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    Explicit timestamps represent instants, with UTC implied when naive.
+    Date and time fields represent site-local wall time. Missing fields use
+    local midnight or the local date, and completely missing input uses UTC now.
+    """
+    if ts:
+        return utc_iso_z(str(ts).strip()).removesuffix("Z")
+    date, time = (date or "").strip(), (time or "").strip()
+    if date or time:
+        return local_to_utc_text(date or today_local(zone), time or "00:00", zone)
+    return utcnow_iso().removesuffix("Z")
 
 
 def dumps(obj: Any) -> str | None:

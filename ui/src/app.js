@@ -54,18 +54,24 @@
   function uid(prefix) {
     return (prefix || "id") + "_" + Math.random().toString(36).slice(2, 7) + Date.now().toString(36);
   }
-  function todayISO() {
-    const d = new Date();
-    const z = (n) => String(n).padStart(2, "0");
-    return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+  function equipmentTimezone(equipment) {
+    return window.LogbookAPI ? state.meta.siteTimezones?.[equipment?.site_id] || state.meta.timezone : undefined;
   }
-  function nowTime() {
-    const d = new Date();
-    const z = (n) => String(n).padStart(2, "0");
-    return z(d.getHours()) + ":" + z(d.getMinutes());
+  function zonedDateTime(date, timeZone) {
+    const fields = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    }).formatToParts(date).map(({ type, value }) => [type, value]));
+    return { date: fields.year + "-" + fields.month + "-" + fields.day, time: fields.hour + ":" + fields.minute };
   }
+  function nowLocal(equipment = eqById(ui.logEq)) {
+    return zonedDateTime(new Date(), equipmentTimezone(equipment));
+  }
+  function todayISO(equipment) { return nowLocal(equipment).date; }
+  function nowTime(equipment) { return nowLocal(equipment).time; }
   function nowDateTime() {
-    return todayISO() + "T" + nowTime();
+    const { date, time } = nowLocal();
+    return date + "T" + time;
   }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function num(v) {
@@ -1074,7 +1080,14 @@
     if (v4 && v4.views) Object.assign(views, v4.views);
     Object.assign(views, window.LogentraQR?.views || {}, window.LogentraShifts?.views || {});
     const groupMap = { handoverDetail: "handover", shiftHistory: "shiftLog", qrTags: "equipment", recordEdit: "records", woDetail: "workorders", woNew: "workorders", woRules: "workorders", approvalDetail: "approvals" };
-    root.innerHTML = (views[ui.view] || viewDashboard)();
+    const missingZones = state.meta.sitesMissingTimezone || [];
+    const showNotice = window.LogbookAPI && state.auth_mode === "users" && missingZones.length &&
+      ui.dismissedTimezoneNotice !== missingZones.join(",");
+    root.innerHTML = (showNotice ? `<div class="shift-banner no-print row spread" role="status">
+      <span>Set your site timezone so log times are shown correctly</span><div class="row">
+      <button class="btn btn-sm" data-act="goto" data-view="settings">Settings</button>
+      <button class="btn btn-sm" data-act="dismiss-timezone">Dismiss</button></div></div>` : "")
+      + (views[ui.view] || viewDashboard)();
     document.querySelectorAll("nav.tabs button, nav.nav [data-view]").forEach((b) => {
       const group = groupMap[ui.view] || ui.view;
       b.classList.toggle("active", b.dataset.view === group);
@@ -1389,6 +1402,33 @@
     `;
   }
 
+  function logEntryForm(eq) {
+    const params = paramsFor(eq);
+    const { date, time } = nowLocal(eq);
+    return `
+      <div class="card no-print" style="margin-top:1rem">
+        <h3>New entry</h3>
+        <div class="form-grid">
+          <label class="fld"><span>Date</span><input id="log-date" type="date" value="${date}"></label>
+          <label class="fld"><span>Time</span><input id="log-time" type="time" value="${time}"></label>
+          <label class="fld"><span>Entered by</span><input id="log-by" placeholder="Name or initials"></label>
+          <label class="fld span-2"><span>Remarks</span><input id="log-remarks" placeholder="Optional"></label>
+        </div>
+        <div class="form-grid" style="margin-top:.7rem">
+          ${params.map((p) => {
+            const lim = [];
+            if (p.min != null && p.min !== "") lim.push("min " + p.min);
+            if (p.max != null && p.max !== "") lim.push("max " + p.max);
+            return '<label class="fld"><span>' + esc(p.label) + (p.unit ? " (" + esc(p.unit) + ")" : "") +
+              (lim.length ? ' <span class="tiny">' + esc(lim.join(", ")) + "</span>" : "") +
+              '</span><input type="number" step="any" data-param="' + esc(p.key) + '"></label>';
+          }).join("") || '<p class="tiny">No parameters yet. Click “Edit parameters / limits” to add some.</p>'}
+        </div>
+        <div class="row" style="margin-top:.8rem"><button class="btn btn-primary" data-act="log-add" data-id="${esc(eq.id)}">Save entry</button></div>
+      </div>
+    `;
+  }
+
   function viewLogbook() {
     if (state.meta.paginated) return window.LogentraQR.pagedReadingHistory();
     const eqId = ui.logEq || (state.equipment[0] && state.equipment[0].id) || "";
@@ -1416,26 +1456,7 @@
         </div>
       </div>
       ${eq ? `
-      <div class="card no-print" style="margin-top:1rem">
-        <h3>New entry</h3>
-        <div class="form-grid">
-          <label class="fld"><span>Date</span><input id="log-date" type="date" value="${todayISO()}"></label>
-          <label class="fld"><span>Time</span><input id="log-time" type="time" value="${nowTime()}"></label>
-          <label class="fld"><span>Entered by</span><input id="log-by" placeholder="Name or initials"></label>
-          <label class="fld span-2"><span>Remarks</span><input id="log-remarks" placeholder="Optional"></label>
-        </div>
-        <div class="form-grid" style="margin-top:.7rem">
-          ${params.map((p) => {
-            const lim = [];
-            if (p.min != null && p.min !== "") lim.push("min " + p.min);
-            if (p.max != null && p.max !== "") lim.push("max " + p.max);
-            return '<label class="fld"><span>' + esc(p.label) + (p.unit ? " (" + esc(p.unit) + ")" : "") +
-              (lim.length ? ' <span class="tiny">' + esc(lim.join(", ")) + "</span>" : "") +
-              '</span><input type="number" step="any" data-param="' + esc(p.key) + '"></label>';
-          }).join("") || '<p class="tiny">No parameters yet. Click “Edit parameters / limits” to add some.</p>'}
-        </div>
-        <div class="row" style="margin-top:.8rem"><button class="btn btn-primary" data-act="log-add">Save entry</button></div>
-      </div>
+      ${(!window.LogbookAPI || window.LogbookV4.can("readings.write")) ? logEntryForm(eq) : ""}
       <div class="card" style="margin-top:1rem">
         <div class="row spread"><h3>History (${entries.length})</h3>
           <button type="button" class="btn no-print" data-act="logs-print">Print / PDF</button></div>
@@ -2249,8 +2270,13 @@
       collectRecordEdits(); rec.punches.splice(Number(btn.dataset.i), 1); persist(); render(); return;
     }
     if (act === "goto-trend") { ui.view = "trends"; render(); return; }
+    if (act === "dismiss-timezone") {
+      ui.dismissedTimezoneNotice = (state.meta.sitesMissingTimezone || []).join(",");
+      btn.closest(".shift-banner").remove();
+      return;
+    }
     if (act === "log-add") {
-      const eq = eqById(document.getElementById("log-eq").value);
+      const eq = eqById(btn.dataset.id) || ui.pagedLogEquipment;
       if (!eq) return;
       const readings = {};
       document.querySelectorAll("input[data-param]").forEach((inp) => {
@@ -2259,16 +2285,23 @@
       if (!Object.keys(readings).length) { toast("Enter at least one reading."); return; }
       const entry = {
         id: uid("log"), equipmentId: eq.id,
-        date: document.getElementById("log-date").value || todayISO(),
-        time: document.getElementById("log-time").value || nowTime(),
+        date: document.getElementById("log-date").value || todayISO(eq),
+        time: document.getElementById("log-time").value || nowTime(eq),
         readings, remarks: document.getElementById("log-remarks").value.trim(),
         enteredBy: document.getElementById("log-by").value.trim(), annotations: {}
       };
-      state.logs.push(entry);
       const after = () => { render(); toast("Log entry saved."); };
       if (window.LogbookAPI) {
-        window.LogbookAPI.postLog(entry).then(after).catch((err) => toast("Save failed: " + err.message));
-      } else { persist(); after(); }
+        btn.disabled = true;
+        window.LogbookAPI.postLog(entry).then(async (result) => {
+          if (!result.added) throw new Error("No readings were saved");
+          if (!state.meta.paginated) {
+            const result = await window.LogbookAPI.listLogs({equipment_id: eq.id, q: entry.id});
+            state.logs.push(...result.items);
+          }
+          after();
+        }).catch((err) => { btn.disabled = false; toast("Save failed: " + err.message); });
+      } else { state.logs.push(entry); persist(); after(); }
       return;
     }
     if (act === "log-del") {
@@ -2484,6 +2517,7 @@
       } else render();
     },
     applyPack, handleImportFile, tableFromFile,
+    equipmentTimezone, zonedDateTime, logEntryForm,
     drawTrend, trendPoints, eqById, paramsFor, eqTag, eqVal, outOfRange, annotOf, cssVar,
     // test hook: set import wizard and run
     importTable: (kind, rows, mapping, extra) => {

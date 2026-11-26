@@ -18,18 +18,20 @@
     if (global.Logbook && global.Logbook._toast) return global.Logbook._toast(msg);
     console.log(msg);
   }
-  function fmtWhen(ts) {
+  function fmtWhen(ts, timeZone = global.Logbook.getState().meta.timezone) {
     if (!ts) return "";
-    const s = String(ts).replace("T", " ");
-    const day = s.slice(0, 10);
-    const now = new Date();
-    const z = (n) => String(n).padStart(2, "0");
-    const today = now.getFullYear() + "-" + z(now.getMonth() + 1) + "-" + z(now.getDate());
-    const y = new Date(now); y.setDate(y.getDate() - 1);
-    const yest = y.getFullYear() + "-" + z(y.getMonth() + 1) + "-" + z(y.getDate());
-    if (day === today) return s.slice(11, 16) || "Today";
-    if (day === yest) return "Yesterday";
-    return s.slice(0, 16);
+    let iso = String(ts).replace(" ", "T");
+    if (iso.length === 10) iso += "T00:00:00";
+    if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(iso)) iso += "Z";
+    const instant = new Date(iso);
+    if (Number.isNaN(instant.valueOf())) return String(ts);
+    const { zonedDateTime } = global.Logbook;
+    const { date, time } = zonedDateTime(instant, timeZone);
+    const today = zonedDateTime(new Date(), timeZone).date;
+    const yesterday = new Date(Date.parse(today) - 86400000).toISOString().slice(0, 10);
+    if (date === today) return time;
+    if (date === yesterday) return "Yesterday";
+    return date + " " + time;
   }
   function initials(name) {
     const parts = String(name || "?").trim().split(/\s+/);
@@ -179,7 +181,7 @@
             const limit = a.max != null ? " · max " + a.max : (a.min != null ? " · min " + a.min : "");
             return "<tr class='" + (a.acknowledged ? "" : "unack-row") + "'><td><b>" + esc(a.tag) + "</b> " + esc(a.parameter) + " " + esc(a.value) + esc(limit) +
               "<div class='tiny'>" + (a.acknowledged ? esc(a.cause || "Acknowledged") : "Unacknowledged") + "</div></td>" +
-              "<td class='tiny' style='text-align:right;white-space:nowrap'>" + esc(fmtWhen(a.ts)) + "</td></tr>";
+              "<td class='tiny' style='text-align:right;white-space:nowrap'>" + esc(fmtWhen(a.ts, global.Logbook.equipmentTimezone(global.Logbook.getState().equipmentIndex.find(e => e.id === a.equipment_id)))) + "</td></tr>";
           }).join("") + "</tbody></table></div>" : '<p class="empty">No out-of-range alerts.</p>'}
         </div>
         <div class="card queue-card">

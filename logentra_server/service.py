@@ -9,7 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from fastapi import HTTPException
 
-from logentra_server import events
+from logentra_server import events, sitetime
 from logentra_server.models import (
     Annotation,
     Area,
@@ -38,7 +38,7 @@ from logentra_server.models import (
 )
 from logentra_server.branding import APP_VERSION, PRODUCT_NAME
 from logentra_server.pagination import clamp_page, count_rows, page_result
-from logentra_server.utils import as_float, dumps, loads, out_of_range, parse_ts, split_ts, uid, utcnow_iso
+from logentra_server.utils import as_float, dumps, loads, out_of_range, parse_ts, uid, utcnow_iso
 
 
 def audit(db: Session, action: str, *, actor: str | None = "api", entity_type: str | None = None,
@@ -278,34 +278,49 @@ def note_log_query(db, principal=None, *, equipment_id=None, tag=None, ts_from=N
         query = query.filter(Equipment.tag == tag.strip())
     if q:
         query = query.filter(substring_match(q, QREntry.id, QREntry.note))
-    return filter_log_dates(query, func.substr(QREntry.created_at, 1, 19), ts_from, ts_to)
+    zone = filter_time_zone(db, principal, equipment_id=equipment_id, tag=tag)
+    return filter_log_dates(query, func.substr(QREntry.created_at, 1, 19), ts_from, ts_to, zone)
 
 
-def filter_log_dates(query, column, ts_from, ts_to):
-    if ts_from:
-        start = parse_ts(ts=ts_from) if len(ts_from) > 10 else ts_from + "T00:00:00"
-        query = query.filter(column >= start)
-    if ts_to:
-        end = ts_to if len(ts_to) > 10 else ts_to + "T23:59:59"
-        query = query.filter(column <= end)
+def filter_time_zone(db, principal, *, equipment_id=None, tag=None):
+    if equipment_id or tag:
+        equipment = get_equipment(db, equipment_id=equipment_id, tag=tag)
+        if equipment and (not principal or principal.allows_scope(equipment.site_id, equipment.area_id)):
+            return sitetime.zone_for_equipment(db, equipment)
+    return sitetime.zone_for_site(db, getattr(principal, "site_id", None))
+
+
+def filter_log_dates(query, column, ts_from, ts_to, zone):
+    try:
+        if ts_from:
+            start = (parse_ts(ts=ts_from) if len(ts_from) > 10
+                     else sitetime.local_day_bounds(ts_from, zone)[0])
+            query = query.filter(column >= start)
+        if ts_to:
+            if len(ts_to) > 10:
+                query = query.filter(column <= parse_ts(ts=ts_to))
+            else:
+                query = query.filter(column < sitetime.local_day_bounds(ts_to, zone)[1])
+    except (ValueError, OverflowError):
+        raise HTTPException(422, "Enter a valid date or timestamp") from None
     return query
 
 
-def note_log_entry(receipt):
-    date, time = split_ts(receipt.created_at)
+def note_log_entry(db, receipt):
+    date, time = sitetime.utc_text_to_local(receipt.created_at, sitetime.zone_for_equipment(db, receipt.equipment))
     return {"id": receipt.id, "equipmentId": receipt.equipment_id, "date": date, "time": time,
-            "kind": "note", "ts": receipt.created_at, "remarks": receipt.note, "enteredBy": receipt.entered_by,
-            "readings": {}, "annotations": {}}
+            "kind": "note", "ts": sitetime.utc_iso_z(receipt.created_at), "remarks": receipt.note,
+            "enteredBy": receipt.entered_by, "readings": {}, "annotations": {}}
 
 
-def group_log_readings(rows):
+def group_log_readings(db, rows):
     groups = {}
     for reading in rows:
         key = reading.entry_id, reading.equipment_id
         if key not in groups:
-            date, time = split_ts(reading.ts)
+            date, time = sitetime.utc_text_to_local(reading.ts, sitetime.zone_for_equipment(db, reading.equipment))
             groups[key] = {"id": reading.entry_id, "equipmentId": reading.equipment_id,
-                           "date": date, "time": time, "ts": reading.ts, "readings": {}, "remarks": "",
+                           "date": date, "time": time, "ts": sitetime.utc_iso_z(reading.ts), "readings": {}, "remarks": "",
                            "enteredBy": "", "annotations": {}}
         entry = groups[key]
         entry["readings"][reading.parameter_key] = reading.value
@@ -326,6 +341,7 @@ def list_logs(
     db: Session,
     *,
     equipment_id: str | None = None,
+    tag: str | None = None,
     q: str | None = None,
     ts_from: str | None = None,
     ts_to: str | None = None,
@@ -335,6 +351,11 @@ def list_logs(
 ) -> dict[str, Any]:
     """Paginate reading groups and note/photo receipts together."""
     page, page_size = clamp_page(page, page_size)
+    if tag:
+        equipment = get_equipment(db, tag=tag)
+        if not equipment or (equipment_id and equipment_id != equipment.id):
+            return page_result([], 0, page, page_size)
+        equipment_id = equipment.id
     include_notes = principal is None or principal.can("readings.read")
     reading_keys = db.query(Reading.entry_id.label("entry_id"), Reading.equipment_id.label("equipment_id"),
                             func.min(Reading.ts).label("ts"), literal(False).label("is_note"))
@@ -346,7 +367,8 @@ def list_logs(
         reading_keys = reading_keys.filter(Reading.equipment_id == equipment_id)
     if q:
         reading_keys = reading_keys.filter(substring_match(q, Reading.entry_id, Reading.parameter_key, Reading.remarks))
-    reading_keys = filter_log_dates(reading_keys, Reading.ts, ts_from, ts_to).group_by(
+    zone = filter_time_zone(db, principal, equipment_id=equipment_id)
+    reading_keys = filter_log_dates(reading_keys, Reading.ts, ts_from, ts_to, zone).group_by(
         Reading.entry_id, Reading.equipment_id)
     keys = reading_keys
     if include_notes:
@@ -361,14 +383,14 @@ def list_logs(
     reading_pairs = [(row.entry_id, row.equipment_id) for row in page_rows if not row.is_note]
     note_ids = [row.entry_id for row in page_rows if row.is_note]
     readings = {}
-    query = db.query(Reading).options(selectinload(Reading.annotation))
+    query = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment))
     if scoped_equipment is not None:
         query = query.filter(Reading.equipment_id.in_(scoped_equipment.statement))
     for offset in range(0, len(reading_pairs), 400):
-        readings.update(group_log_readings(query.filter(
+        readings.update(group_log_readings(db, query.filter(
             tuple_(Reading.entry_id, Reading.equipment_id).in_(reading_pairs[offset:offset + 400])
         ).order_by(Reading.ts, Reading.id)))
-    notes = {receipt.id: note_log_entry(receipt) for receipt in note_log_query(db, principal).filter(
+    notes = {receipt.id: note_log_entry(db, receipt) for receipt in note_log_query(db, principal).options(selectinload(QREntry.equipment)).filter(
         QREntry.id.in_(note_ids)
     )} if note_ids else {}
     entries = [notes.get(row.entry_id) if row.is_note else readings.get((row.entry_id, row.equipment_id))
@@ -417,11 +439,11 @@ def record_to_ui(r: Record) -> dict[str, Any]:
 
 
 def logs_to_ui(db: Session, *, include_notes: bool = True) -> list[dict[str, Any]]:
-    readings = db.query(Reading).options(selectinload(Reading.annotation)).order_by(Reading.ts, Reading.id)
-    entries = list(group_log_readings(readings).values())
+    readings = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment)).order_by(Reading.ts, Reading.id)
+    entries = list(group_log_readings(db, readings).values())
     if include_notes:
-        entries.extend(note_log_entry(receipt) for receipt in note_log_query(db))
-        entries.sort(key=lambda row: row["ts"].removesuffix("Z"))
+        entries.extend(note_log_entry(db, receipt) for receipt in note_log_query(db).options(selectinload(QREntry.equipment)))
+        entries.sort(key=lambda row: row["ts"])
         add_log_photos(db, entries)
     return entries
 
@@ -474,8 +496,19 @@ def bootstrap(db: Session, *, backend: str = "sqlite", equipment_cap: int = 1500
     updated = db.get(Setting, "updated_at")
     if revision != catalog_revision(db):
         raise HTTPException(409, "Catalog changed during loading. Retry the request.")
+    timezone = sitetime.zone_for_site(db, getattr(principal, "site_id", None)).key
+    default_zone = sitetime.zone_for_site(db, None).key
+    sites = db.query(Site.id, Site.timezone)
+    if getattr(principal, "site_id", None):
+        sites = sites.filter(Site.id == principal.site_id)
+    site_zones = dict(sites)
     return {
         "meta": {
+            "timezone": timezone,
+            "installTimezone": default_zone,
+            "siteTimezones": {site_id: zone or default_zone for site_id, zone in site_zones.items()},
+            "sitesMissingTimezone": [site_id for site_id, zone in site_zones.items() if not zone]
+            if principal and principal.can("users.manage") else [],
             "version": 4,
             "app": APP_VERSION,
             "product": PRODUCT_NAME,
@@ -964,7 +997,10 @@ def ingest_readings(
             skipped.append({"reason": "invalid_value", "item": raw})
             continue
         try:
-            ts = parse_ts(raw.get("date"), raw.get("time"), raw.get("ts") or raw.get("timestamp"))
+            ts = parse_ts(
+                raw.get("date"), raw.get("time"), raw.get("ts") or raw.get("timestamp"),
+                zone=sitetime.zone_for_equipment(db, eq),
+            )
         except (ValueError, TypeError, AttributeError):
             skipped.append({"reason": "invalid_timestamp"})
             continue
@@ -1049,8 +1085,8 @@ def ingest_readings(
     }
 
 
-def reading_to_dict(r: Reading, tag: str | None = None) -> dict[str, Any]:
-    date, time = split_ts(r.ts)
+def reading_to_dict(db: Session, r: Reading, tag: str | None = None) -> dict[str, Any]:
+    date, time = sitetime.utc_text_to_local(r.ts, sitetime.zone_for_equipment(db, r.equipment))
     an = r.annotation
     oor = out_of_range(r.value, r.limit_min, r.limit_max)
     filled = bool(an and (an.cause or an.action or an.annotated_by))
@@ -1060,7 +1096,7 @@ def reading_to_dict(r: Reading, tag: str | None = None) -> dict[str, Any]:
         "equipment_id": r.equipment_id,
         "tag": tag,
         "parameter": r.parameter_key,
-        "ts": r.ts,
+        "ts": sitetime.utc_iso_z(r.ts),
         "date": date,
         "time": time,
         "value": r.value,
@@ -1105,16 +1141,12 @@ def query_readings(
     if parameter:
         keys = {parameter, parameter.lower()}
         q = q.filter(Reading.parameter_key.in_(list(keys)))
-    if ts_from:
-        start = parse_ts(ts=ts_from) if ("T" in ts_from or len(ts_from) > 10) else (ts_from + "T00:00:00")
-        q = q.filter(Reading.ts >= start)
-    if ts_to:
-        end = ts_to if ("T" in ts_to or len(ts_to) > 10) else (ts_to + "T23:59:59")
-        q = q.filter(Reading.ts <= end)
+    zone = filter_time_zone(db, principal, equipment_id=equipment_id, tag=tag)
+    q = filter_log_dates(q, Reading.ts, ts_from, ts_to, zone)
     if source:
         q = q.filter(Reading.source == source)
     rows = q.order_by(Reading.ts.asc(), Reading.id.asc()).offset(offset).limit(min(limit, 10000)).all()
-    return [reading_to_dict(r, r.equipment.tag if r.equipment else None) for r in rows]
+    return [reading_to_dict(db, r, r.equipment.tag if r.equipment else None) for r in rows]
 
 
 def query_events(
@@ -1142,12 +1174,8 @@ def query_events(
         if not eq:
             return []
         q = q.filter(Reading.equipment_id == eq.id)
-    if ts_from:
-        start = parse_ts(ts=ts_from) if ("T" in ts_from or len(ts_from) > 10) else (ts_from + "T00:00:00")
-        q = q.filter(Reading.ts >= start)
-    if ts_to:
-        end = ts_to if ("T" in ts_to or len(ts_to) > 10) else (ts_to + "T23:59:59")
-        q = q.filter(Reading.ts <= end)
+    zone = filter_time_zone(db, principal, equipment_id=equipment_id, tag=tag)
+    q = filter_log_dates(q, Reading.ts, ts_from, ts_to, zone)
     if unacknowledged is True:
         q = q.outerjoin(Annotation, Annotation.reading_id == Reading.id).filter(
             or_(
@@ -1164,7 +1192,7 @@ def query_events(
             or_(Annotation.cause != "", Annotation.action != "", Annotation.annotated_by != "")
         )
     rows = q.order_by(Reading.ts.desc(), Reading.id.desc()).offset(offset).limit(min(limit, 10000)).all()
-    return [reading_to_dict(r, r.equipment.tag if r.equipment else None) for r in rows]
+    return [reading_to_dict(db, r, r.equipment.tag if r.equipment else None) for r in rows]
 
 
 def upsert_annotation(db: Session, reading_id: str, data: dict[str, Any], *, actor: str = "ui") -> Annotation:

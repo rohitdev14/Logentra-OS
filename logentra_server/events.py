@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from logentra_server.models import OutboundWebhook, WebhookDelivery
+from logentra_server import sitetime
 from logentra_server.utils import uid, utcnow_iso
 
 log = logging.getLogger("logentra.delivery")
@@ -198,7 +199,7 @@ def oor_payload(reading, tag: str, parameter_label: str | None = None) -> dict[s
         "value": reading.value,
         "min": reading.limit_min,
         "max": reading.limit_max,
-        "ts": reading.ts,
+        "ts": sitetime.utc_iso_z(reading.ts),
         "source": reading.source,
         "acknowledged": False,
     }

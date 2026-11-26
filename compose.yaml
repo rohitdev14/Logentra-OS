@@ -4,6 +4,7 @@ services:
     image: logentra-os:local
     environment:
       LOGENTRA_PROFILE: production
+      LOGENTRA_TIMEZONE: ${LOGENTRA_TIMEZONE:-UTC}
       LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:-sqlite:////app/data/logentra.db}
       LOGENTRA_CORS_ORIGINS: ${LOGENTRA_CORS_ORIGINS:-}
     ports:

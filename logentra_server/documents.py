@@ -26,6 +26,7 @@ from logentra_server.models import (
     WorkOrder,
 )
 from logentra_server.pagination import clamp_page, count_rows, page_meta
+from logentra_server import sitetime
 from logentra_server.utils import uid, utcnow_iso
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -972,7 +973,7 @@ def dashboard_summary(db: Session, principal: Principal | None = None) -> dict[s
             "value": reading.value,
             "min": reading.limit_min,
             "max": reading.limit_max,
-            "ts": reading.ts,
+            "ts": sitetime.utc_iso_z(reading.ts),
             "acknowledged": bool(ann),
             "cause": ann.cause if ann else None,
             "action": ann.action if ann else None,

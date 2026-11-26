@@ -145,6 +145,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         request: Request,
         db: Session = Depends(get_db),
         equipment_id: str | None = None,
+        tag: str | None = None,
         q: str | None = None,
         ts_from: str | None = Query(default=None, alias="from"),
         ts_to: str | None = Query(default=None, alias="to"),
@@ -152,7 +153,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         page_size: int = 50,
     ):
         return service.list_logs(
-            db, equipment_id=equipment_id, q=q, ts_from=ts_from, ts_to=ts_to,
+            db, equipment_id=equipment_id, tag=tag, q=q, ts_from=ts_from, ts_to=ts_to,
             page=page, page_size=page_size, principal=getattr(request.state, "principal", None),
         )
 
@@ -270,13 +271,14 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         dicts = importers.rows_to_dicts(rows, map_obj)
         if log_mode == "wide":
             items = []
-            reserved = {"tag", "date", "time", "remarks", "entered_by", "enteredby", "equipment"}
+            reserved = {"tag", "date", "time", "remarks", "entered_by", "enteredby", "equipment", "ts", "timestamp"}
             for rec in dicts:
                 lower = {k.lower(): v for k, v in rec.items()}
                 shared = {
                     "tag": lower.get("tag") or lower.get("equipment"),
                     "date": lower.get("date"),
                     "time": lower.get("time"),
+                    "ts": lower.get("ts") or lower.get("timestamp"),
                     "remarks": lower.get("remarks"),
                     "entered_by": lower.get("entered_by") or lower.get("enteredby"),
                 }
@@ -297,8 +299,10 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
                     "tag": lower.get("tag") or lower.get("equipment"),
                     "date": lower.get("date"),
                     "time": lower.get("time"),
+                    "ts": lower.get("ts") or lower.get("timestamp"),
                     "parameter": lower.get("parameter") or lower.get("param") or lower.get("key"),
-                    "value": lower.get("value") or lower.get("reading"),
+                    "value": lower.get("value") if lower.get("value") not in (None, "") else lower.get("reading"),
+                    "entry_id": lower.get("entry_id"),
                     "remarks": lower.get("remarks"),
                     "entered_by": lower.get("entered_by") or lower.get("enteredby") or lower.get("by"),
                     "unit": lower.get("unit"),

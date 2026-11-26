@@ -4,9 +4,12 @@ import ipaddress
 import os
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from logentra_server.sitetime import INVALID_TIMEZONE
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -51,6 +54,7 @@ class Settings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8787
     open_browser: bool = True
+    timezone: str = "UTC"
     database_url: str = "sqlite:///data/logentra.db"
     api_key: str = ""
     # open = single-user / standalone (no login). users = require login or a user-bound API key.
@@ -70,6 +74,14 @@ class Settings(BaseModel):
     db_pool_timeout: int = Field(30, ge=1, le=120)
     threadpool_size: int = Field(40, ge=4, le=200)
     workers: int = Field(0, ge=0, le=16)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value):
+        try:
+            return ZoneInfo(value).key
+        except (ValueError, ZoneInfoNotFoundError):
+            raise ValueError(INVALID_TIMEZONE) from None
 
     @model_validator(mode="before")
     @classmethod
@@ -129,6 +141,7 @@ _ENV_FIELDS: list[tuple[str, tuple[str, ...], str]] = [
     ("host", ("LOGENTRA_HOST", "LOGBOOK_HOST"), "str"),
     ("port", ("LOGENTRA_PORT", "LOGBOOK_PORT"), "int"),
     ("open_browser", ("LOGENTRA_OPEN_BROWSER", "LOGBOOK_OPEN_BROWSER"), "bool"),
+    ("timezone", ("LOGENTRA_TIMEZONE",), "str"),
     ("database_url", ("LOGENTRA_DATABASE_URL", "LOGBOOK_DATABASE_URL"), "str"),
     ("api_key", ("LOGENTRA_API_KEY", "LOGBOOK_API_KEY"), "str"),
     ("auth_mode", ("LOGENTRA_AUTH_MODE", "LOGBOOK_AUTH_MODE"), "auth"),

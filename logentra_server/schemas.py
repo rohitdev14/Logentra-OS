@@ -19,6 +19,7 @@ class ReadingIn(BaseModel):
     parameter: str
     value: FiniteFloat
     ts: str | None = None
+    timestamp: str | None = None
     date: str | None = None
     time: str | None = None
     remarks: str | None = None

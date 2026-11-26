@@ -175,7 +175,8 @@
       <input type="url" name="publicUrl" placeholder="http://logbook.plant.local" maxlength="500"></label>
       <p>Use a hostname that phones on your network can reach.</p>
       <p id="qr-url-warning" hidden>Changing this address can prevent previously printed labels from opening.</p>
-      <p id="qr-settings-feedback" role="status"></p><button class="btn btn-primary" disabled>Save address</button></form></section>`;
+      <p id="qr-settings-feedback" role="status"></p><button class="btn btn-primary" disabled>Save address</button></form></section>
+      ${window.LogbookV4.can("users.manage") ? '<section class="card"><h3>Sites</h3><div id="site-settings"></div></section>' : ""}`;
   }
 
   async function bindSettings(form) {
@@ -196,6 +197,52 @@
         finally { button.disabled = false; }
       };
     } catch (error) { status.textContent = error.message; }
+  }
+
+  async function bindSites(host, selectedId) {
+    try {
+      const sites = await api.listSites();
+      if (!host.isConnected) return;
+      const site = selectedId === undefined ? sites[0] : sites.find(row => row.id === selectedId);
+      host.innerHTML = `<label class="fld"><span>Site</span><select id="settings-site">
+        <option value="">New site</option>${sites.map(row =>
+          `<option value="${esc(row.id)}" ${row === site ? "selected" : ""}>${esc(row.name)}</option>`).join("")}
+        </select></label>
+        <form id="site-form" class="form-grid">
+          <label class="fld"><span>Site name</span><input name="name" value="${esc(site?.name)}" required></label>
+          <label class="fld"><span>IANA timezone</span><input name="timezone" value="${esc(site?.timezone)}" placeholder="Asia/Singapore"></label>
+          <div class="row"><button class="btn btn-primary">${site ? "Save site" : "Create site"}</button></div>
+          <p role="status"></p>
+        </form>`;
+      host.querySelector("select").onchange = event => bindSites(host, event.target.value);
+      const form = host.querySelector("form");
+      form.onsubmit = async event => {
+        event.preventDefault();
+        const status = form.querySelector('[role="status"]');
+        const button = form.querySelector("button");
+        const body = Object.fromEntries(new FormData(form));
+        button.disabled = true;
+        try {
+          const saved = await (site ? api.updateSite(site.id, body) : api.createSite(body));
+          const state = window.Logbook.getState();
+          const meta = state.meta;
+          if (state.me?.site_id === saved.id) meta.timezone = saved.timezone || meta.installTimezone;
+          meta.siteTimezones[saved.id] = saved.timezone || meta.installTimezone;
+          meta.sitesMissingTimezone = meta.sitesMissingTimezone.filter(id => id !== saved.id);
+          if (!saved.timezone) meta.sitesMissingTimezone.push(saved.id);
+          for (const entry of state.logs) {
+            const equipment = state.equipmentIndex.find(row => row.id === entry.equipmentId);
+            if (entry.ts && equipment?.site_id === saved.id) {
+              Object.assign(entry, window.Logbook.zonedDateTime(new Date(entry.ts), meta.siteTimezones[saved.id]));
+            }
+          }
+          window.Logbook._ui.siteSettingsId = saved.id;
+          window.Logbook.render();
+          window.Logbook._toast("Site saved.");
+        } catch (error) { status.textContent = error.message; }
+        finally { button.disabled = false; }
+      };
+    } catch (error) { host.textContent = error.message; }
   }
 
   async function sessions(host, user) {
@@ -241,7 +288,7 @@
       ${equipment.length ? '<button type="button" class="btn no-print" data-act="logs-print">Print / PDF</button>' : ""}</div><section class="card">
       ${equipment.length ? `<label class="fld"><span>Equipment</span><select id="history-equipment">${equipment.map(item =>
         `<option value="${esc(item.id)}" ${item.id === selection ? "selected" : ""}>${esc(item.tag)}</option>`
-      ).join("")}</select></label><div id="paged-log-history" aria-live="polite">Loading reading history…</div>`
+      ).join("")}</select></label><div id="paged-log-entry"></div><div id="paged-log-history" aria-live="polite">Loading reading history…</div>`
       : "<p>No equipment available.</p>"}</section>`;
   }
 
@@ -272,8 +319,25 @@
         if (host.isConnected && requested === version) host.textContent = error.message;
       }
     }
-    selection.onchange = () => { window.Logbook._ui.logEq = selection.value; load(1); };
-    load(1);
+    async function selectEquipment() {
+      const id = selection.value;
+      const book = window.Logbook;
+      book._ui.logEq = id;
+      load(1);
+      if (!window.LogbookV4.can("readings.write")) return;
+      const entry = document.getElementById("paged-log-entry");
+      entry.textContent = "";
+      try {
+        const equipment = await api.getEquipment(id);
+        if (!entry.isConnected || id !== selection.value) return;
+        book._ui.pagedLogEquipment = equipment;
+        entry.innerHTML = book.logEntryForm(equipment);
+      } catch (error) {
+        if (entry.isConnected && id === selection.value) entry.textContent = error.message;
+      }
+    }
+    selection.onchange = selectEquipment;
+    selectEquipment();
   }
 
   function bindReadingPhotos(root = document) {
@@ -312,7 +376,11 @@
         if (history) bindPagedReadingHistory(history);
         else bindReadingPhotos();
       }
-      if (view === "settings") bindSettings(document.getElementById("qr-url-form"));
+      if (view === "settings") {
+        bindSettings(document.getElementById("qr-url-form"));
+        const host = document.getElementById("site-settings");
+        if (host) bindSites(host, window.Logbook._ui.siteSettingsId ?? window.Logbook.getState().me?.site_id ?? undefined);
+      }
       if (view === "profile") sessions(document.getElementById("qr-own-sessions"));
       if (view === "backup" && window.LogbookV4.can("settings.manage")) storage(document.getElementById("qr-storage"));
       if (view === "users") document.querySelectorAll("[data-qr-user]").forEach(button => {

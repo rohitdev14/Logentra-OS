@@ -38,6 +38,7 @@ def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor
                 "equipment_id": eid,
                 "tag": log.get("tag"),
                 "parameter": key,
+                "ts": log.get("ts"),
                 "date": log.get("date"),
                 "time": log.get("time") or "08:00",
                 "value": val,

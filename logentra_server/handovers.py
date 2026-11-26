@@ -13,6 +13,7 @@ from logentra_server.models import Annotation, AuditLog, Equipment, Parameter, P
 from logentra_server.routers.shift_log import latest_entries
 from logentra_server.routers.shifts import settings_for
 from logentra_server.shift_models import Handover, HandoverComment, HandoverItem, Shift, ShiftDefinition, ShiftLogCategory, ShiftLogEntry, ShiftPattern
+from logentra_server import sitetime
 from logentra_server.utils import parse_ts, uid
 from logentra_server.workorders import OPENISH
 
@@ -137,10 +138,7 @@ def live_candidates(db, shift, now=None):
         Annotation.id.is_(None), Reading.ts >= cutoff, Reading.ts <= parse_ts(ts=shifts.utc_text(now)),
     ).order_by(Reading.ts.desc(), Reading.id)
     for reading, tag, label, unit in oor:
-        timestamp = datetime.fromisoformat(reading.ts)
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
-        clock = timestamp.astimezone(zone).strftime("%H:%M")
+        _, clock = sitetime.utc_text_to_local(reading.ts, zone)
         value = f"{reading.value:g} {unit}" if unit else f"{reading.value:g}"
         detail = f"{value} at {clock}"
         if reading.limit_min is not None and reading.value < reading.limit_min:
@@ -150,7 +148,7 @@ def live_candidates(db, shift, now=None):
         if reading.remarks:
             detail += f". {reading.remarks}"
         yield ("oor_reading", reading.id, f"{tag} · {label or reading.parameter_key}",
-               detail, "high", True, reading.ts, None)
+               detail, "high", True, sitetime.utc_iso_z(reading.ts), None)
     orders = db.query(WorkOrder).filter(
         WorkOrder.site_id == area[0], WorkOrder.area_id == area[1],
         WorkOrder.priority.in_(("urgent", "high")), WorkOrder.status.in_(OPENISH),

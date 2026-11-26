@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, selectinload
 
-from logentra_server import seed, service
+from logentra_server import seed, service, shifts
 from logentra_server.auth import (
     ALL_PERMISSIONS,
     PERMISSIONS,
@@ -70,11 +70,25 @@ def _role_dict(r: Role) -> dict[str, Any]:
     }
 
 
+class SiteUpdate(BaseModel):
+    name: str | None = None
+    timezone: str | None = None
+
+
+def _site_timezone(value):
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(422, "Timezone must be an IANA timezone name")
+    return shifts.timezone_for(value.strip()).key if value.strip() else None
+
+
 def _site_dict(s: Site) -> dict[str, Any]:
     return {
         "id": s.id,
         "name": s.name,
         "code": s.code or "",
+        "timezone": s.timezone,
         "created_at": s.created_at,
         "areas": [
             {"id": a.id, "site_id": a.site_id, "name": a.name, "code": a.code or "", "created_at": a.created_at}
@@ -429,7 +443,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         for area_id in area_ids:
             _require_new(db, Area, area_id, "An area")
         now = utcnow_iso()
-        site = Site(id=body.get("id") or uid("site"), name=name, code=code, created_at=now)
+        site = Site(id=body.get("id") or uid("site"), name=name, code=code, created_at=now,
+                    timezone=_site_timezone(body.get("timezone")))
         db.add(site)
         db.flush()
         for area in areas:
@@ -443,6 +458,29 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         db.commit()
         site = db.query(Site).options(selectinload(Site.areas)).filter(Site.id == site.id).one()
         return _site_dict(site)
+
+    @router.patch("/api/sites/{sid}", tags=["users"])
+    def update_site(sid: str, body: SiteUpdate, db: Session = Depends(get_db), principal: Principal = Depends(current)):
+        principal.require("users.manage")
+        site = db.get(Site, sid, with_for_update=True)
+        if not site or (principal.site_id and principal.site_id != sid):
+            raise HTTPException(404, "Site not found")
+        if "name" in body.model_fields_set:
+            name = (body.name or "").strip()
+            if not name:
+                raise HTTPException(422, "name is required")
+            site.name = name
+        if "timezone" in body.model_fields_set:
+            zone = _site_timezone(body.timezone)
+            if zone != site.timezone:
+                service.audit(db, "site.timezone_changed", actor=principal.username, user_id=principal.user_id,
+                              entity_type="site", entity_id=sid, detail={"old": site.timezone, "new": zone})
+                site.timezone = zone
+        db.commit()
+        result = _site_dict(site)
+        if principal.area_id:
+            result["areas"] = [area for area in result["areas"] if area["id"] == principal.area_id]
+        return result
 
     @router.post("/api/sites/{sid}/areas", tags=["users"], status_code=201)
     def create_area(sid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):

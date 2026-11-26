@@ -3,9 +3,11 @@ from html import escape
 import json
 import re
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi.responses import HTMLResponse
 
+from logentra_server.sitetime import utc_text_to_local
 from logentra_server.phone_auth import csrf_secret, csrf_token, set_csrf_cookie
 
 TEMPLATE = (Path(__file__).parent / "templates" / "qr_phone.html").read_text()
@@ -31,7 +33,8 @@ def equipment_card(summary):
     last = ""
     if timestamp:
         by = summary.get("last_logged_by")
-        last = f'<span>Last logged <time datetime="{escape(timestamp)}">{escape(timestamp)}</time>'
+        day, clock = utc_text_to_local(timestamp, ZoneInfo(summary.get("timezone", "UTC")))
+        last = f'<span>Last logged <time datetime="{escape(timestamp)}">{day} {clock}</time>'
         last += f" by {escape(by)}" if by else ""
         last += "</span>"
     metadata = " · ".join(filter(None, (escape(location), last)))

@@ -9,6 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from logentra_server import service
 from logentra_server.models import Area, Site, User
 from logentra_server.shift_models import Crew, CrewMember, RosterEntry, Shift, ShiftDefinition, ShiftPattern
+from logentra_server.sitetime import INVALID_TIMEZONE
 from logentra_server.utils import utcnow_iso, uid
 
 
@@ -30,7 +31,7 @@ def timezone_for(value):
     try:
         return ZoneInfo(value)
     except (ZoneInfoNotFoundError, ValueError):
-        raise HTTPException(422, "Enter a valid IANA timezone, such as Asia/Singapore") from None
+        raise HTTPException(422, INVALID_TIMEZONE) from None
 
 
 def scoped(principal, site_id, area_id=None):
