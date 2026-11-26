@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session, selectinload
 
-from logentra_server import events, service
+from logentra_server import events, service, sitetime
 from logentra_server.models import (
     AutoWorkOrderRule,
     Equipment,
@@ -17,7 +17,6 @@ from logentra_server.models import (
     WorkOrderLabour,
 )
 from logentra_server.pagination import clamp_page, count_rows, page_result
-from logentra_server import sitetime
 from logentra_server.utils import uid, utcnow_iso
 
 STATUSES = ("open", "in_progress", "on_hold", "done", "closed")
@@ -196,6 +195,7 @@ def create_work_order(
     fire_webhooks: bool = True,
     source: str = "manual",
     commit: bool = True,
+    reading_ts: str | None = None,
 ) -> WorkOrder:
     now = utcnow_iso()
     title = (data.get("title") or "").strip()
@@ -241,7 +241,10 @@ def create_work_order(
     db.flush()
     service.audit(db, "create", actor=actor, user_id=user_id, entity_type="work_order", entity_id=wo.id, detail={"title": wo.title})
     if fire_webhooks:
-        events.enqueue(db, "workorder.created", {"event": "workorder.created", "at": now, "work_order": to_dict(wo, db, detail=True)})
+        payload = {"event": "workorder.created", "at": now, "work_order": to_dict(wo, db, detail=True)}
+        if reading_ts:
+            payload["ts"] = sitetime.utc_iso_z(reading_ts)
+        events.enqueue(db, "workorder.created", payload)
     if commit:
         db.commit()
         db.refresh(wo)
@@ -505,6 +508,8 @@ def maybe_auto_create(db: Session, reading, tag: str, parameter_label: str | Non
     except (KeyError, IndexError, ValueError):
         title = f"Out of range: {tag} {reading.parameter_key} = {reading.value}"
         desc = f"Auto-created from an out-of-range reading at {local_time}."
+    if local_time not in desc:
+        desc = f"{desc}\nReading recorded at {local_time}."
     return create_work_order(
         db,
         {
@@ -520,4 +525,5 @@ def maybe_auto_create(db: Session, reading, tag: str, parameter_label: str | Non
         source="auto_oor",
         fire_webhooks=True,
         commit=False,
+        reading_ts=reading.ts,
     )

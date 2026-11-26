@@ -60,7 +60,9 @@ def run_migrations_online() -> None:
     cfg = config.get_section(config.config_ini_section, {}) or {}
     cfg["sqlalchemy.url"] = _url()
     connectable = engine_from_config(cfg, prefix="sqlalchemy.", poolclass=pool.NullPool)
-    with connectable.connect() as connection:
+    with connectable.begin() as connection:
+        if connection.dialect.name == "sqlite":
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
         context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
         with context.begin_transaction():
             context.run_migrations()

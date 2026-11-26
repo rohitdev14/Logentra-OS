@@ -159,3 +159,40 @@ def test_site_timezone_change_is_audited_and_keeps_reading_instants(client, site
         assert db.get(Reading, rid).ts == "2026-11-26T02:30:00"
         audit = db.query(AuditLog).filter_by(action="site.timezone_changed", entity_id=site).one()
         assert loads(audit.detail) == {"old": "Asia/Singapore", "new": "UTC"}
+
+
+def test_automatic_work_order_shows_site_time_and_webhooks_keep_utc(client, site_equipment):
+    from logentra_server.models import OutboundWebhook, WebhookDelivery
+    from logentra_server.utils import dumps, utcnow_iso
+
+    eid, _, _ = site_equipment
+    client.app.state.delivery_worker.stop()
+    with client.app.state.SessionLocal.begin() as db:
+        db.add(OutboundWebhook(id="work_order_clock", url="https://example.invalid/hook",
+                               events=dumps(["out_of_range", "workorder.created"]), enabled=1,
+                               created_at=utcnow_iso()))
+    post(client, "/work-order-rules", {"equipment_id": eid, "parameter_key": "value_0", "enabled": True})
+    result = post(client, "/readings", {"equipment_id": eid, "parameter": "value_0", "value": 8,
+                                       "date": "2026-11-26", "time": "10:30"})
+    order_id, = result["work_orders"]
+    order = client.get(f"/api/work-orders/{order_id}").json()
+    assert "at 2026-11-26 10:30 (Asia/Singapore)" in order["description"]
+    with client.app.state.SessionLocal() as db:
+        payloads = {delivery.event: loads(delivery.payload) for delivery in db.query(WebhookDelivery)}
+        assert set(payloads) == {"out_of_range", "workorder.created"}
+        assert all(payload["ts"] == "2026-11-26T02:30:00Z" for payload in payloads.values())
+    alert, = client.get("/api/dashboard").json()["recent_alerts"]
+    assert alert["ts"] == "2026-11-26T02:30:00Z"
+
+
+def test_retry_of_reading_without_clock_preserves_the_first_instant(client, site_equipment, monkeypatch):
+    from logentra_server import utils
+
+    eid, _, _ = site_equipment
+    reading = {"id": "reading-retry", "equipment_id": eid, "parameter": "value_0", "value": 4}
+    monkeypatch.setattr(utils, "utcnow_iso", lambda: "2026-11-26T02:30:04Z")
+    assert post(client, "/readings", reading)["added"] == 1
+    monkeypatch.setattr(utils, "utcnow_iso", lambda: "2026-11-26T02:30:42Z")
+    assert post(client, "/readings", reading)["added"] == 0
+    with client.app.state.SessionLocal() as db:
+        assert db.get(Reading, reading["id"]).ts == "2026-11-26T02:30:04"

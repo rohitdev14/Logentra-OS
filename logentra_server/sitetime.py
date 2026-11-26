@@ -7,15 +7,18 @@ UTC = ZoneInfo("UTC")
 INVALID_TIMEZONE = "Enter a valid IANA timezone, such as Asia/Singapore"
 
 
-def zone_for_site(db, site_id) -> ZoneInfo:
-    from logentra_server.models import Site
-
-    site = db.get(Site, site_id) if site_id else None
+def _zone(db, site) -> ZoneInfo:
     return ZoneInfo((site.timezone if site else None) or db.info.get("timezone") or "UTC")
 
 
+def zone_for_site(db, site_id) -> ZoneInfo:
+    from logentra_server.models import Site
+
+    return _zone(db, db.get(Site, site_id) if site_id else None)
+
+
 def zone_for_equipment(db, equipment) -> ZoneInfo:
-    return zone_for_site(db, equipment.site_id if equipment else None)
+    return _zone(db, equipment.site if equipment else None)
 
 
 def local_to_utc_text(date_str: str, time_str: str, zone: ZoneInfo) -> str:

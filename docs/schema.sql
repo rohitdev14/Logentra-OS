@@ -207,11 +207,11 @@ CREATE TABLE readings (
     entry_id       TEXT NOT NULL,
     equipment_id   TEXT NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
     parameter_key  TEXT NOT NULL,
-    ts             TEXT NOT NULL,              -- ISO-8601 UTC, e.g. 2026-11-22T08:30:00
+    ts             TEXT NOT NULL,              -- UTC text YYYY-MM-DDTHH:MM:SS, no suffix
     value          REAL NOT NULL,
     remarks        TEXT,
     entered_by     TEXT,
-    source         TEXT NOT NULL DEFAULT 'manual', -- manual | import | mqtt | webhook | api | demo
+    source         TEXT NOT NULL DEFAULT 'manual', -- manual | import | mqtt | webhook | api | demo | qr
     limit_min      REAL,                       -- snapshot of limits at ingest (nullable)
     limit_max      REAL,
     out_of_range   INTEGER NOT NULL DEFAULT 0, -- denormalised flag for indexed event queries
@@ -223,6 +223,12 @@ CREATE INDEX ix_readings_ts ON readings(ts);
 CREATE INDEX ix_readings_entry ON readings(entry_id);
 CREATE INDEX ix_readings_source ON readings(source);
 CREATE INDEX ix_readings_oor_ts ON readings(out_of_range, ts);
+
+-- Original wall times of readings converted by the site-timezone migration.
+CREATE TABLE reading_timezone_backfill (
+    reading_id  TEXT PRIMARY KEY REFERENCES readings(id) ON DELETE CASCADE,
+    original_ts TEXT NOT NULL
+);
 
 CREATE TABLE annotations (
     id            TEXT PRIMARY KEY,

@@ -30,6 +30,7 @@ class Equipment(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
     qr_code: Mapped[str | None] = mapped_column(Text, unique=True, index=True)
     qr_code_issued_at: Mapped[str | None] = mapped_column(Text)
+    site: Mapped[Site | None] = relationship()
     values: Mapped[list[EquipmentFieldValue]] = relationship(
         back_populates="equipment", cascade="all, delete-orphan"
     )

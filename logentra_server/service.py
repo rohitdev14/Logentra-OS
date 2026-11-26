@@ -383,14 +383,14 @@ def list_logs(
     reading_pairs = [(row.entry_id, row.equipment_id) for row in page_rows if not row.is_note]
     note_ids = [row.entry_id for row in page_rows if row.is_note]
     readings = {}
-    query = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment))
+    query = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment).selectinload(Equipment.site))
     if scoped_equipment is not None:
         query = query.filter(Reading.equipment_id.in_(scoped_equipment.statement))
     for offset in range(0, len(reading_pairs), 400):
         readings.update(group_log_readings(db, query.filter(
             tuple_(Reading.entry_id, Reading.equipment_id).in_(reading_pairs[offset:offset + 400])
         ).order_by(Reading.ts, Reading.id)))
-    notes = {receipt.id: note_log_entry(db, receipt) for receipt in note_log_query(db, principal).options(selectinload(QREntry.equipment)).filter(
+    notes = {receipt.id: note_log_entry(db, receipt) for receipt in note_log_query(db, principal).options(selectinload(QREntry.equipment).selectinload(Equipment.site)).filter(
         QREntry.id.in_(note_ids)
     )} if note_ids else {}
     entries = [notes.get(row.entry_id) if row.is_note else readings.get((row.entry_id, row.equipment_id))
@@ -439,10 +439,10 @@ def record_to_ui(r: Record) -> dict[str, Any]:
 
 
 def logs_to_ui(db: Session, *, include_notes: bool = True) -> list[dict[str, Any]]:
-    readings = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment)).order_by(Reading.ts, Reading.id)
+    readings = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment).selectinload(Equipment.site)).order_by(Reading.ts, Reading.id)
     entries = list(group_log_readings(db, readings).values())
     if include_notes:
-        entries.extend(note_log_entry(db, receipt) for receipt in note_log_query(db).options(selectinload(QREntry.equipment)))
+        entries.extend(note_log_entry(db, receipt) for receipt in note_log_query(db).options(selectinload(QREntry.equipment).selectinload(Equipment.site)))
         entries.sort(key=lambda row: row["ts"])
         add_log_photos(db, entries)
     return entries
@@ -996,12 +996,14 @@ def ingest_readings(
         if value is None:
             skipped.append({"reason": "invalid_value", "item": raw})
             continue
+        date, time = raw.get("date"), raw.get("time")
+        explicit_ts = raw.get("ts") or raw.get("timestamp")
         try:
-            ts = parse_ts(
-                raw.get("date"), raw.get("time"), raw.get("ts") or raw.get("timestamp"),
-                zone=sitetime.zone_for_equipment(db, eq),
-            )
-        except (ValueError, TypeError, AttributeError):
+            if explicit_ts or not (date or time):
+                ts = parse_ts(ts=explicit_ts)
+            else:
+                ts = parse_ts(date, time, zone=sitetime.zone_for_equipment(db, eq))
+        except (ValueError, TypeError, AttributeError, OverflowError):
             skipped.append({"reason": "invalid_timestamp"})
             continue
         entry_id = raw.get("entry_id") or raw.get("entryId") or uid("log")
@@ -1028,7 +1030,9 @@ def ingest_readings(
             ).returning(Reading)).scalar_one_or_none()
             if inserted is None:
                 existing = db.get(Reading, reading_id)
-                fields = ["equipment_id", "parameter_key", "ts", "value", "remarks", "entered_by", "source"]
+                fields = ["equipment_id", "parameter_key", "value", "remarks", "entered_by", "source"]
+                if explicit_ts or date or time:
+                    fields.append("ts")
                 if raw.get("entry_id") or raw.get("entryId"):
                     fields.append("entry_id")
                 if any(getattr(existing, key) != getattr(reading, key) for key in fields):
@@ -1127,7 +1131,7 @@ def query_readings(
     offset: int = 0,
     principal=None,
 ) -> list[dict[str, Any]]:
-    q = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment))
+    q = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment).selectinload(Equipment.site))
     if principal and principal.scoped:
         equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
         q = q.filter(Reading.equipment_id.in_(equipment.statement))
@@ -1161,7 +1165,7 @@ def query_events(
     offset: int = 0,
     principal=None,
 ) -> list[dict[str, Any]]:
-    q = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment))
+    q = db.query(Reading).options(selectinload(Reading.annotation), selectinload(Reading.equipment).selectinload(Equipment.site))
     if principal and principal.scoped:
         equipment = apply_scope(db.query(Equipment.id), Equipment, principal)
         q = q.filter(Reading.equipment_id.in_(equipment.statement))

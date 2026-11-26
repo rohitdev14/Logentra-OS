@@ -17,7 +17,7 @@ from logentra_server.branding import PRODUCT_NAME, RELEASE_LABEL
 from logentra_server.schemas import ReplayIn, SyncBody, WebhookIn
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 from logentra_server.http_security import HTTPSecurity, read_upload
 
@@ -514,6 +514,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ])
         if not parameter:
             notes = service.note_log_query(db, request.state.principal, tag=tag, ts_from=ts_from, ts_to=ts_to)
+            notes = notes.options(selectinload(QREntry.equipment).selectinload(Equipment.site))
             notes = notes.add_columns(Equipment.tag).order_by(QREntry.created_at, QREntry.id)
             for receipt, equipment_tag in notes:
                 entry = service.note_log_entry(db, receipt)
