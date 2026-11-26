@@ -13,6 +13,17 @@ The logbook that stays yours.
 
 It runs on your machine. There is no hosted account.
 
+## Mission & Objectives
+
+**Mission:** Stop losing plant knowledge to shift changes and spreadsheets. One open database, built for the people on the floor.
+
+**Objectives**
+1. Digitise paper and spreadsheet records for vendors, freelance engineers and small to medium plants.
+2. Put all of a site's records in one shared database the owner controls.
+3. Keep it free, open source and easy to self-host.
+4. Open the data to AI: vector search across logs, handovers and commissioning records, plus exports and an API for analytics tools (planned).
+5. Build a community around Logentra OS: answer questions, help plants get set up, and keep improving it based on what users actually need.
+
 ![Dashboard](docs/images/dashboard-light.png)
 
 ![Dashboard (dark)](docs/images/dashboard-dark.png)
