@@ -4,7 +4,7 @@ import pytest
 
 from logentra_server.auth import create_session
 from logentra_server.models import Area, AuditLog, Equipment, OutboundWebhook, Punch, Role, Signoff, Site, User, WebhookDelivery
-from logentra_server.utils import dumps, utcnow_iso
+from logentra_server.utils import dumps, loads, utcnow_iso
 
 PATH = "/api/records/rec_p101"
 PUNCH = {"id": "punch_guard", "description": "Replace coupling guard", "priority": "B", "raised": "2026-11-26"}
@@ -219,7 +219,33 @@ def test_approved_record_allows_only_scoped_punch_close_out(client, roles, statu
         signature = db.query(Signoff).filter_by(record_id="rec_p101").one()
         assert (signature.name, signature.signed_at) == ("Amir Rahman", approved["approvedAt"])
         assert db.query(AuditLog).filter_by(action="record.punch_closed", user_id="operator").count() == 1
-        assert db.query(WebhookDelivery).one().event == "record.punch_closed"
+        delivery = db.query(WebhookDelivery).one()
+        assert delivery.event == "record.punch_closed"
+        assert loads(delivery.payload)["actor"] == "Lena Tan"
+
+
+def test_approved_punch_close_out_records_username_and_user_id(client, roles):
+    with client.app.state.SessionLocal.begin() as db:
+        db.add(User(id="usr_test_close01", username="closer", display_name="Lena Tan",
+                    site_id="northbrook", area_id="utilities", role_id=db.get(User, "operator").role_id,
+                    password_hash="unused", is_active=1, created_at=utcnow_iso(), updated_at=utcnow_iso()))
+        db.flush()
+        closer = {"Authorization": "Bearer " + create_session(db, "usr_test_close01")[0]}
+
+    draft = create_record(client, closer, ready=True)
+    sync_record(client, {**draft, "punches": [PUNCH]}, closer)
+    submitted = action(client, "submit", snapshot(client, closer), closer)
+    approved = action(client, "approve", submitted, roles["approver"])
+    closed = {**approved["punches"][0], "status": "Closed", "closed": "2026-11-27"}
+    sync_record(client, {**approved, "punches": [closed]}, closer)
+
+    with client.app.state.SessionLocal() as db:
+        event = db.query(AuditLog).filter_by(action="record.punch_closed", entity_id=approved["id"]).one()
+        assert (event.actor, event.user_id) == ("closer", "usr_test_close01")
+    trail = client.get(PATH + "/audit", headers=roles["viewer"])
+    assert trail.status_code == 200, trail.text
+    event = next(row for row in trail.json() if row["action"] == "record.punch_closed")
+    assert event["actor_name"] == "Lena Tan"
 
 
 def test_legacy_signed_record_has_synthetic_event(client):

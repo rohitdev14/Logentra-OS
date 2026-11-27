@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 - JSON backup imports preserve `ts` values with an explicit offset and use site-local `date` and `time` for older logs. The `reading_timezone_backfill` table retains original wall times for downgrade.
 - Records can be submitted for approval, approved or returned. Approved records are locked except for punch close-out by users with `records.write` in scope. Supervisors and admins have the new `records.approve` permission.
 - Each record has an audit trail.
+- Audit entries for punch close-out on approved records store the username as the actor.
 - Alembic applies `0010_record_approval` and `0011_site_timezone` on startup.
 
 ## 0.7.0 – QR tags and shift handover

@@ -178,7 +178,7 @@ def close_approved_punches(db, record, payload, previous, old_fields, current, *
         if punch.id in closures:
             punch.status = "Closed"
             punch.closed_at = closures[punch.id]
-    audit_save(db, record, old_fields, current, actor=principal.user_id or principal.actor, user_id=principal.user_id)
+    audit_save(db, record, old_fields, current, actor=principal.actor, user_id=principal.user_id)
     return True
 
 
