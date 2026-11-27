@@ -1,6 +1,7 @@
 """Record approval and audit trail."""
 
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -187,22 +188,77 @@ def _event_label(action, detail):
     return label
 
 
+def _merge_item_changes(entries, record):
+    """Combine nearby changes for display while preserving each stored audit row."""
+    item_labels = Counter(item.label for item in record.items)
+    column_labels = Counter(column.label for column in record.columns)
+    trail = []
+    newest = None
+    identity = None
+    cells = {}
+    for timestamp, actor, entry in entries:
+        if entry["action"] != "record.item_changed":
+            newest = None
+            trail.append(entry)
+            continue
+
+        changes = entry["detail"].get("changes", [])
+        keys = [(change["item"], change["column"]) for change in changes]
+        # Historical rows identify cells by label. Keep ambiguous rows intact.
+        if len(keys) != len(set(keys)) or any(item_labels[item] > 1 or column_labels[column] > 1
+                                              for item, column in keys):
+            newest = None
+            trail.append(entry)
+            continue
+
+        if newest is None or actor != identity or not actor[1] or newest - timestamp > timedelta(seconds=120):
+            newest, identity = timestamp, actor
+            cells = {}
+            trail.append({**entry, "detail": {"changes": []}})
+
+        detail = trail[-1]["detail"]
+        for key, change in zip(keys, changes):
+            if key in cells:
+                cells[key]["from"] = change["from"]
+            else:
+                cells[key] = dict(change)
+                detail["changes"].append(cells[key])
+        if skipped := entry["detail"].get("truncated"):
+            detail["truncated"] = detail.get("truncated", 0) + skipped
+
+    for entry in trail:
+        if entry["action"] == "record.item_changed":
+            detail = entry["detail"]
+            if len(detail["changes"]) > 50:
+                detail["truncated"] = detail.get("truncated", 0) + len(detail["changes"]) - 50
+                detail["changes"] = detail["changes"][:50]
+            entry["label"] = _event_label(entry["action"], detail)
+    return trail
+
+
 def list_audit(db, record):
     rows = db.query(AuditLog, User).outerjoin(User, AuditLog.user_id == User.id).filter(
         AuditLog.entity_type == "record", AuditLog.entity_id == record.id,
         AuditLog.action.in_(LABELS),
     ).all()
-    trail = []
+    entries = []
     for row, user in rows:
         detail = loads(row.detail) or {}
         # Current revisions have a checklist audit event alongside the evidence snapshot.
         if row.action == "revise" and "status" in detail:
             continue
-        trail.append({"id": row.id, "at": row.ts, "action": row.action, "label": _event_label(row.action, detail),
-                      "actor": row.actor, "actor_name": display_name(user, row.actor), "detail": detail})
-    if record.signoff and not any(row["action"] == "record.signed" for row in trail):
+        identity = ("user", row.user_id) if row.user_id else ("actor", row.actor)
+        entries.append((datetime.fromisoformat(row.ts), identity, {
+            "id": row.id, "at": row.ts, "action": row.action, "label": _event_label(row.action, detail),
+            "actor": row.actor, "actor_name": display_name(user, row.actor), "detail": detail,
+        }))
+    if record.signoff and not any(entry["action"] == "record.signed" for _, _, entry in entries):
         name, at = record.signoff.name, record.signoff.signed_at
-        trail.append({"id": record.signoff.id, "at": utc_iso_z(at), "action": "record.signed",
-                      "label": "Signed (before 0.7.1)", "actor": name, "actor_name": name,
-                      "detail": {"name": name, "at": at}})
-    return sorted(trail, key=lambda row: (datetime.fromisoformat(row["at"]), row["id"]), reverse=True)
+        timestamp = utc_iso_z(at)
+        entries.append((datetime.fromisoformat(timestamp), ("actor", name), {
+            "id": record.signoff.id, "at": timestamp, "action": "record.signed",
+            "label": "Signed (before 0.7.1)", "actor": name, "actor_name": name,
+            "date_only": len(at) == 10, "detail": {"name": name, "at": at},
+        }))
+    entries.sort(key=lambda row: (row[0], row[2]["id"]), reverse=True)
+    return _merge_item_changes(entries, record)

@@ -1343,10 +1343,11 @@
       const zone = recordZone(rec);
       host.innerHTML = trail.filter(event => event.action !== "revise").map(event => {
         const { id, at, label, actor_name: name, detail } = event;
-        const when = recordClock(at, zone);
+        const timestamp = event.date_only ? detail.at : at;
+        const when = recordClock(timestamp, zone);
         const changes = detail.changes || [];
         return `<div class="timeline-row" data-event="${esc(id)}">
-          <time class="timeline-clock" datetime="${esc(at)}" title="${esc(when)}">${esc(when.slice(11))}</time>
+          <time class="timeline-clock" datetime="${esc(timestamp)}" title="${esc(when)}">${esc(when.slice(11))}</time>
           <span class="timeline-dot" aria-hidden="true"></span><div class="timeline-card">
             <article class="card shift-entry"><p class="tiny">${esc(when.slice(0, 10))} · ${esc(name)}</p>
               ${changes.length ? `<details><summary>${esc(label)}</summary><ul>${changes.map(change =>

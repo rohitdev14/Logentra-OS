@@ -330,6 +330,7 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
     from playwright.sync_api import expect, sync_playwright
     from logentra_server.app import create_app
     from logentra_server.config import Settings
+    from logentra_server.models import Record, Signoff
 
     if os.environ.get("PLAYWRIGHT_SKIP") == "1":
         pytest.skip("PLAYWRIGHT_SKIP=1")
@@ -486,6 +487,19 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
             expect(trail).not_to_contain_text("review-browser")
             expect(trail).not_to_contain_text("scoped-browser")
             expect(trail.get_by_text("Raised punch: Replace coupling guard")).to_be_visible()
+
+            with app.state.SessionLocal.begin() as db:
+                db.add(Record(id="legacy_inspection", equipment_id="browser-allowed", template_name="Legacy inspection",
+                              created_at="2026-10-02", updated_at="2026-10-02", status="approved",
+                              approved_by="Amir Rahman", approved_at="2026-10-02",
+                              signoff=Signoff(id="legacy_signoff", name="Amir Rahman", signed_at="2026-10-02")))
+            reviewer.reload()
+            reviewer.evaluate("Logbook.goto('records')")
+            reviewer.get_by_role("row").filter(has_text="Legacy inspection").get_by_role("button", name="Open").click()
+            legacy_event = reviewer.locator("#record-audit .timeline-row").filter(has_text="Signed (before 0.7.1)")
+            expect(legacy_event).to_contain_text("2026-10-02")
+            expect(legacy_event.locator("time")).to_have_attribute("datetime", "2026-10-02")
+            expect(legacy_event.locator("time")).to_have_text("")
             browser.close()
     finally:
         server.should_exit = True

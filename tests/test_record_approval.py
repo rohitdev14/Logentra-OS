@@ -176,3 +176,50 @@ def test_legacy_signed_record_has_synthetic_event(client):
     assert next(event for event in trail if event["action"] == "revise")["label"] == "Updated record"
     assert event["label"] == "Signed (before 0.7.1)"
     assert event["actor_name"] == "Amir Rahman" and event["at"] == "2026-10-02T00:00:00Z"
+
+    assert event["date_only"] is True
+
+
+def test_audit_groups_nearby_checklist_changes_by_actor_without_rewriting_rows(client, roles):
+    create_record(client, roles["operator"])
+    changes = [
+        ("10:00:00", "operator", "record.item_changed", [
+            {"item": "Inspect guard", "column": "Result", "from": "", "to": "Fail"},
+            {"item": "Read vibration", "column": "Value", "from": "3", "to": "5"},
+        ]),
+        ("10:02:00", "operator", "record.item_changed", [
+            {"item": "Inspect guard", "column": "Result", "from": "Fail", "to": "Pass"},
+        ]),
+        ("10:02:01", "approver", "record.item_changed", [
+            {"item": "Read vibration", "column": "Value", "from": "5", "to": "4"},
+        ]),
+        ("10:02:02", "approver", "record.notes_changed", {"from_length": 0, "to_length": 8}),
+        ("10:02:03", "approver", "record.item_changed", [
+            {"item": "Read vibration", "column": "Value", "from": "4", "to": "3"},
+        ]),
+        ("10:04:04", "approver", "record.item_changed", [
+            {"item": "Read vibration", "column": "Value", "from": "3", "to": "2"},
+        ]),
+        ("10:04:05", "approver", "record.item_changed", [
+            {"item": "Read vibration", "column": "Value", "from": "2", "to": "1"},
+            {"item": "Read vibration", "column": "Value", "from": "5", "to": "6"},
+        ]),
+    ]
+    with client.app.state.SessionLocal.begin() as db:
+        for index, (clock, actor, kind, detail) in enumerate(changes):
+            db.add(AuditLog(id=f"audit_{index}", entity_type="record", entity_id="rec_p101", action=kind,
+                            ts=f"2026-11-26T{clock}Z", actor=actor, user_id=actor,
+                            detail=dumps({"changes": detail} if isinstance(detail, list) else detail)))
+    trail = client.get(PATH + "/audit", headers=roles["viewer"]).json()
+    entries = [event for event in trail if event["action"] != "record.created"]
+    assert [event["id"] for event in entries] == ["audit_6", "audit_5", "audit_4", "audit_3", "audit_2", "audit_1"]
+    assert entries[0]["detail"]["changes"] == changes[-1][-1]
+    merged = entries[-1]
+    assert merged["label"] == "Changed 2 items"
+    assert merged["actor_name"] == "Lena Tan"
+    assert merged["detail"]["changes"] == [
+        {"item": "Inspect guard", "column": "Result", "from": "", "to": "Pass"},
+        {"item": "Read vibration", "column": "Value", "from": "3", "to": "5"},
+    ]
+    with client.app.state.SessionLocal() as db:
+        assert db.query(AuditLog).filter_by(entity_id="rec_p101", action="record.item_changed").count() == 6
