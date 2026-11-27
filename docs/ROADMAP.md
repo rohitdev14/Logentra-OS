@@ -1,6 +1,6 @@
 # Roadmap
 
-## Close the v0.6 release gates
+## v0.6 release planning
 
 - Complete and test site- and area-scoped workflows with a role-by-endpoint permission matrix.
 - Qualify HTTPS ingress, shared rate limiting, deployment containers and production migration orchestration.
@@ -18,6 +18,6 @@
 - Add second-level escalation, overdue sign-off escalation and area-specific timers.
 
 - Define site-scoped asset identity and a backward-compatible tag lookup before changing uniqueness.
-- Add dead-letter replay with authorization and audit, delivery metrics, MQTT QoS configuration and broker outage drills.
+- Expand webhook delivery metrics and add MQTT QoS configuration and broker outage drills.
 - Extend engineering revision history and conflict resolution to remaining catalog and work-order changes.
 - Type major remaining API payloads and expand keyboard and mobile workflow coverage.

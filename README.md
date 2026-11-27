@@ -7,9 +7,13 @@ The logbook that stays yours.
 [![Tests](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml/badge.svg)](https://github.com/rohitdev14/Logentra-OS/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+[Quick start](#quick-start) · [Roadmap](docs/ROADMAP.md) · [Changelog](CHANGELOG.md)
+
 **v0.7.1.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
 
-**Logentra OS** is **Log**book + **Eng**ineering + **Tra**ceability. It is for engineers, vendors, and small plants who still keep commissioning checks, inspections, and daily readings in spreadsheets or paper books. You define your own equipment columns, record templates, and log parameters — so it can be used in any industry. The same data is available to other tools: IoT gateways can write readings in, and Grafana, Node-RED, scripts, or an AI agent can read them out. Users, roles, work orders, and a document approval workflow are built in so a site can run it as a self-hosted alternative to a paid CMMS/Cx cloud app. The UI has a light and a dark theme.
+Built first for small and medium plants, and for the vendors and engineers who support them.
+
+**Logentra OS** is **Log**book + **Eng**ineering + **Tra**ceability. Use it to move commissioning checks, inspections, and daily readings out of spreadsheets and paper books. Define your own equipment columns, record templates, and log parameters. IoT gateways can write readings, and tools such as Grafana, Node-RED, scripts, and AI agents can read them. The app includes users, roles, work orders, document approvals, and light and dark themes.
 
 It runs on your machine. There is no hosted account.
 
@@ -44,7 +48,6 @@ It runs on your machine. There is no hosted account.
 - **REST API** with OpenAPI / Swagger docs, optional API key or user tokens, bulk ingest, time-range queries, server-side pagination, and CSV/JSON export
 - **Inputs:** the UI, CSV/Excel import, a simple IoT webhook, and an optional MQTT subscriber
 - **Outputs:** REST and CSV, direct SQL (for Grafana), and outbound webhooks on out-of-range events, work-order changes, and record and document approval events
-- **Scales to 5,000+ equipment** with indexes, pagination, Alembic migrations, and a load-test script (see [docs/postgres.md](docs/postgres.md) and [docs/load-test-results.json](docs/load-test-results.json))
 - **Optional starter packs** (generic plant equipment, plus a generic semiconductor-utilities pack) — not loaded unless you choose them
 - **v0.2 offline app** included at [`standalone/Logbook.html`](standalone/Logbook.html) for a no-server, browser-only workflow; a v0.2 JSON backup can be imported into the database-backed app
 
@@ -117,16 +120,8 @@ Then open **Trends**, choose equipment **P-210** and parameter **Vibration**. Yo
 
 **Upgrading the HTTPS profile.** Set `LOGENTRA_PUBLIC_HOST` in the Compose environment or `.env` before upgrading with `compose.production.yaml`. List the hostnames or IPs users open, separated by spaces and without ports. See the [HTTPS upgrade instructions](docs/v0.7/OPERATIONS.md#upgrading-the-https-profile).
 
-## v0.6.1
-
-A maintenance update to v0.6.0: one-command backup and restore with Docker Compose, friendlier sign-in limits, clear "already exists" messages, and faster lists on larger servers. The application reports v0.6.1. See the [changelog](CHANGELOG.md).
-
-v0.6.0 added configuration profiles, engineering write protections, queued integrations, native recovery tooling, PostgreSQL performance indexes, and pinned production container images.
-
-- [Deployment and upgrade guide](docs/v0.6/DEPLOYMENT_GUIDE.md)
+- [0.7 operations and upgrade guide](docs/v0.7/OPERATIONS.md#upgrade)
 - [Backup and recovery guide](docs/v0.6/RECOVERY_GUIDE.md)
-- [Final release qualification](docs/v0.6/FINAL_QUALIFICATION_REPORT.md)
-- [Roadmap](docs/ROADMAP.md)
 
 ## Architecture
 
@@ -232,11 +227,11 @@ curl -s -X POST http://127.0.0.1:8787/api/work-orders \
 curl -s "http://127.0.0.1:8787/api/work-orders?status=open&page=1&page_size=50"
 
 # Document approvals (also in docs/integrations.md)
-curl -s -X POST http://127.0.0.1:8787/api/documents \\
-  -F 'file=@test-sheet.pdf;type=application/pdf' \\
-  -F 'title=P-101 commissioning test sheet' \\
-  -F 'document_type=commissioning_test_sheet' \\
-  -F 'equipment_id=eq_p101' \\
+curl -s -X POST http://127.0.0.1:8787/api/documents \
+  -F 'file=@test-sheet.pdf;type=application/pdf' \
+  -F 'title=P-101 commissioning test sheet' \
+  -F 'document_type=commissioning_test_sheet' \
+  -F 'equipment_id=eq_p101' \
   -F 'submit=true'
 curl -s http://127.0.0.1:8787/api/documents/queue
 curl -s -X POST http://127.0.0.1:8787/api/documents/DOC_ID/approve -H 'Content-Type: application/json' -d '{"comment":"Limits checked"}'
@@ -264,15 +259,7 @@ The optional Playwright UI smoke test (`tests/test_ui.py`) needs a local Chrome/
 
 ## Roadmap
 
-Useful next steps, drawn from current limits:
-
-- **Live UI updates** when MQTT or a webhook writes a reading (today, refresh the Logs or Trends page)
-- **Webhook retry / dead-letter** instead of a single attempt (deliveries are already logged)
-- **MQTT store-and-forward** if the broker is down
-- **Richer Excel ingest** (formulas, merged cells)
-- **Desktop installer** — PyInstaller first, then an optional Tauri (or similar) window around the same sidecar
-- **Attachment file storage backends** beyond the local `data/attachments/` folder (the API already stores metadata)
-- **SSO / LDAP** in front of the built-in username+password login
+Where it's going: see the [roadmap](docs/ROADMAP.md).
 
 This is an on-prem operations notebook and lightweight CMMS, not a certified process historian or a safety-rated control system. Hash user passwords; do not store other secrets or confidential site data in equipment records.
 
