@@ -2,20 +2,20 @@
 
 ## Upgrade
 
-Back up the database and attachment tree together before starting 0.7.1. In Docker, use the recovery service from the [recovery guide](../v0.6/RECOVERY_GUIDE.md). Set the installation timezone before starting the upgrade. Use an IANA name such as `Asia/Singapore` in `LOGENTRA_TIMEZONE`, including in the Compose environment or `.env`. Upgrade the app with the usual startup command. Alembic applies these revisions in order.
+Back up the database and attachment tree together before starting 0.7.1. In Docker, use the recovery service from the [recovery guide](../v0.6/RECOVERY_GUIDE.md). Set the installation timezone before starting the upgrade. Use an IANA name such as `Asia/Singapore` in the `timezone` field of `config.yaml` or in `LOGENTRA_TIMEZONE`, including in the Compose environment or `.env`. Upgrade the app with the usual startup command. Alembic applies these revisions in order.
 
 | Revision | Changes |
 | --- | --- |
 | `0008_qr_tags` | Equipment gains nullable codes. Existing browser sessions keep their type. Quick entries, retired codes, and reading photos have separate tables. |
 | `0009_shift_handover` | Adds site shift patterns, roster, shift log, versioned handovers, and escalation settings. Seeds log categories. Existing custom roles gain shift-log read access. PostgreSQL guards append-only entries and signed snapshot data with triggers. |
 | `0010_record_approval` | Adds record workflow fields and the `records.approve` permission. Existing signed records become approved. Custom roles with `documents.approve` also gain `records.approve`. |
-| `0011_site_timezone` | Sets each site's timezone when its shift patterns agree. Otherwise it uses a valid `LOGENTRA_TIMEZONE` when set. Converts existing manual, import and demo readings to UTC, and records counts by timezone in the audit log. |
+| `0011_site_timezone` | Sets each site's timezone when its shift patterns agree. Otherwise it uses the configured installation timezone. Converts existing manual, import and demo readings to UTC, and records counts by timezone in the audit log. |
 
 The migrations support SQLite and PostgreSQL. Existing equipment needs no QR backfill. The first print issues a code. Review custom roles before opening the shift log to staff. Downgrading drops the new feature tables and removes QR codes and phone-session metadata. Use the pre-upgrade backup to recover previous application state. Keep backups with both the database and attachments since uploaded files are stored alongside the database.
 
 ## Site timezone and reading timestamps
 
-Set each site's IANA timezone under **Settings → Sites**. The app falls back to the installation timezone, which defaults to UTC. Set that default with `LOGENTRA_TIMEZONE` or the `timezone` field in `config.yaml`. On upgrade, the migration reads `LOGENTRA_TIMEZONE` for the fallback and uses any unanimous shift pattern timezone first. An install that normally sets the default in YAML should also set the environment variable for the initial upgrade.
+Set each site's IANA timezone under **Settings → Sites**. The app falls back to the installation timezone, which defaults to UTC. Set that default with `LOGENTRA_TIMEZONE` or the `timezone` field in `config.yaml`. The migration uses the installation timezone when shift patterns for the site lack a unanimous timezone.
 
 `readings.ts` always stores UTC text in `YYYY-MM-DDTHH:MM:SS` format, with no suffix. The API, CSV and out-of-range webhooks expose `ts` as UTC with a `Z` suffix. Reading `date` and `time` fields show the equipment's local time. Ingest treats `date` and `time` as site-local wall time, uses the current UTC time when both are missing, and treats an explicit `ts` without an offset as UTC. A repeated local clock time uses the first occurrence, and a skipped local clock time moves forward by the size of the gap.
 

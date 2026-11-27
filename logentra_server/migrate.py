@@ -1,11 +1,14 @@
 """Import a v0.2 Logbook JSON backup into the v0.3 database."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from logentra_server import service
+
+EXPLICIT_OFFSET = re.compile(r'(?:Z|[+-][0-9]{2}:[0-9]{2})$')
 
 
 def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor: str = "migrate",
@@ -32,6 +35,9 @@ def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor
         entry_id = log.get("id") or None
         readings = log.get("readings") or {}
         anns = log.get("annotations") or {}
+        timestamp = log.get("ts")
+        timestamp = timestamp.strip() if isinstance(timestamp, str) else ""
+        explicit_timestamp = EXPLICIT_OFFSET.search(timestamp)
         for key, val in readings.items():
             rec = {
                 "id": None,
@@ -39,7 +45,6 @@ def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor
                 "equipment_id": eid,
                 "tag": log.get("tag"),
                 "parameter": key,
-                "ts": log.get("ts"),
                 "date": log.get("date"),
                 "time": log.get("time") or "08:00",
                 "value": val,
@@ -47,6 +52,8 @@ def migrate_v2(db: Session, data: dict[str, Any], *, replace: bool = True, actor
                 "entered_by": log.get("enteredBy") or log.get("entered_by") or "",
                 "source": "import",
             }
+            if explicit_timestamp:
+                rec["ts"] = timestamp
             an = anns.get(key) or {}
             if an:
                 rec["annot_cause"] = an.get("cause")

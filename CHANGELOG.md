@@ -5,8 +5,9 @@ All notable changes to this project are documented in this file.
 ## 0.7.1 – Site time and record approval
 
 - Log book times are now stored in UTC and shown in the site's timezone. Out-of-range readings from the desktop log book now appear in the shift handover.
-- Back up before upgrading. Set each site's timezone in Settings → Sites, or set `LOGENTRA_TIMEZONE` before upgrading. The upgrade converts existing desktop, import and demo readings to UTC using that timezone.
+- Back up before upgrading. Set each site's timezone in Settings → Sites, or set `LOGENTRA_TIMEZONE` or the `timezone` field in `config.yaml` before upgrading. The upgrade converts existing desktop, import and demo readings to UTC using that timezone.
 - API and webhook `ts` values use UTC with a `Z` suffix. The `date` and `time` fields use site-local time.
+- JSON backup imports preserve `ts` values with an explicit offset and use site-local `date` and `time` for older logs. The `reading_timezone_backfill` table retains original wall times for downgrade.
 - Records can be submitted for approval, approved or returned. Approved records are locked. Supervisors and admins have the new `records.approve` permission.
 - Each record has an audit trail.
 - Alembic applies `0010_record_approval` and `0011_site_timezone` on startup.

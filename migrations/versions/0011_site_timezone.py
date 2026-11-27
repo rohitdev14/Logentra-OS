@@ -5,7 +5,7 @@ import os
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 
 from logentra_server.sitetime import local_to_utc_text
 from logentra_server.utils import uid, utcnow_iso
@@ -104,7 +104,10 @@ def upgrade():
                     sa.Column("reading_id", sa.Text(), sa.ForeignKey("readings.id", ondelete="CASCADE"), primary_key=True),
                     sa.Column("original_ts", sa.Text(), nullable=False))
     db = op.get_bind()
-    configured = valid_zone(os.environ.get("LOGENTRA_TIMEZONE"))
+    configured = (
+        valid_zone(context.config.attributes.get("install_timezone"))
+        or valid_zone(os.environ.get("LOGENTRA_TIMEZONE"))
+    )
     sites = db.execute(sa.text("""
         SELECT sites.id, CASE WHEN COUNT(DISTINCT shift_patterns.timezone) = 1
             THEN MIN(shift_patterns.timezone) END

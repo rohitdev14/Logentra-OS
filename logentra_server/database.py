@@ -62,7 +62,7 @@ def alembic_config(url: str | None = None):
     return cfg
 
 
-def run_migrations(engine) -> None:
+def run_migrations(engine, *, timezone: str | None = None) -> None:
     """Apply Alembic migrations to `engine`.
 
     Pre-Alembic v0.3 databases (tables exist, no alembic_version) are
@@ -91,6 +91,11 @@ def run_migrations(engine) -> None:
                 command.stamp(cfg, "0001_initial")
 
         cfg = alembic_config(url)
+        if timezone is None:
+            from logentra_server.config import load_settings
+
+            timezone = load_settings().timezone
+        cfg.attributes["install_timezone"] = timezone
         with engine.connect() as conn:
             if conn.dialect.name == "sqlite":
                 # Alembic rebuilds the parent table during batch alters. Keep its children.
@@ -115,9 +120,9 @@ def run_migrations(engine) -> None:
                 lock_conn.close()
 
 
-def init_db(engine) -> None:
+def init_db(engine, *, timezone: str | None = None) -> None:
     from logentra_server import models  # noqa: F401 — register models
 
-    run_migrations(engine)
+    run_migrations(engine, timezone=timezone)
     with engine.begin() as conn:
         conn.execute(text("SELECT 1"))

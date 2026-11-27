@@ -30,7 +30,9 @@ def _url() -> str:
     existing = config.attributes.get("sqlalchemy_url")
     if existing:
         return existing
-    return load_settings().sqlalchemy_url
+    settings = load_settings()
+    config.attributes.setdefault("install_timezone", settings.timezone)
+    return settings.sqlalchemy_url
 
 
 def run_migrations_offline() -> None:

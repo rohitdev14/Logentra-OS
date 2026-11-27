@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from logentra_server.branding import PRODUCT_NAME, RELEASE_LABEL  # noqa: E402
-from logentra_server.config import env_value, load_settings  # noqa: E402
+from logentra_server.config import load_settings  # noqa: E402
 
 
 def _create_admin(argv: list[str]) -> int:
@@ -41,7 +41,7 @@ def _create_admin(argv: list[str]) -> int:
         return 2
     settings = load_settings()
     engine = make_engine(settings.sqlalchemy_url)
-    init_db(engine)
+    init_db(engine, timezone=settings.timezone)
     SessionLocal = make_session_factory(engine, timezone=settings.timezone)
     with SessionLocal() as db:
         try:

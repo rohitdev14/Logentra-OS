@@ -64,7 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool_timeout=settings.db_pool_timeout,
     )
     SessionLocal = make_session_factory(engine, timezone=settings.timezone)
-    init_db(engine)
+    init_db(engine, timezone=settings.timezone)
     # seed roles, optional first admin, default fields, startup webhooks
     with SessionLocal() as db:
         service.ensure_default_fields(db)

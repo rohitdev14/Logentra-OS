@@ -277,3 +277,40 @@ def test_v071_migration_preserves_legacy_evidence_on_postgres(monkeypatch):
         with admin.connect() as conn:
             conn.exec_driver_sql(f"DROP DATABASE {name} WITH (FORCE)")
         admin.dispose()
+
+
+def test_site_timezone_backfill_uses_settings_without_environment(tmp_path, monkeypatch):
+    from logentra_server.app import create_app
+    from logentra_server.config import load_settings
+
+    monkeypatch.delenv("LOGENTRA_TIMEZONE", raising=False)
+    for use_cli in (False, True):
+        url = f"sqlite:///{tmp_path / f'no_shift_{use_cli}.db'}"
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(f"database_url: {url}\ntimezone: Asia/Singapore\n")
+        monkeypatch.setenv("LOGENTRA_CONFIG", str(config_path))
+        monkeypatch.delenv("LOGENTRA_DATABASE_URL", raising=False)
+        monkeypatch.delenv("LOGBOOK_DATABASE_URL", raising=False)
+        engine = make_engine(url)
+        try:
+            command.upgrade(alembic_config(url), "0010_record_approval")
+            with engine.begin() as conn:
+                conn.execute(text("INSERT INTO sites (id, name, created_at) VALUES ('site', 'Northbrook Works', '2026')"))
+                conn.execute(text("""
+                    INSERT INTO equipment (id, tag, site_id, created_at, updated_at)
+                    VALUES ('pump', 'P-101', 'site', '2026', '2026')
+                """))
+                conn.execute(text("""
+                    INSERT INTO readings (id, entry_id, equipment_id, parameter_key, ts, value, source, created_at)
+                    VALUES ('manual', 'entry', 'pump', 'vibration', '2026-11-26T16:30:00', 8, 'manual', '2026')
+                """))
+            if use_cli:
+                command.upgrade(alembic_config(), "head")
+            else:
+                app = create_app(load_settings())
+                app.state.engine.dispose()
+            with engine.connect() as conn:
+                assert conn.execute(text("SELECT timezone FROM sites")).scalar_one() == "Asia/Singapore"
+                assert conn.execute(text("SELECT ts FROM readings")).scalar_one() == "2026-11-26T08:30:00"
+        finally:
+            engine.dispose()

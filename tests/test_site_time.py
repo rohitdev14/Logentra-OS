@@ -196,3 +196,33 @@ def test_retry_of_reading_without_clock_preserves_the_first_instant(client, site
     assert post(client, "/readings", reading)["added"] == 0
     with client.app.state.SessionLocal() as db:
         assert db.get(Reading, reading["id"]).ts == "2026-11-26T02:30:04"
+
+
+@pytest.mark.parametrize(("timestamp", "expected_ts"), [
+    (None, "2026-11-26T08:30:00Z"),
+    ("2026-11-26T16:30:00", "2026-11-26T08:30:00Z"),
+    ("2026-11-26T10:30:41+02:00", "2026-11-26T08:30:41Z"),
+])
+def test_legacy_json_reading_import_uses_explicit_offset_or_site_clock(client, site_equipment, timestamp, expected_ts):
+    eid, _, _ = site_equipment
+    log = {"equipmentId": eid, "date": "2026-11-26", "time": "16:30", "readings": {"value_0": 4}}
+    if timestamp is not None:
+        log["ts"] = timestamp
+    imported = post(client, "/migrate/v2?replace=false", {"logs": [log]}, 200)
+    assert imported["readings"] == 1
+    row, = client.get("/api/logs", params={"equipment_id": eid}).json()["items"]
+    assert (row["date"], row["time"], row["ts"]) == ("2026-11-26", "16:30", expected_ts)
+
+
+def test_json_export_reimport_keeps_instant_and_seconds(client, site_equipment):
+    eid, _, _ = site_equipment
+    stamp = "2026-11-26T08:30:41Z"
+    post(client, "/readings", {"equipment_id": eid, "parameter": "value_0", "value": 4, "ts": stamp})
+    backup = client.get("/api/export/json").json()
+    assert backup["logs"][0]["ts"] == stamp
+    imported = post(client, "/migrate/v2", backup, 200)
+    assert imported["readings"] == 1
+    with client.app.state.SessionLocal() as db:
+        assert db.query(Reading).one().ts == stamp.removesuffix("Z")
+    row, = client.get("/api/logs", params={"equipment_id": eid}).json()["items"]
+    assert (row["date"], row["time"], row["ts"]) == ("2026-11-26", "16:30", stamp)
