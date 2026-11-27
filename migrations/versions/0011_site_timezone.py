@@ -16,6 +16,11 @@ branch_labels = None
 depends_on = None
 
 SOURCES = "readings.source IN ('manual', 'import', 'demo')"
+UTC_ZONES = (
+    "UTC", "Etc/UTC", "UCT", "Etc/UCT", "Universal", "Etc/Universal", "Zulu", "Etc/Zulu",
+    "GMT", "Etc/GMT", "GMT0", "Etc/GMT0", "GMT+0", "Etc/GMT+0", "GMT-0", "Etc/GMT-0",
+    "Greenwich", "Etc/Greenwich",
+)
 EQUIPMENT_SCOPE = """
     FROM equipment LEFT JOIN sites ON sites.id = equipment.site_id
 """
@@ -67,10 +72,11 @@ def convert_sqlite(db, fallback):
             SELECT readings.id, readings.ts, COALESCE(sites.timezone, :fallback) AS zone
             FROM readings JOIN equipment ON equipment.id = readings.equipment_id
             LEFT JOIN sites ON sites.id = equipment.site_id
-            WHERE {SOURCES} AND COALESCE(sites.timezone, :fallback) NOT IN ('UTC', 'Etc/UTC')
+            WHERE {SOURCES} AND COALESCE(sites.timezone, :fallback) NOT IN :utc_zones
                 {cursor}
             ORDER BY readings.id LIMIT 5000
-        """), {"last": last, "fallback": fallback}).all()
+        """).bindparams(sa.bindparam("utc_zones", expanding=True)),
+            {"last": last, "fallback": fallback, "utc_zones": UTC_ZONES}).all()
         if not rows:
             return counts
         db.execute(sa.text("""
@@ -89,7 +95,7 @@ def convert_readings(db, fallback):
     if db.dialect.name == "postgresql":
         zones = set(db.execute(sa.text("SELECT DISTINCT timezone FROM sites WHERE timezone IS NOT NULL")).scalars())
         counts = {}
-        for zone in sorted((zones | {fallback}) - {"UTC", "Etc/UTC"}):
+        for zone in sorted((zones | {fallback}).difference(UTC_ZONES)):
             count = convert_postgres(db, zone, fallback)
             if count:
                 counts[zone] = count
@@ -107,7 +113,9 @@ def upgrade():
     configured = (
         valid_zone(context.config.attributes.get("install_timezone"))
         or valid_zone(os.environ.get("LOGENTRA_TIMEZONE"))
+        or "UTC"
     )
+    install_site_zone = None if configured in UTC_ZONES else configured
     sites = db.execute(sa.text("""
         SELECT sites.id, CASE WHEN COUNT(DISTINCT shift_patterns.timezone) = 1
             THEN MIN(shift_patterns.timezone) END
@@ -115,11 +123,11 @@ def upgrade():
         GROUP BY sites.id
     """)).all()
     for site_id, pattern_zone in sites:
-        zone = valid_zone(pattern_zone) or configured
+        zone = valid_zone(pattern_zone) or install_site_zone
         if zone:
             db.execute(sa.text("UPDATE sites SET timezone = :zone WHERE id = :id"),
                        {"zone": zone, "id": site_id})
-    counts = convert_readings(db, configured or "UTC")
+    counts = convert_readings(db, configured)
     db.execute(sa.text("""
         INSERT INTO audit_log (id, ts, actor, action, entity_type, detail)
         VALUES (:id, :ts, 'migration', 'readings.timezone_backfill', 'reading', :detail)

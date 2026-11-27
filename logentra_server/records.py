@@ -1,7 +1,7 @@
 """Record approval and audit trail."""
 
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -13,6 +13,7 @@ from logentra_server.utils import loads, uid, utcnow_iso
 
 LOCK_MESSAGES = {"submitted": "Record is waiting for approval", "approved": "Approved records are locked"}
 REVISION_CONFLICT = "Record changed. Reload before saving."
+OPEN_PUNCH_STATUSES = {"Open", "In progress"}
 LABELS = {
     "create": "Created record",
     "revise": "Updated record",
@@ -127,6 +128,60 @@ def sign_record(db, record, name, signed_at, *, actor, user_id):
     audit(db, record, "signed", {"name": name, "at": signed_at}, actor=actor, user_id=user_id)
 
 
+def _is_closed_date(value):
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except (TypeError, ValueError):
+        return False
+
+
+def close_approved_punches(db, record, payload, previous, old_fields, current, *, now, principal):
+    locked = LOCK_MESSAGES["approved"]
+    # The normal save path ignores these server-managed fields and the original raised date.
+    server_fields = previous.keys() - current.keys() - {"id", "revision"}
+    for key in server_fields | {"createdAt", "equipmentId"}:
+        if key in payload and payload[key] != previous[key]:
+            raise HTTPException(409, locked)
+    if any(current[key] != old_fields[key] for key in current if key != "punches"):
+        raise HTTPException(409, locked)
+
+    original = {punch["id"]: punch for punch in old_fields["punches"]}
+    updated = {punch["id"]: punch for punch in current["punches"]}
+    if original.keys() != updated.keys() or len(updated) != len(current["punches"]):
+        raise HTTPException(409, locked)
+    for raw in payload.get("punches") or []:
+        raised = original[raw["id"]]["raised"]
+        if any(key in raw and (raw[key] or "") != raised for key in ("raised", "raised_at")):
+            raise HTTPException(409, locked)
+
+    closures = {}
+    for identifier, new in updated.items():
+        old = original[identifier]
+        if old == new:
+            continue
+        if (old["status"] not in OPEN_PUNCH_STATUSES
+                or new != {**old, "status": "Closed", "closed": new["closed"]}
+                or not _is_closed_date(new["closed"])):
+            raise HTTPException(409, locked)
+        closures[new["id"]] = new["closed"]
+    if not closures:
+        return False
+    if principal is None:
+        raise HTTPException(409, locked)
+    principal.require("records.write")
+    if payload.get("revision") != record.revision:
+        raise HTTPException(409, REVISION_CONFLICT)
+
+    record.revision += 1
+    record.updated_at = now
+    for punch in record.punches:
+        if punch.id in closures:
+            punch.status = "Closed"
+            punch.closed_at = closures[punch.id]
+    audit_save(db, record, old_fields, current, actor=principal.user_id or principal.actor, user_id=principal.user_id)
+    return True
+
+
 def _result_cells(record):
     columns = {col["id"]: col["label"] for col in record.get("columns", [])}
     return {(item["id"], key): (item["label"], columns[key], value)
@@ -171,7 +226,19 @@ def audit_save(db, record, previous, current, *, actor, user_id):
                   if old[key] != punch[key]}
         if fields:
             action = "punch_closed" if "status" in fields and punch["status"] == "Closed" else "punch_updated"
-            audit(db, record, action, {"punch_id": identifier, **fields}, **identity)
+            detail = {"punch_id": identifier, **fields}
+            if action == "punch_closed":
+                detail["punch_description"] = punch["description"]
+                detail["closed"] = {"from": old["closed"], "to": punch["closed"]}
+                if record.status == "approved":
+                    name = display_name(db.get(User, user_id) if user_id else None, actor)
+                    events.enqueue(db, "record.punch_closed", {
+                        "event": "record.punch_closed", "at": record.updated_at, "record_id": record.id,
+                        "equipment_id": record.equipment_id, "status": record.status, "revision": record.revision,
+                        "actor": name, "punch_id": identifier, "description": punch["description"],
+                        "closed": punch["closed"],
+                    })
+            audit(db, record, action, detail, **identity)
     for identifier, old in old_punches.items():
         audit(db, record, "punch_removed", {"punch_id": identifier, "description": old["description"]}, **identity)
 
@@ -183,6 +250,8 @@ def _event_label(action, detail):
         return f"Changed {count} item" + ("s" if count != 1 else "")
     if action in {"record.punch_raised", "record.punch_removed"} and detail.get("description"):
         return f"{label}: {detail['description']}"
+    if action == "record.punch_closed" and detail.get("punch_description"):
+        return f"{label}: {detail['punch_description']}"
     if action == "record.returned" and detail.get("comment"):
         return f"{label}: {detail['comment']}"
     return label

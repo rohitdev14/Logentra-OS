@@ -462,7 +462,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         service.advance_catalog(db)
         service.require_record_scope(db, request.state.principal, body.get("id"), body.get("equipmentId"))
         rid = body.get("id") or uid("rec")
-        service.upsert_records(db, [{**body, "id": rid}], actor=actor_name(request), user_id=actor_user_id(request))
+        service.upsert_records(db, [{**body, "id": rid}], actor=actor_name(request), user_id=actor_user_id(request),
+                               principal=request.state.principal)
         db.commit()
         return service.record_to_ui(db.get(Record, rid))
 

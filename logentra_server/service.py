@@ -44,6 +44,7 @@ from logentra_server.utils import as_float, dumps, loads, out_of_range, parse_ts
 
 def audit(db: Session, action: str, *, actor: str | None = "api", entity_type: str | None = None,
           entity_id: str | None = None, detail: Any = None, user_id: str | None = None) -> None:
+    # Record trail events need stable ordering when several land in the same second.
     at = (datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
           if entity_type == "record" else utcnow_iso())
     db.add(AuditLog(
@@ -819,7 +820,7 @@ def _save_punches(row, data, now):
 
 
 def upsert_records(db: Session, items: list[dict[str, Any]], *, actor="api", user_id=None,
-                   legacy_signoffs: bool = False) -> int:
+                   legacy_signoffs: bool = False, principal=None) -> int:
     from logentra_server import records
 
     now = utcnow_iso()
@@ -831,10 +832,15 @@ def upsert_records(db: Session, items: list[dict[str, Any]], *, actor="api", use
         signoff_fields = ("signoffName", "signoffDate")
         signature = [(rec[key] if key in rec else (previous or {}).get(key)) or "" for key in signoff_fields]
         signature_changed = signature != [(previous or {}).get(key, "") for key in signoff_fields]
-        if signature_changed and not legacy_signoffs:
-            raise HTTPException(422, "Use Submit for approval to sign records")
         current = _record_fields(rec, previous, now)
         old_fields = _record_fields({}, previous, now) if previous else {}
+        if row and row.status == "approved":
+            if records.close_approved_punches(db, row, rec, previous, old_fields, current,
+                                              now=now, principal=principal):
+                changes += 1
+            continue
+        if signature_changed and not legacy_signoffs:
+            raise HTTPException(422, "Use Submit for approval to sign records")
         if row:
             if current == old_fields and not signature_changed:
                 continue
@@ -904,7 +910,7 @@ def require_record_scope(db, principal, record_id, equipment_id=None):
         existing.equipment.site_id, existing.equipment.area_id
     )):
         raise HTTPException(404, "Record not found")
-    if existing and equipment_id and equipment_id != existing.equipment_id:
+    if existing and existing.status != "approved" and equipment_id and equipment_id != existing.equipment_id:
         raise HTTPException(403, "Moving records requires unscoped access")
     if not existing:
         equipment = db.get(Equipment, equipment_id) if equipment_id else None
@@ -931,7 +937,7 @@ def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui",
     if "templates" in state:
         upsert_templates(db, state["templates"])
     record_changes = upsert_records(db, state.get("records", []), actor=actor, user_id=user_id,
-                                    legacy_signoffs=legacy_signoffs)
+                                    legacy_signoffs=legacy_signoffs, principal=principal)
     if "paramPresets" in state:
         upsert_presets(db, state["paramPresets"])
     if record_changes or set(state) - {"records"}:

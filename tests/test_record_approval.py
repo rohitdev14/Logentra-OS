@@ -165,6 +165,63 @@ def test_open_mode_approval_accepts_any_result_without_passfail_column(client):
     assert action(client, "approve", submitted)["status"] == "approved"
 
 
+@pytest.mark.parametrize("status", ["Open", "In progress"])
+def test_approved_record_allows_only_scoped_punch_close_out(client, roles, status):
+    client.app.state.delivery_worker.stop()
+    with client.app.state.SessionLocal.begin() as db:
+        db.add(OutboundWebhook(id="punch_close_out", url="https://example.invalid/hook",
+                               events=dumps(["record.punch_closed"]), enabled=1, secret="", created_at=utcnow_iso()))
+    tech, supervisor = roles["operator"], roles["approver"]
+    draft = create_record(client, tech, ready=True)
+    sync_record(client, {**draft, "punches": [{**PUNCH, "status": status}]}, tech)
+    submitted = action(client, "submit", snapshot(client, tech), tech)
+    action(client, "approve", submitted, supervisor)
+    approved = snapshot(client, tech)
+    punch = approved["punches"][0]
+    closed = {**punch, "status": "Closed", "closed": "2026-11-27"}
+    closure = {**approved, "punches": [closed]}
+    assert sync_record(client, closure, roles["viewer"], expected=403)
+    assert sync_record(client, closure, roles["outside"], expected=404)
+    imported = client.post("/api/migrate/v2?replace=false", json={"records": [closure]})
+    assert imported.status_code == 409 and imported.json()["detail"] == "Approved records are locked"
+    assert sync_record(client, {**closure, "revision": submitted["revision"]}, tech, expected=409)["detail"] == (
+        "Record changed. Reload before saving.")
+    changed_item = {**approved["items"][0], "values": {"p101_result": "Fail"}}
+    for change in (
+        {"punches": [{**closed, "description": "Changed guard"}]},
+        {"punches": [{**closed, "priority": "A"}]},
+        {"punches": [{**closed, "owner": "Lena Tan"}]},
+        {"punches": [{**closed, "raised": "2026-11-27"}]},
+        {"punches": [{**closed, "closed": ""}]},
+        {"punches": [{**punch, "status": "Open" if status == "In progress" else "In progress"}]},
+        {"punches": [closed, {**PUNCH, "id": "another_punch"}]},
+        {"punches": []},
+        {"items": [changed_item]},
+        {"notes": "Changed notes"},
+        {"equipmentId": "different_equipment"},
+        {"signoffName": "Lena Tan"},
+    ):
+        assert sync_record(client, {**closure, **change}, tech, expected=409)["detail"] == "Approved records are locked"
+
+    sync_record(client, closure, tech)
+    assert snapshot(client, tech) == {**closure, "revision": approved["revision"] + 1}
+    sync_record(client, closure, tech)
+    reopened = {**closure, "revision": approved["revision"] + 1, "punches": [punch]}
+    assert sync_record(client, reopened, tech, expected=409)["detail"] == "Approved records are locked"
+    assert client.delete(PATH, headers=tech).status_code == 409
+    trail = client.get(PATH + "/audit", headers=roles["viewer"]).json()
+    events = [event for event in trail if event["action"] == "record.punch_closed"]
+    assert len(events) == 1
+    assert (events[0]["actor"], events[0]["actor_name"], events[0]["label"]) == (
+        "operator", "Lena Tan", "Closed punch: Replace coupling guard")
+    assert events[0]["detail"]["closed"] == {"from": "", "to": "2026-11-27"}
+    with client.app.state.SessionLocal() as db:
+        signature = db.query(Signoff).filter_by(record_id="rec_p101").one()
+        assert (signature.name, signature.signed_at) == ("Amir Rahman", approved["approvedAt"])
+        assert db.query(AuditLog).filter_by(action="record.punch_closed", user_id="operator").count() == 1
+        assert db.query(WebhookDelivery).one().event == "record.punch_closed"
+
+
 def test_legacy_signed_record_has_synthetic_event(client):
     row = create_record(client)
     with client.app.state.SessionLocal.begin() as db:

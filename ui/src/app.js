@@ -1322,6 +1322,9 @@
   function openRecordPunches(rec) {
     return rec.punches.filter(punch => ["Open", "In progress"].includes(punch.status));
   }
+  function canCloseApprovedPunches(rec) {
+    return window.LogbookAPI && rec.status === "approved" && window.LogbookV4.can("records.write");
+  }
   function recordApproval(rec, zone) {
     const steps = [
       ["Submitted", rec.submittedAt, rec.submittedBy],
@@ -1425,6 +1428,33 @@
     }
   }
 
+  async function closeRecordPunch(btn) {
+    const rec = state.records.find(row => row.id === ui.recordId);
+    if (!rec || !canCloseApprovedPunches(rec) || ui.pendingRecordAction) return;
+    const punch = rec.punches[Number(btn.dataset.i)];
+    if (!openRecordPunches(rec).includes(punch)) return;
+    const activeState = state;
+    ui.pendingRecordAction = true;
+    btn.disabled = true;
+    try {
+      await saveQueue;
+      if (state !== activeState || dirtyCatalog) return;
+      const closed = zonedDateTime(new Date(), recordZone(rec)).date;
+      const punches = rec.punches.map(row => row === punch ? { ...row, status: "Closed", closed } : row);
+      const { catalogRevision, recordRevisions } = await window.LogbookAPI.sync(
+        { records: [{ id: rec.id, revision: rec.revision, punches }] }, state.meta.catalogRevision);
+      if (state !== activeState) return;
+      state.meta.catalogRevision = catalogRevision;
+      updateSavedRecord({ ...rec, punches, revision: recordRevisions[rec.id] });
+      render();
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      ui.pendingRecordAction = false;
+      btn.disabled = false;
+    }
+  }
+
   function viewRecords() {
     const rows = state.records.slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     return `
@@ -1475,6 +1505,7 @@
     const editable = recordEditable(rec);
     const api = window.LogbookAPI;
     const zone = recordZone(rec);
+    const closablePunches = canCloseApprovedPunches(rec) ? openRecordPunches(rec) : [];
     return `
       <div class="print-only print-head">
         <h1>Record — ${esc(tag || "")} · ${esc(rec.templateName || "")}</h1>
@@ -1532,7 +1563,8 @@
             "</td><td>" + esc(p.raised || "") + "</td><td>" + esc(p.owner || "") +
             "</td><td class='no-print'>" + (editable ?
               "<button class='btn btn-sm' data-act='punch-edit' data-i='" + i + "'>Edit</button> " +
-              "<button class='btn btn-sm btn-danger' data-act='punch-del' data-i='" + i + "'>Delete</button>" : "") + "</td></tr>"
+              "<button class='btn btn-sm btn-danger' data-act='punch-del' data-i='" + i + "'>Delete</button>" :
+              closablePunches.includes(p) ? "<button class='btn btn-sm' data-act='punch-close' data-i='" + i + "'>Close</button>" : "") + "</td></tr>"
           ).join("") + "</tbody></table></div>" : '<p class="empty">No punches.</p>'}
       </div>
       <div class="card" style="margin-top:1rem">
@@ -2437,6 +2469,7 @@
       }
       return;
     }
+    if (act === "punch-close") { closeRecordPunch(btn); return; }
     if (["punch-add", "punch-edit", "punch-del"].includes(act)) {
       const rec = state.records.find(row => row.id === ui.recordId);
       if (!rec || !recordEditable(rec)) return;

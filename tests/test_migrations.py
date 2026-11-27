@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from alembic import command
 from sqlalchemy import inspect, text
 
@@ -207,13 +208,14 @@ def _assert_v071_migration(engine, config):
             INSERT INTO roles (id, name, permissions, created_at, updated_at)
             VALUES ('custom', 'Engineering review', '["documents.approve"]', '2026', '2026')
         """))
-    run_migrations(engine)
+    run_migrations(engine, timezone="America/Chicago")
     with engine.begin() as conn:
         assert dict(conn.execute(text("SELECT id, ts FROM readings")).all()) == {
             "manual": "2026-11-26T02:30:00", "qr": "2026-11-26T02:30:00", "api": "2026-11-26T10:30:00",
             "utc": "2026-11-26T10:30:00", "fold": "2026-10-25T00:30:00", "gap": "2026-03-29T01:30:00",
         }
         assert conn.execute(text("SELECT timezone FROM sites WHERE id='northbrook'")).scalar() == "Asia/Singapore"
+        assert conn.execute(text("SELECT timezone FROM sites WHERE id='utc'")).scalar() == "UTC"
         assert conn.execute(text("SELECT status, approved_by, approved_at FROM records")).one() == (
             "approved", "Amir Rahman", "2026-11-26",
         )
@@ -279,6 +281,50 @@ def test_v071_migration_preserves_legacy_evidence_on_postgres(monkeypatch):
         admin.dispose()
 
 
+def _seed_site_without_shift_pattern(engine):
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO sites (id, name, created_at) VALUES ('site_northbrook', 'Northbrook Works', '2026')"))
+        conn.execute(text("""
+            INSERT INTO equipment (id, tag, site_id, created_at, updated_at)
+            VALUES ('pump', 'P-101', 'site_northbrook', '2026', '2026')
+        """))
+        conn.execute(text("""
+            INSERT INTO readings (id, entry_id, equipment_id, parameter_key, ts, value, source, created_at)
+            VALUES ('manual', 'entry', 'pump', 'vibration', '2026-11-26T16:30:00', 8, 'manual', '2026')
+        """))
+
+
+@pytest.mark.parametrize("timezone", ["UTC", "Etc/UTC", "GMT"])
+def test_site_timezone_backfill_leaves_utc_install_site_unconfigured(tmp_path, monkeypatch, timezone):
+    from fastapi.testclient import TestClient
+
+    from logentra_server.app import create_app
+    from logentra_server.config import Settings
+
+    monkeypatch.delenv("LOGENTRA_TIMEZONE", raising=False)
+    url = f"sqlite:///{tmp_path / 'unconfigured.db'}"
+    engine = make_engine(url)
+    try:
+        command.upgrade(alembic_config(url), "0009_shift_handover")
+        _seed_site_without_shift_pattern(engine)
+        app = create_app(Settings(database_url=url, timezone=timezone, auth_mode="users",
+                                  bootstrap_admin_username="admin", bootstrap_admin_password="synthetic-migration"))
+        with TestClient(app) as client:
+            login = client.post("/api/auth/login", json={"username": "admin", "password": "synthetic-migration"})
+            assert login.status_code == 200, login.text
+            bootstrap = client.get("/api/bootstrap", headers={"Authorization": "Bearer " + login.json()["token"]})
+            assert bootstrap.status_code == 200, bootstrap.text
+            assert bootstrap.json()["meta"]["sitesMissingTimezone"] == ["site_northbrook"]
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT timezone FROM sites")).scalar_one() is None
+            assert conn.execute(text("SELECT ts FROM readings")).scalar_one() == "2026-11-26T16:30:00"
+            assert conn.execute(text("""
+                SELECT detail FROM audit_log WHERE action = 'readings.timezone_backfill'
+            """)).scalar_one() == "{}"
+    finally:
+        engine.dispose()
+
+
 def test_site_timezone_backfill_uses_settings_without_environment(tmp_path, monkeypatch):
     from logentra_server.app import create_app
     from logentra_server.config import load_settings
@@ -294,16 +340,7 @@ def test_site_timezone_backfill_uses_settings_without_environment(tmp_path, monk
         engine = make_engine(url)
         try:
             command.upgrade(alembic_config(url), "0010_record_approval")
-            with engine.begin() as conn:
-                conn.execute(text("INSERT INTO sites (id, name, created_at) VALUES ('site', 'Northbrook Works', '2026')"))
-                conn.execute(text("""
-                    INSERT INTO equipment (id, tag, site_id, created_at, updated_at)
-                    VALUES ('pump', 'P-101', 'site', '2026', '2026')
-                """))
-                conn.execute(text("""
-                    INSERT INTO readings (id, entry_id, equipment_id, parameter_key, ts, value, source, created_at)
-                    VALUES ('manual', 'entry', 'pump', 'vibration', '2026-11-26T16:30:00', 8, 'manual', '2026')
-                """))
+            _seed_site_without_shift_pattern(engine)
             if use_cli:
                 command.upgrade(alembic_config(), "head")
             else:

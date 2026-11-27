@@ -342,7 +342,7 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
         }).json()["token"]
         admin = {"Authorization": "Bearer " + token}
         assert client.post("/api/sites", headers=admin, json={
-            "id": "browser-site", "name": "Northbrook Works", "timezone": "Asia/Singapore", "areas": [{"id": "browser-zone", "name": "Zone"}],
+            "id": "browser-site", "name": "Northbrook Works", "areas": [{"id": "browser-zone", "name": "Zone"}],
         }).status_code == 201
         assert client.post("/api/users", headers=admin, json={
             "username": "scoped-browser", "display_name": "Lena Tan", "password": "synthetic-scoped-browser",
@@ -421,6 +421,20 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
                 page.locator("#login-gate").wait_for(state="hidden")
                 return page
 
+            settings_page = login("admin")
+            notice = settings_page.get_by_role("status").filter(
+                has_text="Set your site timezone so log times are shown correctly")
+            expect(notice).to_be_visible()
+            notice.get_by_role("button", name="Settings").click()
+            timezone_input = settings_page.get_by_label("IANA timezone")
+            expect(timezone_input).to_have_value("")
+            timezone_input.fill("Asia/Singapore")
+            settings_page.get_by_role("button", name="Save site").click()
+            expect(notice).to_have_count(0)
+            assert settings_page.request.get(url + "/api/bootstrap", headers=admin).json()["meta"][
+                "sitesMissingTimezone"] == []
+            settings_page.close()
+
             page = login("scoped-browser")
             page.evaluate("Logbook.goto('records')")
             page.get_by_role("button", name="New record").click()
@@ -487,6 +501,19 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
             expect(trail).not_to_contain_text("review-browser")
             expect(trail).not_to_contain_text("scoped-browser")
             expect(trail.get_by_text("Raised punch: Replace coupling guard")).to_be_visible()
+            punch = reviewer.get_by_role("row").filter(has_text="Replace coupling guard")
+            expect(punch.get_by_text("Open", exact=True)).to_be_visible()
+            expect(punch.get_by_role("button", name="Edit")).to_have_count(0)
+            expect(punch.get_by_role("button", name="Delete")).to_have_count(0)
+            punch.get_by_role("button", name="Close", exact=True).click()
+            expect(punch.get_by_text("Closed", exact=True)).to_be_visible()
+            expect(punch.get_by_role("button", name="Close", exact=True)).to_have_count(0)
+            closed_event = trail.locator(".timeline-row").filter(has_text="Closed punch: Replace coupling guard")
+            expect(closed_event).to_contain_text("Amir Rahman")
+            expect(reviewer.locator(".pill.ok").get_by_text("Approved", exact=True)).to_be_visible()
+            expect(reviewer.locator("#rec-notes")).to_be_disabled()
+            expect(reviewer.get_by_role("radio", name="Fail")).to_be_disabled()
+            expect(reviewer.get_by_role("button", name="Add punch")).to_have_count(0)
 
             with app.state.SessionLocal.begin() as db:
                 db.add(Record(id="legacy_inspection", equipment_id="browser-allowed", template_name="Legacy inspection",
