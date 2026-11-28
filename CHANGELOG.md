@@ -7,6 +7,8 @@ All notable changes to this project are documented in this file.
 - **Central authorisation.** Shared permission and object-scope checks now cover the API, with a generated route-policy reference and regression tests.
 - Document uploads and link changes require read access to linked equipment, records, or work orders for every account, including accounts with global scope.
 
+- New webhook readings use the `api` source by default. Existing readings retain legacy sources such as `webhook` and `load`.
+
 ### Security tooling
 
 - Documented supported versions, private vulnerability reporting, and self-hosted deployment scope.

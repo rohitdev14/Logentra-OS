@@ -13,7 +13,7 @@ class SyncBody(BaseModel):
     paramPresets: dict[str, list] | None = None
 
 
-ReadingSource = Literal["manual", "qr", "import", "api", "mqtt", "modbus"]
+ReadingSource = Literal["manual", "qr", "import", "api", "mqtt", "modbus", "demo"]
 ReadingQuality = Literal["good", "uncertain", "bad", "substituted"]
 
 

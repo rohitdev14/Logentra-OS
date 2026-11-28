@@ -21,7 +21,7 @@ def fields(raw, default_source):
     unit = raw.get("unit")
     key = raw.get("idempotency_key")
     if source not in SOURCES:
-        raise HTTPException(422, "Reading source must be manual, qr, import, api, mqtt or modbus")
+        raise HTTPException(422, f"Reading source must be one of: {', '.join(SOURCES)}")
     if quality not in QUALITIES:
         raise HTTPException(422, "Reading quality must be good, uncertain, bad or substituted")
     if unit is not None and (not isinstance(unit, str) or "\x00" in unit):

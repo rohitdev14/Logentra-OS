@@ -1,6 +1,7 @@
 """Headless UI smoke test against a live server (skipped if PLAYWRIGHT_SKIP=1)."""
 from __future__ import annotations
 
+import csv
 import os
 import sys
 import threading
@@ -534,7 +535,6 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
 
 
 def test_qr_print_and_phone_quick_entry(live_url, tmp_path, monkeypatch):
-    from csv import DictReader
     from io import BytesIO
     from openpyxl import load_workbook
     from PIL import Image
@@ -645,7 +645,39 @@ def test_qr_print_and_phone_quick_entry(live_url, tmp_path, monkeypatch):
         desktop.evaluate("Logbook.goto('backup')")
         with desktop.expect_download() as downloaded:
             desktop.get_by_role("button", name="Logs CSV", exact=True).click()
-        assert note in downloaded.value.path().read_text(encoding="utf-8-sig")
+        with downloaded.value.path().open(encoding="utf-8-sig", newline="") as exported:
+            header, *rows = csv.reader(exported)
+        assert header == [
+            "tag", "category", "date", "time", "parameter", "label", "value", "unit",
+            "remarks", "enteredBy", "annot_cause", "annot_action", "annot_by", "annot_at",
+            "quality", "source", "idempotency_key",
+        ]
+        assert len(header) == len(set(header))
+        assert all(len(row) == len(header) for row in rows)
+        assert any(row[header.index("remarks")] == note and row[header.index("source")] == "qr" for row in rows)
+
+        server_csv = desktop.request.get(live_url + "/api/export/readings.csv")
+        assert server_csv.ok
+        server_note = next(
+            row for row in csv.DictReader(server_csv.text().removeprefix("\ufeff").splitlines())
+            if row["remarks"] == note
+        )
+        assert server_note["source"] == "qr"
+        assert None not in server_note
+
+        desktop.evaluate("Logbook.goto('import')")
+        equipment_columns = ["Tag", "Category", "Location", "Status"]
+        for name, columns in (
+            ("Equipment CSV", equipment_columns),
+            ("Template items CSV", ["item_label", "item_hint"]),
+            ("Logs CSV", ["tag", "date", "time", "parameter", "value", "remarks", "enteredBy"]),
+        ):
+            with desktop.expect_download() as downloaded:
+                desktop.get_by_role("button", name=name, exact=True).click()
+            with downloaded.value.path().open(encoding="utf-8-sig", newline="") as exported:
+                header = next(csv.reader(exported))
+            assert header == columns
+            assert len(header) == len(set(header))
 
         desktop.evaluate("""() => {
           const equipment = Logbook.eqById('eq_p101');
@@ -659,7 +691,10 @@ def test_qr_print_and_phone_quick_entry(live_url, tmp_path, monkeypatch):
         with desktop.expect_download() as downloaded:
             desktop.get_by_role("button", name="Export CSV", exact=True).click()
         with downloaded.value.path().open(encoding="utf-8-sig", newline="") as exported:
-            pump = next(row for row in DictReader(exported) if row["Tag"] == "P-101")
+            reader = csv.DictReader(exported)
+            assert reader.fieldnames == [*equipment_columns, "Minimum"]
+            assert len(reader.fieldnames) == len(set(reader.fieldnames))
+            pump = next(row for row in reader if row["Tag"] == "P-101")
         assert pump["Minimum"] == "-5"
 
         with desktop.expect_download() as downloaded:

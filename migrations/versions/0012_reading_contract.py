@@ -16,10 +16,9 @@ def backfill(db):
     selection = """
         SELECT r.id, NULLIF(p.unit, '') AS unit,
             CASE
-                WHEN lower(trim(r.source)) IN ('manual', 'qr', 'import', 'api', 'mqtt', 'modbus')
+                WHEN lower(trim(r.source)) IN ('manual', 'qr', 'import', 'api', 'mqtt', 'modbus', 'demo')
                     THEN lower(trim(r.source))
-                WHEN lower(trim(r.source)) = 'webhook' THEN 'api'
-                ELSE 'manual'
+                ELSE r.source
             END AS source
         FROM readings r
         LEFT JOIN parameters p ON p.equipment_id = r.equipment_id AND p.key = r.parameter_key

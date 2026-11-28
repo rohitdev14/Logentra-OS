@@ -2494,14 +2494,14 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       return;
     }
     const rows = [["tag", "category", "date", "time", "parameter", "label", "value", "unit", "remarks", "enteredBy", "annot_cause", "annot_action", "annot_by", "annot_at"]];
-    if (fmt === "csv") rows[0].push("unit", "quality", "source", "idempotency_key");
+    if (fmt === "csv") rows[0].push("quality", "source", "idempotency_key");
     state.logs.forEach((l) => {
       const eq = eqById(l.equipmentId);
       const tag = eq ? eqTag(eq) : state.equipmentIndex.find(item => item.id === l.equipmentId)?.tag;
       if (!tag) return;
       if (l.kind === "note") {
         const row = [tag, eqCat(eq), l.date, l.time, "", "Note", "", "", l.remarks || "", l.enteredBy || "", "", "", "", ""];
-        if (fmt === "csv") row.push("", "", "qr", "");
+        if (fmt === "csv") row.push("", "qr", "");
         rows.push(row);
         return;
       }
@@ -2511,7 +2511,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
         const an = annotOf(l, k) || {};
         const meta = l.readingMeta?.[k];
         const row = [tag, eqCat(eq), l.date, l.time, k, p.label, l.readings[k], meta ? meta.unit : p.unit, l.remarks || "", l.enteredBy || "", an.cause || "", an.action || "", an.by || "", an.at || ""];
-        if (fmt === "csv") row.push(meta?.unit, meta?.quality, meta?.source, meta?.idempotency_key);
+        if (fmt === "csv") row.push(meta?.quality, meta?.source, meta?.idempotency_key);
         rows.push(row);
       });
     });

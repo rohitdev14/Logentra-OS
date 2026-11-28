@@ -373,7 +373,10 @@ def _assert_reading_contract_migration(engine, cfg):
             {"id": "a", "equipment": "pump", "parameter": "flow", "source": "demo"},
             {"id": "b", "equipment": "pump", "parameter": "flow", "source": "webhook"},
             {"id": "c", "equipment": "spare", "parameter": "flow", "source": " MQTT "},
-            {"id": "d", "equipment": "pump", "parameter": "old", "source": "unclassified"},
+            {"id": "d", "equipment": "pump", "parameter": "old", "source": " Unclassified "},
+            {"id": "e", "equipment": "pump", "parameter": "flow", "source": "load"},
+            *({"id": f"demo-{i:03d}", "equipment": "pump", "parameter": "flow", "source": "demo"}
+              for i in range(209)),
         ])
         if engine.dialect.name == "sqlite":
             conn.execute(text("""
@@ -384,12 +387,14 @@ def _assert_reading_contract_migration(engine, cfg):
     command.upgrade(cfg, "head")
     with engine.begin() as conn:
         rows = conn.execute(text("""
-            SELECT id, unit, quality, source, idempotency_key FROM readings WHERE id IN ('a','b','c','d') ORDER BY id
+            SELECT id, unit, quality, source, idempotency_key FROM readings WHERE id IN ('a','b','c','d','e') ORDER BY id
         """)).all()
         assert rows == [
-            ("a", "L/s", "good", "manual", None), ("b", "L/s", "good", "api", None),
-            ("c", None, "good", "mqtt", None), ("d", None, "good", "manual", None),
+            ("a", "L/s", "good", "demo", None), ("b", "L/s", "good", "webhook", None),
+            ("c", None, "good", "mqtt", None), ("d", None, "good", " Unclassified ", None),
+            ("e", "L/s", "good", "load", None),
         ]
+        assert conn.execute(text("SELECT COUNT(*) FROM readings WHERE source = 'demo'")).scalar_one() == 210
         assert conn.execute(text("SELECT COUNT(*) FROM readings WHERE quality IS NULL")).scalar_one() == 0
         conn.execute(text("UPDATE readings SET idempotency_key = 'key' WHERE id IN ('a','c')"))
         with pytest.raises(IntegrityError), conn.begin_nested():

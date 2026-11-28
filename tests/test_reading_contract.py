@@ -16,6 +16,11 @@ from logentra_server.mqtt_worker import parse_message
 from logentra_server.service import ingest_readings
 
 READING = {"tag": "P-101", "parameter": "flow", "value": 42.5}
+READING_CSV_COLUMNS = [
+    "tag", "equipment_id", "date", "time", "ts", "parameter", "value", "min", "max",
+    "out_of_range", "unacknowledged", "remarks", "entered_by", "source", "annot_cause",
+    "annot_action", "annot_by", "annot_at", "reading_id", "entry_id", "unit", "quality", "idempotency_key",
+]
 
 
 def add_asset(client, tag="P-101", unit="m³/h"):
@@ -80,7 +85,8 @@ def test_key_scope_and_batch_order(client):
 
 
 @pytest.mark.parametrize("extra", [
-    {"unit": "L/s"}, {"quality": "unknown"}, {"source": "webhook"}, {"idempotency_key": "ø" * 513},
+    {"unit": "L/s"}, {"quality": "unknown"}, {"source": "webhook"}, {"source": "load"},
+    {"idempotency_key": "ø" * 513},
 ])
 def test_invalid_contract_values_rejected(client, extra):
     add_asset(client)
@@ -117,12 +123,45 @@ def test_grouped_reading_metadata_and_csv_column_order(client):
     csv_response = client.get("/api/export/readings.csv")
     assert csv_response.status_code == 200, csv_response.text
     header, data = csv.reader(StringIO(csv_response.content.decode("utf-8-sig"), newline=""))
-    assert header[:-4] == ["tag", "equipment_id", "date", "time", "ts", "parameter", "value", "min", "max",
-                           "out_of_range", "unacknowledged", "remarks", "entered_by", "source",
-                           "annot_cause", "annot_action", "annot_by", "annot_at", "reading_id", "entry_id"]
-    assert header[-4:] == ["unit", "quality", "source", "idempotency_key"]
-    assert data[-4:] == ["m³/h", "uncertain", "modbus", "reading-1"]
+    assert len(data) == len(header)
+    assert data[-3:] == ["m³/h", "uncertain", "reading-1"]
     assert data[header.index("source")] == "modbus"
+
+
+@pytest.mark.parametrize(("endpoint", "expected"), [
+    ("/api/export/readings.csv", READING_CSV_COLUMNS),
+    ("/api/export/equipment.csv", ["Tag", "Category"]),
+    ("/api/handovers/export.csv", [
+        "Shift", "Area", "Version", "Status", "Summary", "Signed off", "Acknowledged", "Unseen", "SHA-256",
+    ]),
+])
+def test_csv_export_has_unique_ordered_headers(client, endpoint, expected):
+    response = client.get(endpoint)
+    assert response.status_code == 200, response.text
+    header = next(csv.reader(StringIO(response.content.decode("utf-8-sig"), newline="")))
+    assert header == expected
+    assert len(header) == len(set(header))
+
+
+@pytest.mark.parametrize("source", ["webhook", "load", " Unclassified "])
+def test_legacy_source_is_returned_unchanged(client, source):
+    add_asset(client)
+    created = client.post("/api/readings", json={
+        **READING, "source": "demo", "idempotency_key": "demo-reading",
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()["reading"]["source"] == "demo"
+    with client.app.state.SessionLocal() as db:
+        db.get(Reading, created.json()["reading"]["id"]).source = source
+        db.commit()
+
+    reading, = client.get("/api/readings").json()["readings"]
+    assert reading["source"] == source
+    backup = client.get("/api/export/json").json()
+    assert backup["logs"][0]["readingMeta"]["flow"]["source"] == source
+    response = client.get("/api/export/readings.csv")
+    row, = csv.DictReader(StringIO(response.content.decode("utf-8-sig"), newline=""))
+    assert row["source"] == source
 
 
 def test_mqtt_packet_passes_contract_to_ingest(client):

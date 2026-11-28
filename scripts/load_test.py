@@ -98,7 +98,7 @@ def seed(conn, n_eq: int, n_rd: int, n_wo: int) -> dict:
                 value = 6.0 if oor else 2.0 + (k % 20) * 0.05
                 rid = f"rd_lt_{i:05d}_{k:03d}"
                 entry = f"log_lt_{i:05d}_{k:03d}"
-                batch.append((rid, entry, eid, "vibration", ts, value, "manual", "", now, 4.5, oor, "mm/s", "good"))
+                batch.append((rid, entry, eid, "vibration", ts, value, "demo", "", now, 4.5, oor, "mm/s", "good"))
                 if len(batch) >= 10000:
                     conn.executemany(
                         "INSERT INTO readings (id, entry_id, equipment_id, parameter_key, ts, value, source, entered_by, created_at, limit_max, out_of_range, unit, quality) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
