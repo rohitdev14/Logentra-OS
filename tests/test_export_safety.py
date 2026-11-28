@@ -23,6 +23,16 @@ def test_safe_cell_preserves_other_values(value):
     assert safe_cell(value) is value
 
 
+@pytest.mark.parametrize("value", ["-4.2", "+5", "1e3", "  -.5e+2  "])
+def test_safe_cell_preserves_plain_numeric_strings(value):
+    assert safe_cell(value) == value
+
+
+@pytest.mark.parametrize("value", ["-1+1", "=1", "=1+1", "+A1", "@SUM(A1)", "-2+3", "-1e999"])
+def test_safe_cell_still_quotes_formulas_and_nonfinite_strings(value):
+    assert safe_cell(value) == "'" + value
+
+
 def export_rows(client, path):
     response = client.get(path)
     assert response.status_code == 200, response.text

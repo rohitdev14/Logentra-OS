@@ -534,7 +534,9 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
 
 
 def test_qr_print_and_phone_quick_entry(live_url, tmp_path, monkeypatch):
+    from csv import DictReader
     from io import BytesIO
+    from openpyxl import load_workbook
     from PIL import Image
     from logentra_server import qr_entries
 
@@ -645,6 +647,33 @@ def test_qr_print_and_phone_quick_entry(live_url, tmp_path, monkeypatch):
             desktop.get_by_role("button", name="Logs CSV", exact=True).click()
         assert note in downloaded.value.path().read_text(encoding="utf-8-sig")
 
+        desktop.evaluate("""() => {
+          const equipment = Logbook.eqById('eq_p101');
+          const parameter = Logbook.paramsFor(equipment).find(p => p.key === 'vibration');
+          parameter.min = '-5';
+          // Equipment sheets export catalog fields, so project the limit into a test field.
+          Logbook.getState().equipmentFields.push({id: 'fld_test_min', key: 'test_min', label: 'Minimum'});
+          equipment.values.fld_test_min = parameter.min;
+          Logbook.goto('equipment');
+        }""")
+        with desktop.expect_download() as downloaded:
+            desktop.get_by_role("button", name="Export CSV", exact=True).click()
+        with downloaded.value.path().open(encoding="utf-8-sig", newline="") as exported:
+            pump = next(row for row in DictReader(exported) if row["Tag"] == "P-101")
+        assert pump["Minimum"] == "-5"
+
+        with desktop.expect_download() as downloaded:
+            desktop.get_by_role("button", name="Export Excel", exact=True).click()
+        with downloaded.value.path().open("rb") as exported:
+            workbook = load_workbook(exported, read_only=True)
+            try:
+                headers, *rows = workbook.active.iter_rows()
+                columns = {cell.value: index for index, cell in enumerate(headers)}
+                pump = next(row for row in rows if row[columns["Tag"]].value == "P-101")
+                minimum = pump[columns["Minimum"]]
+                assert minimum.value == -5 and minimum.data_type == "n"
+            finally:
+                workbook.close()
 
         printed = browser.new_page(viewport={"width":850,"height":1240})
         printed.goto(live_url + "/tags/print?ids=eq_p101,eq_ahu12,eq_m204,eq_tk03&start=3")

@@ -683,8 +683,10 @@ table.sheet tr:hover td { background: #fbfcfd; }
   }
 
   function safeCell(value) {
-    return typeof value === "string" && (/^[\t\r]/.test(value) || /^[=+@-]/.test(value.trimStart()))
-      ? "'" + value : value;
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    if (/^[+-]?(\d+(?:\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(trimmed) && Number.isFinite(Number(trimmed))) return value;
+    return /^[\t\r]/.test(value) || /^[=+@-]/.test(trimmed) ? "'" + value : value;
   }
 
   function build(sheetName, rows) {
