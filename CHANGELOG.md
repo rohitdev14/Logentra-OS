@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Security tooling
+
+- Documented supported versions, private vulnerability reporting, and self-hosted deployment scope.
+- Added a Bandit severity gate and a non-blocking Ruff baseline artifact to CI.
+- Added Gitleaks secret scanning and Trivy vulnerability scanning of the built app image.
+- Configured weekly Dependabot updates for Python dependencies, workflow actions, and Docker images.
+- Added a minimum Python test coverage threshold and CodeQL analysis for Python and JavaScript.
+
 ## 0.7.1 – Site time and record approval
 
 - Log book times are now stored in UTC and shown in the site's timezone. Out-of-range readings from the desktop log book now appear in the shift handover.

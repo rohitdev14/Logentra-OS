@@ -42,7 +42,7 @@ jobs:
           python -c 'import os, psycopg; dsn = os.environ["LOGENTRA_TEST_POSTGRES"].replace("+psycopg", ""); db = psycopg.connect(dsn, autocommit=True); db.execute("CREATE DATABASE logentra_restore")'
           pg_dump --version
       - name: Run complete test suite
-        run: python -m pytest -q --cov=logentra_server --cov-report=term-missing --cov-report=xml
+        run: python -m pytest -q --cov=logentra_server --cov-report=term-missing --cov-report=xml --cov-fail-under=82
       - name: Check Python and generated browser bundles
         run: |
           ruff check --select F401,F821,F822,F823 logentra_server scripts tests
@@ -66,6 +66,35 @@ jobs:
           resolved/bin/pip freeze > resolved.txt
           pip install pip-audit==2.10.1
           pip-audit --no-deps --disable-pip -r resolved.txt
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Record Ruff baseline
+        continue-on-error: true
+        shell: bash
+        run: ruff check --select F,E9,B,S logentra_server scripts 2>&1 | tee ruff-security.txt
+      - name: Upload Ruff baseline
+        uses: actions/upload-artifact@v7
+        with:
+          name: ruff-security
+          path: ruff-security.txt
+      - name: Run Bandit
+        run: bandit -r logentra_server logbook_server -ll
+      - name: Scan for secrets
+        if: ${{ !cancelled() }}
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_VERSION: "8.30.1"
   containers:
     runs-on: ubuntu-24.04
     steps:
@@ -110,6 +139,15 @@ jobs:
           docker compose --profile postgres up -d --wait postgres
           docker compose up -d --wait app
           curl --fail http://127.0.0.1:8787/api/ready
+      - name: Scan the built app image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: logentra-os:local
+          version: v0.76.2
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "true"
+          exit-code: "1"
       - name: Shut down test containers
         if: always()
         run: docker compose --profile postgres down -v

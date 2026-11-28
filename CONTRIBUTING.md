@@ -39,6 +39,8 @@ The Playwright smoke test (`tests/test_ui.py`) is optional and needs Chrome or C
 
 ## Reporting issues
 
+Report vulnerabilities privately as described in the [security policy](SECURITY.md).
+
 Open an issue at <https://github.com/rohitdev14/Logentra-OS/issues>. Include the Logentra OS version (`GET /api/health` or the footer), the database backend (SQLite or PostgreSQL), and steps to reproduce. Feature ideas are welcome; please check existing issues first.
 
 Copyright (c) 2026 Rohit Khurana.

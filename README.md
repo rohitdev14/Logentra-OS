@@ -118,6 +118,8 @@ Then open **Trends**, choose equipment **P-210** and parameter **Vibration**. Yo
 
 ## Deployment
 
+See the [security policy](SECURITY.md) for deployment scope and private vulnerability reporting.
+
 **Upgrading the HTTPS profile.** Set `LOGENTRA_PUBLIC_HOST` in the Compose environment or `.env` before upgrading with `compose.production.yaml`. List the hostnames or IPs users open, separated by spaces and without ports. See the [HTTPS upgrade instructions](docs/v0.7/OPERATIONS.md#upgrading-the-https-profile).
 
 - [0.7 operations and upgrade guide](docs/v0.7/OPERATIONS.md#upgrade)
