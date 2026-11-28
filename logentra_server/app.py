@@ -4,7 +4,7 @@ import csv
 import io
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +27,7 @@ from logentra_server import authz, records as record_service
 from logentra_server import __version__, demo, events, handovers as handover_service, migrate, mqtt_worker, seed, service
 from logentra_server.routers import auth_users, documents, handovers, qr, readings, shift_log, shifts, work_orders
 from logentra_server.config import Settings, load_settings
-from logentra_server.database import init_db, make_engine, make_session_factory
+from logentra_server.database import make_engine, make_session_factory, prepare_database
 from logentra_server.models import (
     AuditLog,
     Document,
@@ -58,6 +58,22 @@ def _backend_name(url: str) -> str:
     return url.split(":", 1)[0]
 
 
+@contextmanager
+def background_jobs(settings: Settings, session_factory):
+    with ExitStack() as cleanup:
+        delivery = events.DeliveryWorker(session_factory, settings)
+        delivery.start()
+        cleanup.callback(delivery.stop)
+        escalation = handover_service.EscalationWorker(session_factory)
+        escalation.start()
+        cleanup.callback(escalation.stop)
+        mqtt_client, mqtt_connected = mqtt_worker.start_mqtt(settings, session_factory)
+        if mqtt_client is not None:
+            cleanup.callback(mqtt_client.loop_stop)
+            cleanup.callback(mqtt_client.disconnect)
+        yield delivery, mqtt_connected
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     engine = make_engine(
@@ -67,7 +83,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool_timeout=settings.db_pool_timeout,
     )
     SessionLocal = make_session_factory(engine, timezone=settings.timezone)
-    init_db(engine, timezone=settings.timezone)
+    try:
+        prepare_database(engine, settings)
+    except Exception:
+        engine.dispose()
+        raise
     # seed roles, optional first admin, default fields, startup webhooks
     with SessionLocal() as db:
         service.ensure_default_fields(db)
@@ -89,27 +109,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        delivery = events.DeliveryWorker(SessionLocal, settings)
-        mqtt_client, mqtt_connected = mqtt_worker.start_mqtt(settings, SessionLocal)
-        app.state.delivery_worker = delivery
-        app.state.mqtt_connected = mqtt_connected
-        delivery.start()
-        escalation = handover_service.EscalationWorker(SessionLocal)
-        escalation.start()
-        try:
-            import anyio
-            anyio.to_thread.current_default_thread_limiter().total_tokens = settings.threadpool_size
-        except (ImportError, AttributeError):
-            pass
-        try:
+        with ExitStack() as cleanup:
+            cleanup.callback(engine.dispose)
+            if settings.role == "all":
+                app.state.delivery_worker, app.state.mqtt_connected = cleanup.enter_context(
+                    background_jobs(settings, SessionLocal)
+                )
+            try:
+                import anyio
+                anyio.to_thread.current_default_thread_limiter().total_tokens = settings.threadpool_size
+            except (ImportError, AttributeError):
+                pass
             yield
-        finally:
-            if mqtt_client:
-                mqtt_client.disconnect()
-                mqtt_client.loop_stop()
-            escalation.stop()
-            delivery.stop()
-            engine.dispose()
 
     app = FastAPI(
         title=f"{PRODUCT_NAME} API",

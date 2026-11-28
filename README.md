@@ -98,6 +98,22 @@ The display name lives in [`logentra_server/branding.py`](logentra_server/brandi
 
 The offline single-file app needs no install: open `standalone/Logbook.html` in a browser.
 
+### Database migrations and process roles
+
+`python run.py migrate` upgrades the configured database and prints its revision. It is safe to rerun at head. `python run.py migrate --check` prints the current and head revisions without applying migrations. It exits with status 0 at head and status 1 when the database needs an upgrade.
+
+`LOGENTRA_AUTO_MIGRATE=on` is the default for `python run.py` and the base Compose setup. With `LOGENTRA_AUTO_MIGRATE=off`, run `python run.py migrate` before starting the app or running `python run.py create-admin`. The production overlay (`compose.production.yaml`) sets the app to `off` and waits for its one-shot `migrate` service to succeed after PostgreSQL becomes healthy.
+
+Set `LOGENTRA_ROLE` when starting `python run.py` to choose what the process runs.
+
+| Role | What runs |
+| --- | --- |
+| `all` (default) | HTTP, outbound webhook delivery, handover reminders and escalations, and the MQTT subscriber when enabled |
+| `web` | HTTP only |
+| `worker` | Outbound webhook delivery, handover reminders and escalations, and the MQTT subscriber when enabled. Runs until SIGINT or SIGTERM without serving HTTP or opening a browser. |
+
+`LOGENTRA_WORKERS` controls the number of Uvicorn processes for HTTP. With `LOGENTRA_ROLE=all` and more than one Uvicorn process, each process starts its own copy of the background jobs. Production Compose keeps the `all` role.
+
 ## Try the sample backup
 
 A small fictional v0.2 JSON backup lives at [`examples/sample-backup/logbook-backup.json`](examples/sample-backup/logbook-backup.json). It has one site (Cedar Creek Pump Station), two equipment items (booster pump P-210 and contact tank T-210), a handful of readings, and exactly one out-of-range point: P-210 vibration at 6.8 mm/s on 12 March 2026, with an operator note already attached. The plant, tags, and people are fictional.

@@ -2,7 +2,11 @@
 
 ## Upgrade
 
-Back up the database and attachment tree together before starting 0.7.1. In Docker, use the recovery service from the [recovery guide](../v0.6/RECOVERY_GUIDE.md). Set the installation timezone before starting the upgrade. Use an IANA name such as `Asia/Singapore` in the `timezone` field of `config.yaml` or in `LOGENTRA_TIMEZONE`, including in the Compose environment or `.env`. Upgrade the app with the usual startup command. Alembic applies these revisions in order.
+Back up the database and attachment tree together before starting an upgrade. In Docker, use the recovery service from the [recovery guide](../v0.6/RECOVERY_GUIDE.md). Set the installation timezone before starting the upgrade. Use an IANA name such as `Asia/Singapore` in the `timezone` field of `config.yaml` or in `LOGENTRA_TIMEZONE`, including in the Compose environment or `.env`.
+
+Use the usual startup command to apply pending revisions with the default `LOGENTRA_AUTO_MIGRATE=on`. With `LOGENTRA_AUTO_MIGRATE=off`, run `python run.py migrate` before starting the app. Use `python run.py migrate --check` to see the current and head revisions without applying migrations. The production Compose overlay handles the upgrade through its one-shot `migrate` service and starts the app after that service succeeds.
+
+Alembic applies the 0.7 revisions in order.
 
 | Revision | Changes |
 | --- | --- |

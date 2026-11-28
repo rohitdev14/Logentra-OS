@@ -4,6 +4,7 @@ services:
     environment:
       LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:?Set the dedicated PostgreSQL connection URL}
       LOGENTRA_API_DOCS: off
+      LOGENTRA_AUTO_MIGRATE: "off"
       LOGENTRA_WORKERS: ${LOGENTRA_WORKERS:-0}  # 0 = automatic (3 with 4+ CPUs, else 2)
       # The app is reachable only from the nginx container on the private ingress
       # network, and nginx overwrites X-Forwarded-For, so private ranges are safe here.
@@ -13,7 +14,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks: [ingress, database]
+  migrate:
+    build: .
+    image: logentra-os:local
+    user: "10001:10001"
+    command: ["python", "run.py", "migrate"]
+    environment:
+      LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:?Set the dedicated PostgreSQL connection URL}
+      LOGENTRA_TIMEZONE: ${LOGENTRA_TIMEZONE:-UTC}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [database]
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
   recovery:
     environment:
       LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:?Set the dedicated PostgreSQL connection URL}

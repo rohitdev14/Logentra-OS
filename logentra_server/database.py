@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+if TYPE_CHECKING:
+    from logentra_server.config import Settings
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class Base(DeclarativeBase):
+    pass
+
+
+class MigrationRequired(RuntimeError):
     pass
 
 
@@ -60,6 +68,29 @@ def alembic_config(url: str | None = None):
         cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
         cfg.attributes["sqlalchemy_url"] = url
     return cfg
+
+
+def migration_revisions(engine) -> tuple[tuple[str, ...], str]:
+    from alembic.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    head = ScriptDirectory.from_config(alembic_config()).get_current_head()
+    database = engine.url.database
+    # SQLite would create a file on connect even when we're only inspecting it.
+    if (engine.dialect.name == "sqlite" and database and database != ":memory:"
+            and not engine.url.query.get("uri") and not Path(database).exists()):
+        return (), head
+    with engine.connect() as conn:
+        return MigrationContext.configure(conn).get_current_heads(), head
+
+
+def require_current_revision(engine) -> None:
+    current, head = migration_revisions(engine)
+    if current != (head,):
+        raise MigrationRequired(
+            f"Database revision is {', '.join(current) or 'uninitialized'} (expected {head}). "
+            "Run python run.py migrate before starting Logentra OS."
+        )
 
 
 def run_migrations(engine, *, timezone: str | None = None) -> None:
@@ -126,3 +157,10 @@ def init_db(engine, *, timezone: str | None = None) -> None:
     run_migrations(engine, timezone=timezone)
     with engine.begin() as conn:
         conn.execute(text("SELECT 1"))
+
+
+def prepare_database(engine, settings: Settings) -> None:
+    if settings.auto_migrate == "on":
+        init_db(engine, timezone=settings.timezone)
+    else:
+        require_current_revision(engine)

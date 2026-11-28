@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+- **Migrate command and process role.** Apply or check migrations with `python run.py migrate [--check]`, choose which processes serve HTTP and run background jobs, and let production Compose migrate before starting the app.
+
 ## 0.8.0 – Security and reading format
 
 Back up before upgrading. Alembic applies `0012_reading_contract` on startup. It only adds columns, and downgrading removes them.

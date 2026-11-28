@@ -10,7 +10,11 @@ export LOGENTRA_DATABASE_URL="postgresql+psycopg://logentra:logentra@127.0.0.1:5
 python run.py
 ```
 
-Alembic migrations run on first start against whichever URL you set. Existing SQLite files are not converted automatically — export JSON from the old instance and re-import, or use a one-off ETL.
+`python run.py` applies pending Alembic migrations to the configured database at startup by default. To apply them before startup, run `python run.py migrate` and set `LOGENTRA_AUTO_MIGRATE=off` for the app. `python run.py migrate --check` prints the installed and required revisions and exits with status 1 if an upgrade is needed.
+
+With `compose.production.yaml`, the one-shot `migrate` service runs `python run.py migrate` after PostgreSQL becomes healthy. The app starts after the command succeeds and checks the revision on startup with `LOGENTRA_AUTO_MIGRATE=off`.
+
+To move data from an existing SQLite database to PostgreSQL, export JSON from the old instance and re-import, or use a one-off ETL.
 
 ## Server settings (starting point)
 
