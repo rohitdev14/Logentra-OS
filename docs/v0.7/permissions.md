@@ -164,7 +164,7 @@ Object policies also check linked evidence, handover leads, and ownership where 
 | PATCH | `/api/work-order-rules/{rid}` | authenticated | `workorders.assign`, unscoped |
 | GET | `/api/work-orders` | authenticated | `workorders.read`, scoped |
 | POST | `/api/work-orders` | authenticated | `workorders.create`, scoped |
-| DELETE | `/api/work-orders/{wid}` | object | `work_order.delete`, `users.manage` or `workorders.create`, scoped |
+| DELETE | `/api/work-orders/{wid}` | object | `work_order.delete`, `users.manage` or `workorders.assign` or `workorders.create`, scoped |
 | GET | `/api/work-orders/{wid}` | object | `work_order.get_work_order`, `workorders.read`, scoped |
 | PATCH | `/api/work-orders/{wid}` | object | `work_order.edit`, `workorders.create` or `workorders.assign`, scoped, assignment requires workorders.assign, closing requires workorders.close |
 | POST | `/api/work-orders/{wid}/assign` | object | `work_order.assign`, `workorders.assign`, scoped |

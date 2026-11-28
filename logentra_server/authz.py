@@ -288,9 +288,12 @@ def require_object(db, principal, kind, obj_or_id, action):
         elif action in {"incoming", "return"}:
             require_incoming(db, principal, obj, allow_manager=action != "return")
     elif kind == "work_order" and action == "delete":
-        own_open = principal.can("workorders.create") and obj.status == "open" and obj.created_by_id == principal.user_id
-        if not principal.can("users.manage") and not own_open:
-            require(principal, "users.manage")
+        manager = principal.can("users.manage")
+        supervisor = principal.can("workorders.assign") and obj.status == "open"
+        creator = (principal.can("workorders.create") and obj.status == "open"
+                   and obj.assignee_id is None and obj.created_by_id == principal.user_id)
+        if not (manager or supervisor or creator):
+            raise HTTPException(403, "You are not allowed to delete this work order")
     return obj
 
 

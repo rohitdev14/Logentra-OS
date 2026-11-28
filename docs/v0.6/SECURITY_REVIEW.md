@@ -24,3 +24,5 @@ Negative tests cover network access, invalid configuration, request size, thrott
 ## Release completion update
 
 Historical document and work-order scope now checks linked operational evidence. The release security checks and limits are in [Security verification](SECURITY_VERIFICATION.md).
+
+Set `LOGENTRA_API_DOCS=off` to disable `/docs`, `/redoc`, and `/openapi.json` in production. The default is `on`.

@@ -68,6 +68,7 @@ class Settings(BaseModel):
     api_key: str = ""
     # open = single-user / standalone (no login). users = require login or a user-bound API key.
     auth_mode: Literal["open", "users"] = "open"
+    api_docs: Literal["on", "off"] = "on"
     phone_session_days: int = Field(7, ge=1, le=30)
     photo_max_bytes: int = Field(2 * 1024 * 1024, gt=0)
     photos_per_entry: int = Field(3, ge=1, le=3)
@@ -157,6 +158,7 @@ _ENV_FIELDS: list[tuple[str, tuple[str, ...], str]] = [
     ("database_url", ("LOGENTRA_DATABASE_URL", "LOGBOOK_DATABASE_URL"), "str"),
     ("api_key", ("LOGENTRA_API_KEY", "LOGBOOK_API_KEY"), "str"),
     ("auth_mode", ("LOGENTRA_AUTH_MODE", "LOGBOOK_AUTH_MODE"), "auth"),
+    ("api_docs", ("LOGENTRA_API_DOCS",), "str"),
     ("session_days", ("LOGENTRA_SESSION_DAYS", "LOGBOOK_SESSION_DAYS"), "int"),
     ("bootstrap_admin_username", (
         "LOGENTRA_BOOTSTRAP_ADMIN_USER", "LOGENTRA_BOOTSTRAP_ADMIN_USERNAME",

@@ -37,3 +37,28 @@ def test_all_mounted_routes_have_policies(client):
 
 def test_generated_permissions_reference_is_current():
     assert DESTINATION.read_text(encoding="utf-8") == render(), "Run python scripts/authz_table.py"
+
+
+def test_api_docs_switch(tmp_path):
+    from logentra_server.app import create_app
+    from logentra_server.config import Settings
+    from fastapi.testclient import TestClient
+
+    for mode, expected in (("on", 200), ("off", 404)):
+        app = create_app(Settings(database_url=f"sqlite:///{tmp_path / mode}.db", api_docs=mode))
+        with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as browser:
+            for path in ("/docs", "/redoc", "/openapi.json"):
+                assert browser.get(path).status_code == expected
+        mounted = {(method, path) for method, path, _ in mounted_methods(app.routes)}
+        disabled = {("GET", path) for path in ("/docs", "/redoc", "/openapi.json")}
+        disabled |= {("HEAD", path) for path in ("/docs", "/redoc", "/openapi.json")}
+        disabled |= {("GET", "/docs/oauth2-redirect"), ("HEAD", "/docs/oauth2-redirect")}
+        assert mounted == ROUTE_POLICIES.keys() - (disabled if mode == "off" else set())
+        app.state.engine.dispose()
+
+
+def test_api_docs_environment(monkeypatch, tmp_path):
+    from logentra_server.config import load_settings
+
+    monkeypatch.setenv("LOGENTRA_API_DOCS", "off")
+    assert load_settings(tmp_path / "missing.yml").api_docs == "off"

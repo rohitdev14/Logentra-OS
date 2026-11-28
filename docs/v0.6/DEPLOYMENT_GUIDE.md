@@ -60,3 +60,5 @@ If `docker compose up --wait` hangs on the app while `docker logs` shows no data
 The nft/Docker rules should accept traffic for the Compose bridge. If the legacy table is the policy that is actually dropping packets, set `iptables-legacy -P FORWARD ACCEPT` on that host (or add matching ACCEPT rules for the Docker bridges) and confirm with `update-alternatives --display iptables` whether the host should be switched fully to nft. This is a host-firewall issue; do not add NET_ADMIN or extra capabilities to the application container.
 
 The application image includes `postgresql-client` so backup and restore can run `pg_dump` and `pg_restore` without a second image. Use the `recovery` Compose service for backup and restore; it joins the internal `database` network in the production overlay and runs as the app user with no extra capabilities. See the [recovery guide](RECOVERY_GUIDE.md).
+
+Set `LOGENTRA_API_DOCS=off` to disable `/docs`, `/redoc`, and `/openapi.json` in production. The default is `on`.

@@ -97,10 +97,15 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         if "assignee_id" in body or "assigneeId" in body:
             principal.require("workorders.assign")
             authz.check_work_order_assignee(db, principal, body.get("assignee_id") or body.get("assigneeId"))
-        if body.get("status"):
-            authz.require_work_order_transition(principal, body["status"])
-        elif not ("assignee_id" in body or "assigneeId" in body):
+        details = set(body) - {"status", "assignee_id", "assigneeId"}
+        if details or not body:
             authz.require_work_order_edit(principal)
+            if not principal.can("workorders.assign") and (
+                row.created_by_id != principal.user_id or row.status != "open"
+            ):
+                raise HTTPException(403, "You are not allowed to edit this work order")
+        if "status" in body:
+            authz.require_work_order_transition(principal, body["status"])
         try:
             row = wo.update_work_order(
                 db, row, body, actor=principal.actor, user_id=principal.user_id,
@@ -223,7 +228,9 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.delete("/api/work-orders/{wid}", tags=["work-orders"])
     def delete_work_order(wid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
         row = _get(db, wid, principal, "delete")
-        service.audit(db, "delete", actor=principal.actor, user_id=principal.user_id, entity_type="work_order", entity_id=wid)
+        service.audit(db, "delete", actor=principal.actor, user_id=principal.user_id,
+                      entity_type="work_order", entity_id=wid,
+                      detail={"title": row.title, "status": row.status, "deleted_by": principal.actor})
         service.protect_document_links(db, Document.work_order_id, wid)
         db.delete(row)
         db.commit()

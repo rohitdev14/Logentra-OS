@@ -260,6 +260,16 @@ def build_router(get_db, get_principal, settings):
 
     @router.get("/q/{code}", response_class=HTMLResponse)
     def scan(code: str, request: Request, db: Session = Depends(get_db)):
+        # Resolve the tag only after authentication to avoid revealing its identity or rotation.
+        try:
+            principal = phone_principal(db, request, settings)
+        except HTTPException as error:
+            if error.status_code == 401:
+                return qr_phone.render_phone(
+                    request, qr_phone.login_form(settings.phone_session_days, request.url.scheme == "https"),
+                    {"screen": "login"},
+                )
+            raise
         equipment = resolve_code(db, code)
         if not equipment:
             retired = db.get(QRRetiredCode, code.upper())
@@ -272,7 +282,6 @@ def build_router(get_db, get_principal, settings):
                 )
             return qr_phone.render_phone(request, "<section><h1>QR tag not found</h1></section>", {}, status=404)
         try:
-            principal = phone_principal(db, request, settings)
             principal.require("readings.read", "readings.write")
             current_equipment(db, code, principal)
         except HTTPException as error:

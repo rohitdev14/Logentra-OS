@@ -17,7 +17,7 @@ def render_phone(request, content, data, *, status=200):
     secret = None
     if data.get("screen") in {"login", "entry"}:
         secret = csrf_secret(request)
-        data = {**data, "csrf": csrf_token(secret)}
+        data = {**data, "csrf": csrf_token(secret, stable=data["screen"] == "login")}
     encoded = json.dumps(data, allow_nan=False).replace("<", "\\u003c")
     replacements = {"@@DATA@@": encoded, "@@CONTENT@@": content}
     html = re.sub(r"@@(?:DATA|CONTENT)@@", lambda token: replacements[token.group()], TEMPLATE)

@@ -121,9 +121,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Set LOGBOOK_AUTH_MODE=users to require login."
         ),
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if settings.api_docs == "on" else None,
+        redoc_url="/redoc" if settings.api_docs == "on" else None,
+        openapi_url="/openapi.json" if settings.api_docs == "on" else None,
     )
     @app.exception_handler(RequestValidationError)
     async def invalid_input(_request, error):

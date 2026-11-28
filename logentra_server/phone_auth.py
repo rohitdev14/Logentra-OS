@@ -1,5 +1,6 @@
 """Phone-cookie authentication restricted to quick-entry endpoints."""
 from hmac import compare_digest, digest
+from base64 import urlsafe_b64encode
 import re
 from secrets import token_urlsafe
 from urllib.parse import urlsplit
@@ -18,8 +19,9 @@ def csrf_secret(request):
     return cookie if re.fullmatch(r"[A-Za-z0-9_-]{43}", cookie) else token_urlsafe(32)
 
 
-def csrf_token(secret):
-    nonce = token_urlsafe(16)
+def csrf_token(secret, *, stable=False):
+    nonce = (urlsafe_b64encode(digest(secret.encode(), b"login-page", "sha256")[:16]).decode().rstrip("=")
+             if stable else token_urlsafe(16))
     signature = digest(secret.encode(), nonce.encode(), "sha256").hex()
     return f"{nonce}.{signature}"
 

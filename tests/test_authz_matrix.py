@@ -14,10 +14,10 @@ from logentra_server.app import create_app
 from logentra_server.auth import BUILTIN_ROLES, create_session, hash_password, hash_token, new_api_key, principal_from_user
 from logentra_server.config import Settings
 from logentra_server.models import (
-    Annotation, ApiKey, ApprovalRoute, Document, Equipment, QREntry, Reading, ReadingPhoto, Role, SessionToken, Site, Template, User, WorkOrder,
+    Annotation, ApiKey, ApprovalRoute, AutoWorkOrderRule, Document, Equipment, OutboundWebhook, QREntry, Reading, ReadingPhoto, Role, SessionToken, Site, Template, User, WebhookDelivery, WorkOrder,
 )
 from logentra_server.route_policies import ROUTE_POLICIES
-from logentra_server.shift_models import Crew, Handover, HandoverComment, HandoverItem, Shift, ShiftDefinition, ShiftLogAttachment, ShiftLogCategory, ShiftLogEntry, ShiftPattern
+from logentra_server.shift_models import Crew, Handover, HandoverComment, HandoverItem, Shift, ShiftDefinition, ShiftLogAttachment, ShiftLogCategory, ShiftLogEntry, ShiftPattern, CrewMember
 from logentra_server.shifts import utc_text
 from logentra_server.utils import dumps
 from test_authz_inventory import mounted_methods
@@ -84,6 +84,12 @@ def matrix(tmp_path_factory):
                             created_at=timestamp, updated_at=timestamp))
         db.add(Crew(id="matrix-crew", site_id=SITE, name="Matrix crew"))
         db.flush()
+        db.add(CrewMember(crew_id="matrix-crew", user_id="matrix-technician"))
+        db.add(OutboundWebhook(id="matrix-webhook", url="https://example.invalid/hook",
+                               events='["out_of_range"]', created_at=timestamp))
+        db.add(WebhookDelivery(id="matrix-delivery", webhook_id="matrix-webhook",
+                               event="out_of_range", created_at=timestamp))
+        db.add(AutoWorkOrderRule(id="matrix-rule", created_at=timestamp, updated_at=timestamp))
         db.add(ShiftDefinition(id="matrix-definition", pattern_id="matrix-pattern", code="A", name="Shift A",
                                start_time="00:00", duration_minutes=480))
         db.flush()
@@ -194,7 +200,7 @@ def sample(schema, components):
 def route_values(template, actor, phones, objects):
     ids = {**objects["shared"], **objects["local" if actor == "scoped" else "foreign"]}
     ids.update(uid_=f"matrix-{'technician' if actor == 'api_key' else actor}", user_id="matrix-technician",
-               kid="matrix-key", definition_id="matrix-definition", delivery_id="missing")
+               kid="matrix-key", definition_id="matrix-definition", delivery_id="matrix-delivery")
     ids["identifier"] = (
         ids["handover"] if "/handovers/" in template else ids["site"] if "/sites/" in template
         else "matrix-crew" if "/crews/" in template else "matrix-pattern" if "/shift-patterns/" in template
@@ -209,10 +215,14 @@ def route_values(template, actor, phones, objects):
         ids["rid"] = ids["reading"]
     if "/logs/{entry_id}" in template:
         ids["entry_id"] = ids["reading_entry"]
+    if template.endswith("/api-keys/{kid}"):
+        ids["uid_"] = "matrix-technician"
     if template.endswith("/sessions/{sid}"):
         ids["sid"] = phones.get("technician" if "/users/" in template else actor, "missing")
     if "/webhooks/{wid}" in template:
-        ids["wid"] = "missing"
+        ids["wid"] = "matrix-webhook"
+    if "/work-order-rules/{rid}" in template:
+        ids["rid"] = "matrix-rule"
     return ids
 
 
@@ -238,6 +248,8 @@ def request_input(method, template, schema, ids, password):
             return {"params": query, "json": {"minutes": 1}}
         return {"params": query, "data": data, "files": {"file": (filename, content)}}
     if method in {"GET", "HEAD", "DELETE"} and not body:
+        if template == "/api/shift-roster-users":
+            query["site"] = SITE
         if template == "/tags/print":
             query["ids"] = ids["eid"]
             query["preview"] = "true"
@@ -253,6 +265,8 @@ def request_input(method, template, schema, ids, password):
         value = {"entry_id": ids["qr_entry"], "title": "Inspection"}
     elif template in {"/api/readings", "/api/ingest/readings"}:
         value = {"equipment_id": ids["eid"], "parameter": ids["parameter"], "value": 1}
+    elif template == "/api/records":
+        value = {"equipmentId": ids["eid"], "title": "Inspection"}
     elif template == "/api/migrate/v2":
         query["replace"] = "false"
     elif template.endswith("/transition"):
@@ -287,7 +301,7 @@ def expected_access(policy, actor, ids):
         lead = policy.action == "outgoing" and role == "technician"
         return manager or lead
     if policy.object_kind == "work_order" and policy.action == "delete":
-        return role in {"admin", "technician"}
+        return role in {"admin", "supervisor", "technician"}
     if policy.condition == "self_or_manage":
         return ids["uid_"] == f"matrix-{role}" or actor == "scoped" or "users.manage" in permissions
     return True
@@ -310,11 +324,11 @@ def test_role_route_matrix(matrix, actor):
         response = client.request(method, url, headers=request_headers, **kwargs)
         client.cookies.clear()
         allowed = expected_access(policy, actor, ids)
-        valid = 200 <= response.status_code < 300 or response.status_code in {400, 404, 409, 415, 422}
+        valid = 200 <= response.status_code < 300 or response.status_code in {400, 409, 415, 422}
         # An anonymous request can hit dependent resource validation on public routes.
-        if (allowed and not valid) or (not allowed and response.status_code not in {401, 403, 404}):
+        if (allowed and not valid) or (not allowed and response.status_code not in {401, 403}):
             failures.append((method, template, allowed, response.status_code, response.text[:220]))
-    assert not failures, failures
+    assert not failures, "\n".join(map(repr, failures))
 
 
 def test_scoped_technician_cannot_access_foreign_objects(matrix):
@@ -323,6 +337,14 @@ def test_scoped_technician_cannot_access_foreign_objects(matrix):
     actor = "scoped"
     failures = []
     covered = set()
+    hidden_by_scope = {
+        "equipment": "Equipment lookup conceals another area.",
+        "record": "Record lookup conceals its equipment's area.",
+        "reading": "Reading lookup conceals its equipment's area.",
+        "work_order": "Work-order lookup conceals another area.",
+        "document": "Document lookup conceals another area.",
+        "qr_entry": "QR entry lookup conceals its equipment's area.",
+    }
     for (method, template), policy in sorted(ROUTE_POLICIES.items()):
         if policy.kind != "object":
             continue
@@ -337,7 +359,8 @@ def test_scoped_technician_cannot_access_foreign_objects(matrix):
         response = client.request(method, template.format(**ids), headers=headers[actor],
                                   **request_input(method, template, schema, ids, password))
         covered.add(policy.object_kind)
-        if response.status_code not in {401, 403, 404}:
+        denied = {401, 403, 404} if policy.object_kind in hidden_by_scope else {401, 403}
+        if response.status_code not in denied:
             failures.append((method, template, response.status_code, response.text[:220]))
     assert covered == authz.OBJECTS.keys()
     assert not failures, failures
@@ -410,3 +433,57 @@ def test_assign_only_role_can_attach_to_an_in_scope_work_order(matrix):
                        json={"filename": "notes.txt"}).status_code == 201
     assert client.post(f"/api/work-orders/{remote}/attachments", headers=headers,
                        json={"filename": "notes.txt"}).status_code == 404
+
+
+def test_work_order_delete_roles_and_scope(matrix):
+    client, headers, _, _, objects = matrix
+    local = objects["local"]["wid"]
+    foreign = objects["foreign"]["wid"]
+    with client.app.state.SessionLocal() as db:
+        own = db.get(WorkOrder, local)
+        own.assignee_id = None
+        own.status = "open"
+        db.commit()
+    assert client.delete(f"/api/work-orders/{local}", headers=headers["technician"]).status_code == 403
+    assert client.delete(f"/api/work-orders/{local}", headers=headers["scoped"]).status_code == 200
+    assert client.delete(f"/api/work-orders/{foreign}", headers=headers["scoped"]).status_code == 404
+    with client.app.state.SessionLocal() as db:
+        row = db.get(WorkOrder, foreign)
+        row.assignee_id = "matrix-technician"
+        db.commit()
+    assert client.delete(f"/api/work-orders/{foreign}", headers=headers["technician"]).status_code == 403
+    assert client.delete(f"/api/work-orders/{foreign}", headers=headers["supervisor"]).status_code == 200
+    with client.app.state.SessionLocal() as db:
+        row = db.get(WorkOrder, foreign)
+        row.status = "in_progress"
+        db.commit()
+    assert client.delete(f"/api/work-orders/{foreign}", headers=headers["supervisor"]).status_code == 403
+    assert client.delete(f"/api/work-orders/{foreign}", headers=headers["admin"]).status_code == 200
+
+
+def test_mixed_work_order_patch_requires_each_permission(matrix):
+    client, headers, _, _, objects = matrix
+    wid = objects["foreign"]["wid"]
+    original = client.get(f"/api/work-orders/{wid}", headers=headers["admin"]).json()
+    for fields in (
+        {"title": "Changed", "status": "closed"},
+        {"title": "Changed", "assignee_id": "matrix-technician"},
+    ):
+        assert client.patch(f"/api/work-orders/{wid}", headers=headers["technician"], json=fields).status_code == 403
+        current = client.get(f"/api/work-orders/{wid}", headers=headers["admin"]).json()
+        assert current["title"] == original["title"]
+        assert current["status"] == original["status"]
+        assert current["assignee_id"] == original["assignee_id"]
+    response = client.patch(f"/api/work-orders/{wid}", headers=headers["supervisor"],
+                            json={"title": "Changed", "status": "in_progress", "assignee_id": "matrix-technician"})
+    assert response.status_code == 200, response.text
+
+
+def test_public_qr_page_hides_equipment(matrix):
+    client, _, _, _, objects = matrix
+    valid = client.get(f"/q/{objects['local']['code']}")
+    invalid = client.get("/q/ZZZZZZZZ")
+    assert valid.status_code == invalid.status_code == 200
+    assert valid.text == invalid.text
+    assert "P-101" not in valid.text
+    assert "Sign in to log readings" in valid.text

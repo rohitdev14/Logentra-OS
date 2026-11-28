@@ -205,7 +205,7 @@ ROUTE_POLICIES = {
     ('PATCH', '/api/work-order-rules/{rid}'): authenticated('workorders.assign', scoped=False),
     ('GET', '/api/work-orders'): authenticated('workorders.read'),
     ('POST', '/api/work-orders'): authenticated('workorders.create'),
-    ('DELETE', '/api/work-orders/{wid}'): object_policy('work_order', 'delete', 'wid', any_of=('users.manage', 'workorders.create')),
+    ('DELETE', '/api/work-orders/{wid}'): object_policy('work_order', 'delete', 'wid', any_of=('users.manage', 'workorders.assign', 'workorders.create')),
     ('GET', '/api/work-orders/{wid}'): object_policy('work_order', 'get_work_order', 'wid', 'workorders.read'),
     ('PATCH', '/api/work-orders/{wid}'): object_policy('work_order', 'edit', 'wid', any_of=('workorders.create', 'workorders.assign'), condition='work_order_fields'),
     ('POST', '/api/work-orders/{wid}/assign'): object_policy('work_order', 'assign', 'wid', 'workorders.assign'),
