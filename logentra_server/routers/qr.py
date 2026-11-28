@@ -275,6 +275,8 @@ def build_router(get_db, get_principal, settings):
             retired = db.get(QRRetiredCode, code.upper())
             current = db.get(Equipment, retired.equipment_id) if retired and retired.equipment_id else None
             if current and current.qr_code:
+                principal.require("readings.read", "readings.write")
+                authz.require_object(db, principal, "equipment", current, "qr_access")
                 return qr_phone.render_phone(
                     request, '<section><h1>This tag was replaced</h1>'
                     f'<a class="button" href="/q/{current.qr_code}">Open current tag</a></section>',
@@ -287,7 +289,7 @@ def build_router(get_db, get_principal, settings):
         except HTTPException as error:
             if error.status_code == 401:
                 return qr_phone.render_phone(
-                    request, qr_phone.equipment_card({"tag": equipment.tag, **equipment_label(db, equipment)}) + qr_phone.login_form(settings.phone_session_days, request.url.scheme == "https"),
+                    request, qr_phone.login_form(settings.phone_session_days, request.url.scheme == "https"),
                     {"screen": "login"},
                 )
             return qr_phone.render_phone(
