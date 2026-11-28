@@ -663,19 +663,25 @@
       return;
     }
     const rows = [["tag", "category", "date", "time", "parameter", "label", "value", "unit", "remarks", "enteredBy", "annot_cause", "annot_action", "annot_by", "annot_at"]];
+    if (fmt === "csv") rows[0].push("unit", "quality", "source", "idempotency_key");
     state.logs.forEach((l) => {
       const eq = eqById(l.equipmentId);
       const tag = eq ? eqTag(eq) : state.equipmentIndex.find(item => item.id === l.equipmentId)?.tag;
       if (!tag) return;
       if (l.kind === "note") {
-        rows.push([tag, eqCat(eq), l.date, l.time, "", "Note", "", "", l.remarks || "", l.enteredBy || "", "", "", "", ""]);
+        const row = [tag, eqCat(eq), l.date, l.time, "", "Note", "", "", l.remarks || "", l.enteredBy || "", "", "", "", ""];
+        if (fmt === "csv") row.push("", "", "qr", "");
+        rows.push(row);
         return;
       }
       const params = eq ? paramsFor(eq) : [];
       Object.keys(l.readings || {}).forEach((k) => {
         const p = params.find((x) => x.key === k) || { key: k, label: k, unit: "" };
         const an = annotOf(l, k) || {};
-        rows.push([tag, eqCat(eq), l.date, l.time, k, p.label, l.readings[k], p.unit, l.remarks || "", l.enteredBy || "", an.cause || "", an.action || "", an.by || "", an.at || ""]);
+        const meta = l.readingMeta?.[k];
+        const row = [tag, eqCat(eq), l.date, l.time, k, p.label, l.readings[k], meta ? meta.unit : p.unit, l.remarks || "", l.enteredBy || "", an.cause || "", an.action || "", an.by || "", an.at || ""];
+        if (fmt === "csv") row.push(meta?.unit, meta?.quality, meta?.source, meta?.idempotency_key);
+        rows.push(row);
       });
     });
     if (fmt === "xlsx") download("logbook-logs.xlsx", XlsxUtil.build("Logs", rows));
@@ -1646,7 +1652,7 @@
               const v = l.readings ? l.readings[p.key] : null;
               const bad = outOfRange(num(v), p);
               const noted = annotFilled(annotOf(l, p.key));
-              return "<td" + (bad ? " style='color:#b42318;font-weight:700'" : "") + ">" + (v == null || v === "" ? "—" : esc(v)) + (noted ? " *" : "") + "</td>";
+              return "<td" + (bad ? " style='color:#b42318;font-weight:700'" : "") + ">" + window.LogentraQR.readingValue(v, l.readingMeta?.[p.key]) + (noted ? " *" : "") + "</td>";
             }).join("");
             const note = l.kind === "note";
             return "<tr><td>" + esc(l.date) + "</td><td>" + esc(l.time || "") + "</td><td>" + esc(eqTag(eq)) +

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from logentra_server.database import Base
@@ -248,6 +248,8 @@ class Reading(Base):
         Index("ix_readings_eq_param_ts", "equipment_id", "parameter_key", "ts"),
         Index("ix_readings_source", "source"),
         Index("ix_readings_oor_ts", "out_of_range", "ts"),
+        Index("uq_readings_equipment_idempotency", "equipment_id", "idempotency_key", unique=True,
+              sqlite_where=text("idempotency_key IS NOT NULL"), postgresql_where=text("idempotency_key IS NOT NULL")),
     )
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     entry_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
@@ -264,6 +266,9 @@ class Reading(Base):
     limit_max: Mapped[float | None] = mapped_column(Float)
     out_of_range: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    unit: Mapped[str | None] = mapped_column(Text)
+    quality: Mapped[str | None] = mapped_column(Text)
+    idempotency_key: Mapped[str | None] = mapped_column(Text)
     equipment: Mapped[Equipment] = relationship(back_populates="readings")
     annotation: Mapped[Annotation | None] = relationship(
         back_populates="reading", cascade="all, delete-orphan", uselist=False

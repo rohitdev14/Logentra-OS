@@ -10,7 +10,7 @@ from PIL import Image
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from logentra_server import service
+from logentra_server import reading_contract, service
 from logentra_server.config import ROOT
 from logentra_server.http_security import read_upload
 from logentra_server.models import QREntry, Reading, ReadingPhoto
@@ -76,7 +76,7 @@ def entry_result(db, entry):
     return {
         "entry_id": entry.id, "saved_at": entry.created_at, "note": entry.note,
         "values": [{"id": r.id, "parameter": r.parameter_key, "value": r.value,
-                    "out_of_range": bool(r.out_of_range)} for r in rows],
+                    "out_of_range": bool(r.out_of_range), **reading_contract.metadata(r)} for r in rows],
         "photos": [pid for (pid,) in photos],
     }
 

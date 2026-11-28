@@ -11,7 +11,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from fastapi import HTTPException
 
 from logentra_server import authz
-from logentra_server import events, sitetime
+from logentra_server import events, reading_contract, sitetime
 from logentra_server.models import (
     Annotation,
     Area,
@@ -46,7 +46,7 @@ def audit(db: Session, action: str, *, actor: str | None = "api", entity_type: s
           entity_id: str | None = None, detail: Any = None, user_id: str | None = None) -> None:
     # Record trail events need stable ordering when several land in the same second.
     at = (datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
-          if entity_type == "record" else utcnow_iso())
+          if entity_type == "record" or action == reading_contract.RECEIPT_ACTION else utcnow_iso())
     db.add(AuditLog(
         id=uid("aud"), ts=at, actor=actor, user_id=user_id, action=action,
         entity_type=entity_type, entity_id=entity_id, detail=dumps(detail) if detail is not None else None,
@@ -289,9 +289,10 @@ def group_log_readings(db, rows):
             date, time = sitetime.utc_text_to_local(reading.ts, sitetime.zone_for_equipment(db, reading.equipment))
             groups[key] = {"id": reading.entry_id, "equipmentId": reading.equipment_id,
                            "date": date, "time": time, "ts": sitetime.utc_iso_z(reading.ts), "readings": {}, "remarks": "",
-                           "enteredBy": "", "annotations": {}}
+                           "enteredBy": "", "annotations": {}, "readingMeta": {}}
         entry = groups[key]
         entry["readings"][reading.parameter_key] = reading.value
+        entry["readingMeta"][reading.parameter_key] = reading_contract.metadata(reading)
         if reading.remarks:
             entry["remarks"] = reading.remarks
         if reading.entered_by:
@@ -933,6 +934,7 @@ def ingest_readings(
     """Insert many readings. Each item: tag or equipment_id, parameter, value, optional ts/date/time, remarks, entered_by, entry_id, unit, label."""
     ensure_default_fields(db)
     created = []
+    keyed_results = []
     skipped = []
     oor_events = []
     fields = db.query(FieldDefinition).all()
@@ -941,6 +943,7 @@ def ingest_readings(
     if principal and principal.scoped and create_missing_equipment:
         raise HTTPException(403, "Scoped ingestion requires existing equipment")
     for raw in items:
+        unit, quality, reading_source, retry_key = reading_contract.fields(raw, source)
         tag = str(raw.get("tag") or raw.get("equipment") or "").strip()
         reading_id = raw.get("id") or uid("rd")
         eid = raw.get("equipment_id") or raw.get("equipmentId")
@@ -970,11 +973,11 @@ def ingest_readings(
             .first()
         )
         key = param.key if param else key_raw
-        if not param:
+        if not param and retry_key is None:
             if principal and principal.scoped:
                 principal.require("equipment.write")
             advance_catalog(db)
-            param = ensure_parameter(db, eq.id, key, label=raw.get("label") or key_raw, unit=raw.get("unit"))
+            param = ensure_parameter(db, eq.id, key, label=raw.get("label") or key_raw, unit=unit)
         value = as_float(raw.get("value") if "value" in raw else raw.get("reading"))
         if value is None:
             skipped.append({"reason": "invalid_value", "item": raw})
@@ -989,7 +992,36 @@ def ingest_readings(
         except (ValueError, TypeError, AttributeError, OverflowError):
             skipped.append({"reason": "invalid_timestamp"})
             continue
-        entry_id = raw.get("entry_id") or raw.get("entryId") or uid("log")
+        supplied_entry_id = raw.get("entry_id") or raw.get("entryId")
+        entry_id = supplied_entry_id or uid("log")
+        remarks = raw.get("remarks") or raw.get("comment") or ""
+        entered_by = raw.get("entered_by") or raw.get("enteredBy") or raw.get("by") or ""
+        cause = raw.get("annot_cause") or raw.get("cause")
+        action = raw.get("annot_action") or raw.get("action")
+        by = raw.get("annot_by")
+        at = raw.get("annot_at")
+        if retry_key is not None:
+            digest = reading_contract.fingerprint({
+                "parameter": key_raw, "label": raw.get("label"), "value": value, "unit": unit,
+                "quality": quality, "source": reading_source, "remarks": remarks, "entered_by": entered_by,
+                "timestamp": ts if explicit_ts else None,
+                "date": (date or "").strip() if not explicit_ts else "",
+                "time": (time or "").strip() if not explicit_ts else "",
+                "entry_id": supplied_entry_id, "id": raw.get("id") or None,
+                "annotation": [cause or "", action or "", by or "", at or None] if cause or action or by else None,
+            })
+            existing = reading_contract.find_receipt(db, eq.id, retry_key)
+            if existing is not None:
+                reading_contract.require_matching_receipt(db, existing, digest)
+                skipped.append({"reason": "duplicate", "id": existing.id, "duplicate": True})
+                keyed_results.append((existing, True))
+                continue
+            if not param:
+                if principal and principal.scoped:
+                    principal.require("equipment.write")
+                advance_catalog(db)
+                param = ensure_parameter(db, eq.id, key, label=raw.get("label") or key_raw, unit=unit)
+        recorded_unit = reading_contract.snapshot_unit(unit, param.unit)
         reading = Reading(
             id=reading_id,
             entry_id=entry_id,
@@ -997,20 +1029,32 @@ def ingest_readings(
             parameter_key=param.key,
             ts=ts,
             value=value,
-            remarks=raw.get("remarks") or raw.get("comment") or "",
-            entered_by=raw.get("entered_by") or raw.get("enteredBy") or raw.get("by") or "",
-            source=raw.get("source") or source,
+            remarks=remarks,
+            entered_by=entered_by,
+            source=reading_source,
+            unit=recorded_unit,
+            quality=quality,
+            idempotency_key=retry_key,
             limit_min=param.min_value,
             limit_max=param.max_value,
             created_at=now,
         )
         reading.out_of_range = 1 if out_of_range(value, param.min_value, param.max_value) else 0
-        if raw.get("id"):
+        if raw.get("id") or retry_key is not None:
             insert = sqlite_insert if db.get_bind().dialect.name == "sqlite" else postgres_insert
             values = {column.name: getattr(reading, column.name) for column in Reading.__table__.columns}
-            inserted = db.execute(insert(Reading).values(**values).on_conflict_do_nothing(
-                index_elements=[Reading.id]
-            ).returning(Reading)).scalar_one_or_none()
+            statement = insert(Reading).values(**values).on_conflict_do_nothing(
+                index_elements=[Reading.id] if retry_key is None else None,
+            )
+            inserted = db.execute(statement.returning(Reading)).scalar_one_or_none()
+            if inserted is None and retry_key is not None:
+                existing = reading_contract.find_receipt(db, eq.id, retry_key)
+                if existing is None:
+                    raise HTTPException(409, "Reading ID already belongs to different data")
+                reading_contract.require_matching_receipt(db, existing, digest)
+                skipped.append({"reason": "duplicate", "id": existing.id, "duplicate": True})
+                keyed_results.append((existing, True))
+                continue
             if inserted is None:
                 existing = db.get(Reading, reading_id)
                 fields = ["equipment_id", "parameter_key", "value", "remarks", "entered_by", "source"]
@@ -1026,16 +1070,17 @@ def ingest_readings(
         else:
             db.add(reading)
             db.flush()
-        # optional annotation in the same payload
-        cause = raw.get("annot_cause") or raw.get("cause")
-        action = raw.get("annot_action") or raw.get("action")
-        by = raw.get("annot_by")
-        at = raw.get("annot_at")
+        # Optional annotation in the same payload.
         if cause or action or by:
             db.add(Annotation(
                 id=uid("an"), reading_id=reading.id, cause=cause or "", action=action or "",
                 annotated_by=by or "", annotated_at=at or now, created_at=now,
             ))
+        if retry_key is not None:
+            audit(db, reading_contract.RECEIPT_ACTION, actor=actor, entity_type="reading", entity_id=reading.id,
+                  detail={"fingerprint": digest})
+            db.flush()
+            keyed_results.append((reading, False))
         created.append(reading)
         if out_of_range(value, param.min_value, param.max_value):
             oor_events.append((reading, eq.tag, param.label))
@@ -1058,6 +1103,10 @@ def ingest_readings(
             wo = maybe_auto_create(db, reading, tag, label)
             if wo:
                 auto_wo.append(wo.id)
+    results = [
+        {"reading": reading_to_dict(db, row, row.equipment.tag), "duplicate": duplicate}
+        for row, duplicate in keyed_results
+    ]
     if commit:
         db.commit()
     return {
@@ -1069,6 +1118,7 @@ def ingest_readings(
         "entry_ids": list({r.entry_id for r in created}),
         "webhooks": hook_results,
         "work_orders": auto_wo,
+        **({"results": results} if results else {}),
     }
 
 
@@ -1098,6 +1148,7 @@ def reading_to_dict(db: Session, r: Reading, tag: str | None = None) -> dict[str
             "id": an.id, "cause": an.cause or "", "action": an.action or "",
             "by": an.annotated_by or "", "at": an.annotated_at,
         },
+        **reading_contract.metadata(r),
     }
 
 

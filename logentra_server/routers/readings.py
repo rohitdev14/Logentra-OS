@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from logentra_server import authz
@@ -38,7 +38,11 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
             query = query.filter(Reading.equipment_id.in_(equipment.statement))
         return query.order_by(Reading.ts.desc()).first()
 
-    @router.get("/api/readings", tags=["readings"], summary="Query time-series readings", dependencies=perm("readings.read", scoped=True))
+    @router.get(
+        "/api/readings", tags=["readings"], summary="Query time-series readings",
+        description="Rows include the recorded unit, quality, source and optional idempotency key.",
+        dependencies=perm("readings.read", scoped=True),
+    )
     def get_readings(
         request: Request,
         db: Session = Depends(get_db),
@@ -57,17 +61,31 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         )
         return {"count": len(rows), "readings": rows}
 
-    @router.post("/api/readings", tags=["readings"], summary="Insert one reading", dependencies=perm("readings.write", scoped=True), status_code=201)
-    def post_reading(body: ReadingIn, request: Request, db: Session = Depends(get_db)):
+    @router.post(
+        "/api/readings", tags=["readings"], summary="Insert one reading",
+        description="Keyed responses include the reading and a duplicate flag. An identical retry for the same equipment returns the existing reading.",
+        dependencies=perm("readings.write", scoped=True), status_code=201,
+        responses={200: {"description": "Identical keyed retry"}, 409: {"description": "Key or reading ID conflict"}},
+    )
+    def post_reading(body: ReadingIn, request: Request, response: Response, db: Session = Depends(get_db)):
         result = service.ingest_readings(
             db, [body.model_dump(exclude_none=True)], source=body.source or "api",
             actor=actor_name(request), create_missing_equipment=False, fire_webhooks=True, principal=request.state.principal,
         )
         if result["added"] == 0 and not any(row["reason"] == "duplicate" for row in result["skipped_items"]):
             raise HTTPException(400, result)
+        if keyed := result.pop("results", None):
+            if keyed[0]["duplicate"]:
+                response.status_code = 200
+            result.update(keyed[0])
         return result
 
-    @router.post("/api/readings/bulk", tags=["readings"], summary="Insert many readings in one transaction", dependencies=perm("readings.write", scoped=True))
+    @router.post(
+        "/api/readings/bulk", tags=["readings"], summary="Insert many readings in one transaction",
+        description="Keyed results appear in input order. The first matching payload wins and identical repeats are marked duplicate.",
+        dependencies=perm("readings.write", scoped=True),
+        responses={409: {"description": "Key or reading ID conflict. The batch is rolled back."}},
+    )
     def post_readings_bulk(body: BulkReadingsIn, request: Request, db: Session = Depends(get_db)):
         if body.create_missing_equipment:
             request.state.principal.require("equipment.write")
@@ -209,7 +227,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         if create_missing_equipment:
             request.state.principal.require("equipment.write")
         return service.ingest_readings(
-            db, items, source="webhook", actor=actor_name(request) or "webhook",
+            db, items, source="api", actor=actor_name(request) or "webhook",
             create_missing_equipment=create_missing_equipment, fire_webhooks=True, principal=request.state.principal,
         )
 
@@ -303,7 +321,8 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
                     "entry_id": lower.get("entry_id"),
                     "remarks": lower.get("remarks"),
                     "entered_by": lower.get("entered_by") or lower.get("enteredby") or lower.get("by"),
-                    "unit": lower.get("unit"),
+                    "unit": lower.get("unit") or None,
+                    "quality": lower.get("quality") or None,
                     "annot_cause": lower.get("annot_cause") or lower.get("cause"),
                     "annot_action": lower.get("annot_action") or lower.get("action"),
                     "annot_by": lower.get("annot_by"),

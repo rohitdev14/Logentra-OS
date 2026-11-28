@@ -521,7 +521,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         w = csv.writer(buf)
         w.writerow(["tag", "equipment_id", "date", "time", "ts", "parameter", "value", "min", "max",
                     "out_of_range", "unacknowledged", "remarks", "entered_by", "source",
-                    "annot_cause", "annot_action", "annot_by", "annot_at", "reading_id", "entry_id"])
+                    "annot_cause", "annot_action", "annot_by", "annot_at", "reading_id", "entry_id",
+                    "unit", "quality", "source", "idempotency_key"])
         for r in rows:
             an = r.get("annotation") or {}
             w.writerow(map(safe_cell, [
@@ -529,7 +530,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 r.get("min"), r.get("max"), int(r["out_of_range"]), int(r["unacknowledged"]),
                 r.get("remarks"), r.get("entered_by"), r.get("source"),
                 an.get("cause"), an.get("action"), an.get("by"), an.get("at"),
-                r["id"], r["entry_id"],
+                r["id"], r["entry_id"], r["unit"], r["quality"], r["source"], r["idempotency_key"],
             ]))
         if not parameter:
             notes = service.note_log_query(db, request.state.principal, tag=tag, ts_from=ts_from, ts_to=ts_to)
@@ -539,7 +540,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 entry = service.note_log_entry(db, receipt)
                 w.writerow(map(safe_cell, [equipment_tag, receipt.equipment_id, entry["date"], entry["time"], entry["ts"],
                             "Note", None, None, None, 0, 0, receipt.note, receipt.entered_by, "qr",
-                            None, None, None, None, None, receipt.id]))
+                            None, None, None, None, None, receipt.id, None, None, "qr", None]))
         data = buf.getvalue().encode("utf-8-sig")
         return StreamingResponse(
             io.BytesIO(data), media_type="text/csv",

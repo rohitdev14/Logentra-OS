@@ -6,6 +6,8 @@ import logging
 import threading
 from typing import Any
 
+from fastapi import HTTPException
+
 from logentra_server.auth import Principal
 from logentra_server.config import Settings
 from logentra_server.service import ingest_readings
@@ -105,6 +107,8 @@ def start_mqtt(settings: Settings, session_factory):
                 log.info("MQTT ingest added=%s skipped=%s oor=%s", result["added"], result["skipped"], result["out_of_range"])
             finally:
                 db.close()
+        except HTTPException as error:
+            log.warning("MQTT reading rejected (%s): %s", error.status_code, error.detail)
         except Exception:
             log.error("MQTT message handling failed")
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, FiniteFloat
 
@@ -11,6 +11,10 @@ class SyncBody(BaseModel):
     templates: list[dict[str, Any]] | None = None
     records: list[dict[str, Any]] | None = None
     paramPresets: dict[str, list] | None = None
+
+
+ReadingSource = Literal["manual", "qr", "import", "api", "mqtt", "modbus"]
+ReadingQuality = Literal["good", "uncertain", "bad", "substituted"]
 
 
 class ReadingIn(BaseModel):
@@ -24,9 +28,11 @@ class ReadingIn(BaseModel):
     time: str | None = None
     remarks: str | None = None
     entered_by: str | None = None
-    source: str | None = "api"
+    source: ReadingSource | None = Field("api", description="Origin of the reading. Modbus is reserved for the edge connector.")
     entry_id: str | None = None
-    unit: str | None = None
+    unit: str | None = Field(None, description="Recorded unit. Omit to snapshot the equipment parameter's unit. No conversion is performed.")
+    quality: ReadingQuality | None = Field(None, description="Defaults to good when omitted.")
+    idempotency_key: str | None = Field(None, description="Optional retry key unique per equipment, at most 1024 UTF-8 bytes. Reusing it for different data returns 409.")
     label: str | None = None
     id: str | None = None
     annot_cause: str | None = None

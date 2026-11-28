@@ -2494,19 +2494,25 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
       return;
     }
     const rows = [["tag", "category", "date", "time", "parameter", "label", "value", "unit", "remarks", "enteredBy", "annot_cause", "annot_action", "annot_by", "annot_at"]];
+    if (fmt === "csv") rows[0].push("unit", "quality", "source", "idempotency_key");
     state.logs.forEach((l) => {
       const eq = eqById(l.equipmentId);
       const tag = eq ? eqTag(eq) : state.equipmentIndex.find(item => item.id === l.equipmentId)?.tag;
       if (!tag) return;
       if (l.kind === "note") {
-        rows.push([tag, eqCat(eq), l.date, l.time, "", "Note", "", "", l.remarks || "", l.enteredBy || "", "", "", "", ""]);
+        const row = [tag, eqCat(eq), l.date, l.time, "", "Note", "", "", l.remarks || "", l.enteredBy || "", "", "", "", ""];
+        if (fmt === "csv") row.push("", "", "qr", "");
+        rows.push(row);
         return;
       }
       const params = eq ? paramsFor(eq) : [];
       Object.keys(l.readings || {}).forEach((k) => {
         const p = params.find((x) => x.key === k) || { key: k, label: k, unit: "" };
         const an = annotOf(l, k) || {};
-        rows.push([tag, eqCat(eq), l.date, l.time, k, p.label, l.readings[k], p.unit, l.remarks || "", l.enteredBy || "", an.cause || "", an.action || "", an.by || "", an.at || ""]);
+        const meta = l.readingMeta?.[k];
+        const row = [tag, eqCat(eq), l.date, l.time, k, p.label, l.readings[k], meta ? meta.unit : p.unit, l.remarks || "", l.enteredBy || "", an.cause || "", an.action || "", an.by || "", an.at || ""];
+        if (fmt === "csv") row.push(meta?.unit, meta?.quality, meta?.source, meta?.idempotency_key);
+        rows.push(row);
       });
     });
     if (fmt === "xlsx") download("logbook-logs.xlsx", XlsxUtil.build("Logs", rows));
@@ -3477,7 +3483,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
               const v = l.readings ? l.readings[p.key] : null;
               const bad = outOfRange(num(v), p);
               const noted = annotFilled(annotOf(l, p.key));
-              return "<td" + (bad ? " style='color:#b42318;font-weight:700'" : "") + ">" + (v == null || v === "" ? "—" : esc(v)) + (noted ? " *" : "") + "</td>";
+              return "<td" + (bad ? " style='color:#b42318;font-weight:700'" : "") + ">" + window.LogentraQR.readingValue(v, l.readingMeta?.[p.key]) + (noted ? " *" : "") + "</td>";
             }).join("");
             const note = l.kind === "note";
             return "<tr><td>" + esc(l.date) + "</td><td>" + esc(l.time || "") + "</td><td>" + esc(eqTag(eq)) +
@@ -6350,6 +6356,14 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
     } catch (error) { host.textContent = error.message; }
   }
 
+  function readingValue(value, metadata) {
+    if (value == null || value === "") return "—";
+    const unit = metadata?.unit;
+    const quality = metadata?.quality;
+    const badge = quality && quality !== "good" ? ' <span class="pill">' + esc(quality) + "</span>" : "";
+    return esc(value) + (unit ? " " + esc(unit) : "") + badge;
+  }
+
   function readingPhotos(photos) {
     return photos?.length ? '<div class="log-photos">' + photos.map(photo =>
       `<button type="button" class="btn" data-reading-photo="${esc(photo.id)}" aria-label="Open photo ${esc(photo.filename)}">
@@ -6382,7 +6396,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
           <thead><tr><th>Date</th><th>Time</th><th>Equipment</th><th>Entered by</th><th>Readings</th><th>Remarks and photos</th></tr></thead>
           <tbody>${result.items.map(row => `<tr><td>${esc(row.date)}</td><td>${esc(row.time)}</td>
           <td>${esc(selection.selectedOptions[0].textContent)}</td><td>${esc(row.enteredBy)}</td>
-          <td>${Object.entries(row.readings).map(([key,value]) => esc(key) + ": " + esc(value)).join(" · ")}</td>
+          <td>${Object.entries(row.readings).map(([key,value]) => esc(key) + ": " + readingValue(value, row.readingMeta?.[key])).join(" · ")}</td>
           <td>${row.kind === "note" ? "<strong>Note</strong> " : ""}${esc(row.remarks)}${readingPhotos(row.photos)}</td></tr>`).join("")
           || '<tr><td colspan="6">No entries for this equipment.</td></tr>'}</tbody></table></div>
           ${result.pages > 1 ? `<div class="row"><button type="button" class="btn" data-history-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>Previous</button>
@@ -6441,7 +6455,7 @@ window.STARTER_PACKS = [{"id": "generic-plant", "name": "Generic plant equipment
   }
 
   window.LogentraQR = {
-    readingPhotos, pagedReadingHistory,
+    readingPhotos, readingValue, pagedReadingHistory,
     views:{qrTags:viewTags, settings:viewSettings, profile:() =>
       '<h2>Profile</h2><section class="card"><h3>Phone sessions</h3><div id="qr-own-sessions"></div></section>'},
     bind(view) {

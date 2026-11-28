@@ -262,7 +262,7 @@ def load_demo(db: Session, *, actor: str = "ui", user_id: str | None = None) -> 
                     "time": "08:30",
                     "value": round(v * 100) / 100,
                     "entered_by": "Amir Rahman",
-                    "source": "demo",
+                    "source": "manual",
                 }
                 if eid == "eq_p101" and key == "vibration" and day == 8:
                     rec["remarks"] = "See vibration annotation."
@@ -272,7 +272,7 @@ def load_demo(db: Session, *, actor: str = "ui", user_id: str | None = None) -> 
                     rec["annot_at"] = date + "T09:20"
                 items.append(rec)
     # do not fire outbound webhooks for historical demo spikes
-    result = service.ingest_readings(db, items, source="demo", actor=actor, fire_webhooks=False)
+    result = service.ingest_readings(db, items, source="manual", actor=actor, fire_webhooks=False)
 
     # Work orders across the Kanban columns
     from logentra_server import workorders as wo

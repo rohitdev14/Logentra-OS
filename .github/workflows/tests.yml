@@ -122,6 +122,10 @@ jobs:
           photo=$(curl --fail --silent -H "Authorization: Bearer $token" \
             -F "entry_id=$entry_id" -F 'note=Cooling pump inspection' -F photos=@reading.png \
             "http://127.0.0.1:8787/api/qr/$code/entry" | python3 -c 'import json,sys; print(json.load(sys.stdin)["photos"][0])')
+          reading_payload='{"tag":"P-101","parameter":"flow","value":52,"quality":"uncertain","idempotency_key":"ci-restore-reading"}'
+          reading_id=$(curl --fail --silent -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            -d "$reading_payload" http://127.0.0.1:8787/api/readings | \
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["reading"]["id"])')
           docker compose stop app
           docker compose --profile recovery run --rm recovery backup /backups/ci
           docker compose --profile recovery run --rm recovery restore /backups/ci --replace
@@ -130,6 +134,21 @@ jobs:
           test "$(curl -s -H "Authorization: Bearer $token" http://127.0.0.1:8787/api/documents/$did/file)" = "restore round trip"
           curl --fail --silent -H "Authorization: Bearer $token" "http://127.0.0.1:8787/api/readings/photos/$photo" > restored-reading.png
           cmp reading.png restored-reading.png
+          status=$(curl --fail --silent -o restored-reading.json -w '%{http_code}' -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' -d "$reading_payload" http://127.0.0.1:8787/api/readings)
+          test "$status" = 200
+          python3 - "$reading_id" <<'PY'
+          import json
+          import sys
+
+          with open("restored-reading.json", encoding="utf-8") as handle:
+              result = json.load(handle)
+          reading = result["reading"]
+          assert result["duplicate"] and result["added"] == 0
+          assert (reading["id"], reading["unit"], reading["quality"], reading["source"], reading["idempotency_key"]) == (
+              sys.argv[1], "m³/h", "uncertain", "api", "ci-restore-reading",
+          )
+          PY
       - name: Verify PostgreSQL profile startup
         env:
           LOGENTRA_POSTGRES_PASSWORD: ci-test-only

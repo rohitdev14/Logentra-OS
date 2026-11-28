@@ -70,6 +70,12 @@ msg.payload = {
 return msg;
 ```
 
+## MQTT reading metadata
+
+JSON reading objects may include `unit`, `quality`, and `idempotency_key`, including objects inside a batch. The subscriber records the source as `mqtt`. Numeric topic payloads still work and use the configured unit and `good` quality.
+
+Publish the same key and payload to retry delivery for one equipment item. Identical retries keep a single reading. The subscriber logs a conflict when the same key arrives with different data. See the [reading contract](v0.7/reading-contract.md) for allowed values and retry details.
+
 ## Python script
 
 See `examples/python_client.py`. Short version:

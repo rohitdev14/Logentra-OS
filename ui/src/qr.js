@@ -273,6 +273,14 @@
     } catch (error) { host.textContent = error.message; }
   }
 
+  function readingValue(value, metadata) {
+    if (value == null || value === "") return "—";
+    const unit = metadata?.unit;
+    const quality = metadata?.quality;
+    const badge = quality && quality !== "good" ? ' <span class="pill">' + esc(quality) + "</span>" : "";
+    return esc(value) + (unit ? " " + esc(unit) : "") + badge;
+  }
+
   function readingPhotos(photos) {
     return photos?.length ? '<div class="log-photos">' + photos.map(photo =>
       `<button type="button" class="btn" data-reading-photo="${esc(photo.id)}" aria-label="Open photo ${esc(photo.filename)}">
@@ -305,7 +313,7 @@
           <thead><tr><th>Date</th><th>Time</th><th>Equipment</th><th>Entered by</th><th>Readings</th><th>Remarks and photos</th></tr></thead>
           <tbody>${result.items.map(row => `<tr><td>${esc(row.date)}</td><td>${esc(row.time)}</td>
           <td>${esc(selection.selectedOptions[0].textContent)}</td><td>${esc(row.enteredBy)}</td>
-          <td>${Object.entries(row.readings).map(([key,value]) => esc(key) + ": " + esc(value)).join(" · ")}</td>
+          <td>${Object.entries(row.readings).map(([key,value]) => esc(key) + ": " + readingValue(value, row.readingMeta?.[key])).join(" · ")}</td>
           <td>${row.kind === "note" ? "<strong>Note</strong> " : ""}${esc(row.remarks)}${readingPhotos(row.photos)}</td></tr>`).join("")
           || '<tr><td colspan="6">No entries for this equipment.</td></tr>'}</tbody></table></div>
           ${result.pages > 1 ? `<div class="row"><button type="button" class="btn" data-history-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>Previous</button>
@@ -364,7 +372,7 @@
   }
 
   window.LogentraQR = {
-    readingPhotos, pagedReadingHistory,
+    readingPhotos, readingValue, pagedReadingHistory,
     views:{qrTags:viewTags, settings:viewSettings, profile:() =>
       '<h2>Profile</h2><section class="card"><h3>Phone sessions</h3><div id="qr-own-sessions"></div></section>'},
     bind(view) {

@@ -47,7 +47,7 @@ def test_alembic_upgrade_from_empty(tmp_path):
     assert "ix_readings_eq_ts" in reading_indexes
     with engine.begin() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0011_site_timezone"
+        assert version == "0012_reading_contract"
 
 
 def test_alembic_upgrade_from_v03(tmp_path):
@@ -89,7 +89,7 @@ def test_alembic_stamp_legacy_v03_file(tmp_path):
         tag = conn.execute(text("SELECT tag FROM equipment WHERE id='eq_1'")).scalar()
         assert tag == "LEG-1"
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0011_site_timezone"
+        assert version == "0012_reading_contract"
 
 
 def test_qr_migration_round_trip(tmp_path):
@@ -351,3 +351,96 @@ def test_site_timezone_backfill_uses_settings_without_environment(tmp_path, monk
                 assert conn.execute(text("SELECT ts FROM readings")).scalar_one() == "2026-11-26T08:30:00"
         finally:
             engine.dispose()
+
+
+def _assert_reading_contract_migration(engine, cfg):
+    from sqlalchemy.exc import IntegrityError
+
+    command.upgrade(cfg, "0011_site_timezone")
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO equipment (id, tag, created_at, updated_at)
+            VALUES ('pump', 'P-101', '2026', '2026'), ('spare', 'P-102', '2026', '2026')
+        """))
+        conn.execute(text("""
+            INSERT INTO parameters (id, equipment_id, key, label, unit)
+            VALUES ('param', 'pump', 'flow', 'Flow', 'L/s'), ('empty', 'spare', 'flow', 'Flow', '')
+        """))
+        conn.execute(text("""
+            INSERT INTO readings (id, entry_id, equipment_id, parameter_key, ts, value, source, created_at)
+            VALUES (:id, 'entry', :equipment, :parameter, '2026-11-26T16:30:00', 8, :source, '2026')
+        """), [
+            {"id": "a", "equipment": "pump", "parameter": "flow", "source": "demo"},
+            {"id": "b", "equipment": "pump", "parameter": "flow", "source": "webhook"},
+            {"id": "c", "equipment": "spare", "parameter": "flow", "source": " MQTT "},
+            {"id": "d", "equipment": "pump", "parameter": "old", "source": "unclassified"},
+        ])
+        if engine.dialect.name == "sqlite":
+            conn.execute(text("""
+                INSERT INTO readings (id, entry_id, equipment_id, parameter_key, ts, value, source, created_at)
+                VALUES (:id, 'entry', 'pump', 'flow', '2026-11-26T16:30:00', 8, 'manual', '2026')
+            """), [{"id": f"large-{i:04d}"} for i in range(5001)])
+
+    command.upgrade(cfg, "head")
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT id, unit, quality, source, idempotency_key FROM readings WHERE id IN ('a','b','c','d') ORDER BY id
+        """)).all()
+        assert rows == [
+            ("a", "L/s", "good", "manual", None), ("b", "L/s", "good", "api", None),
+            ("c", None, "good", "mqtt", None), ("d", None, "good", "manual", None),
+        ]
+        assert conn.execute(text("SELECT COUNT(*) FROM readings WHERE quality IS NULL")).scalar_one() == 0
+        conn.execute(text("UPDATE readings SET idempotency_key = 'key' WHERE id IN ('a','c')"))
+        with pytest.raises(IntegrityError), conn.begin_nested():
+            conn.execute(text("UPDATE readings SET idempotency_key = 'key' WHERE id = 'b'"))
+        conn.execute(text("UPDATE parameters SET unit = 'm³/h' WHERE id = 'param'"))
+        # Simulate restarting with the DDL and earlier batches already committed.
+        conn.execute(text("UPDATE readings SET quality = NULL, unit = NULL WHERE id = 'b'"))
+        conn.execute(text("UPDATE alembic_version SET version_num = '0011_site_timezone'"))
+    command.upgrade(cfg, "head")
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT unit, quality, idempotency_key FROM readings WHERE id IN ('a','b') ORDER BY id")).all()
+        assert rows == [("L/s", "good", "key"), ("m³/h", "good", None)]
+
+    command.downgrade(cfg, "0011_site_timezone")
+    assert set(("unit", "quality", "idempotency_key")).isdisjoint(
+        column["name"] for column in inspect(engine).get_columns("readings")
+    )
+    command.upgrade(cfg, "head")
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT unit, quality, idempotency_key FROM readings WHERE id IN ('a','b') ORDER BY id")).all()
+        assert rows == [("m³/h", "good", None), ("m³/h", "good", None)]
+
+
+def test_reading_contract_migration_sqlite(tmp_path):
+    url = f"sqlite:///{tmp_path / 'reading-contract.db'}"
+    engine = make_engine(url)
+    try:
+        _assert_reading_contract_migration(engine, alembic_config(url))
+    finally:
+        engine.dispose()
+
+
+def test_reading_contract_migration_postgres():
+    import os
+    from uuid import uuid4
+
+    from sqlalchemy import create_engine, make_url
+
+    source = os.environ.get("LOGENTRA_TEST_POSTGRES")
+    if not source:
+        pytest.skip("Set LOGENTRA_TEST_POSTGRES for reading contract migration verification")
+    name = f"reading_contract_{uuid4().hex}"
+    admin = create_engine(source, isolation_level="AUTOCOMMIT", hide_parameters=True)
+    with admin.connect() as conn:
+        conn.exec_driver_sql(f"CREATE DATABASE {name}")
+    url = make_url(source).set(database=name).render_as_string(hide_password=False)
+    engine = make_engine(url)
+    try:
+        _assert_reading_contract_migration(engine, alembic_config(url))
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.exec_driver_sql(f"DROP DATABASE {name} WITH (FORCE)")
+        admin.dispose()
