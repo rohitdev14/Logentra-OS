@@ -487,3 +487,18 @@ def test_public_qr_page_hides_equipment(matrix):
     assert valid.text == invalid.text
     assert "P-101" not in valid.text
     assert "Sign in to log readings" in valid.text
+
+
+def test_work_order_delete_across_sites(matrix):
+    client, headers, password, _, _ = matrix
+    scoped_supervisor = custom_session(
+        client, "site-supervisor", BUILTIN_ROLES["supervisor"][1], password, scoped=True,
+    )
+    timestamp = utc_text(datetime.now(timezone.utc))
+    with client.app.state.SessionLocal.begin() as db:
+        db.add(WorkOrder(id="matrix-other-site-order", title="Other site inspection",
+                         site_id="matrix-other-site", status="open", priority="medium",
+                         created_at=timestamp, updated_at=timestamp))
+    url = "/api/work-orders/matrix-other-site-order"
+    assert client.delete(url, headers=scoped_supervisor).status_code == 404
+    assert client.delete(url, headers=headers["admin"]).status_code == 200
