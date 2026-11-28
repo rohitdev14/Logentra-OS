@@ -2,16 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 0.8.0 – Security and reading format
 
-### v0.8.0 Security
+Back up before upgrading. Alembic applies `0012_reading_contract` on startup. It only adds columns, and downgrading removes them.
 
-- Tightened work order edit and delete permissions, anonymized public QR sign-in pages, and added an API documentation switch for production.
+### Security
 
-- **Central authorisation.** Shared permission and object-scope checks now cover the API, with a generated route-policy reference and regression tests.
+- **Central authorisation.** Shared permission and object-scope checks now cover every API route, with a generated route-policy reference (`docs/v0.7/permissions.md`) and role-matrix regression tests.
 - Document uploads and link changes require read access to linked equipment, records, or work orders for every account, including accounts with global scope.
+- Work-order permissions:
+  - Admins can delete any work order in scope.
+  - Supervisors can delete open work orders in their scope.
+  - Technicians can delete only their own open, unassigned work orders.
+  - Deletions are audited with the title, status and actor.
+  - A mixed edit is checked separately for its details, status and assignee before anything is saved.
+- Public QR pages show a generic sign-in form for valid, unknown, and replaced codes, and no equipment details before sign-in.
+- New `LOGENTRA_API_DOCS=on|off` setting. The default is `on`; the production Compose overlay and `.env.example` set it to `off`.
+- Spreadsheet exports escape cells that a spreadsheet could run as formulas. Plain numbers, including negative numbers, are unchanged.
+- File uploads are checked by content type and size and are rejected with 415 or 413.
 
-- New webhook readings use the `api` source by default. Existing readings retain legacy sources such as `webhook` and `load`.
+### Reading format
+
+- Readings carry a `unit`, a `quality` (`good`, `uncertain`, `bad` or `substituted`) and a `source` (`manual`, `qr`, `import`, `api`, `mqtt`, `modbus` or `demo`). See `docs/v0.7/reading-contract.md`.
+- An optional `idempotency_key` makes API retries safe. A retry with the same key and payload is not stored twice; the same key with a different payload returns 409.
+- Existing clients keep working unchanged. Existing readings keep their stored source values, including legacy ones such as `webhook` and `load`. New webhook readings use `api`.
+- Reading CSV exports keep their original columns and append `unit,quality,idempotency_key`.
 
 ### Security tooling
 

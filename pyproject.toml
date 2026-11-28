@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "logentra-os"
-version = "0.7.1"
+version = "0.8.0"
 description = "Open-source logbook, engineering records & traceability for industrial plants"
 readme = "README.md"
 license = { text = "MIT" }

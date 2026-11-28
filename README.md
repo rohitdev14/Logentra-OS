@@ -9,7 +9,7 @@ The logbook that stays yours.
 
 [Quick start](#quick-start) · [Roadmap](docs/ROADMAP.md) · [Changelog](CHANGELOG.md)
 
-**v0.7.1.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
+**v0.8.0.** Open-source logbook, engineering records & traceability for industrial plants — an on-prem equipment, records, work-order, and document-approval app with a local database and REST API.
 
 Built first for small and medium plants, and for the vendors and engineers who support them.
 
