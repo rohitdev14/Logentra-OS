@@ -1,4 +1,4 @@
-FROM python:3.12.16-slim-trixie
+FROM python:3.15.1-slim-trixie
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 # Pick up Debian security updates on every image build, then install the app.
