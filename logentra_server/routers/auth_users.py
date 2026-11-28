@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, selectinload
 
+from logentra_server import authz
 from logentra_server import seed, service, shifts
 from logentra_server.auth import (
     ALL_PERMISSIONS,
@@ -213,9 +214,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.patch("/api/roles/{rid}", tags=["users"])
     def patch_role(rid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("users.manage")
-        row = db.get(Role, rid)
-        if not row:
-            raise HTTPException(404, "Role not found")
+        row = authz.require_object(db, principal, "role", rid, "manage")
         if row.built_in and "permissions" in body:
             raise HTTPException(400, "Built-in role permissions cannot be changed; clone a custom role instead")
         if "name" in body and body["name"] and not row.built_in:
@@ -233,9 +232,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.delete("/api/roles/{rid}", tags=["users"])
     def delete_role(rid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("users.manage")
-        row = db.get(Role, rid)
-        if not row:
-            raise HTTPException(404, "Role not found")
+        row = authz.require_object(db, principal, "role", rid, "manage")
         if row.built_in:
             raise HTTPException(400, "Built-in roles cannot be deleted")
         if db.query(User).filter(User.role_id == rid).count():
@@ -312,19 +309,13 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.get("/api/users/{uid_}", tags=["users"])
     def get_user(uid_: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        if principal.user_id != uid_:
-            principal.require("users.manage")
-        user = db.query(User).options(selectinload(User.role)).filter(User.id == uid_).one_or_none()
-        if not user:
-            raise HTTPException(404, "User not found")
+        user = authz.require_object(db, principal, "user", uid_, "self_or_manage")
         return _user_dict(user)
 
     @router.patch("/api/users/{uid_}", tags=["users"])
     def patch_user(uid_: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("users.manage")
-        user = db.get(User, uid_)
-        if not user:
-            raise HTTPException(404, "User not found")
+        user = authz.require_object(db, principal, "user", uid_, "manage")
         if "display_name" in body or "displayName" in body:
             user.display_name = body.get("display_name") or body.get("displayName") or user.display_name
         if "email" in body:
@@ -355,9 +346,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.delete("/api/users/{uid_}", tags=["users"])
     def delete_user(uid_: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("users.manage")
-        user = db.get(User, uid_)
-        if not user:
-            raise HTTPException(404, "User not found")
+        user = authz.require_object(db, principal, "user", uid_, "manage")
         if principal.user_id == uid_:
             raise HTTPException(400, "You cannot delete your own account")
         db.delete(user)
@@ -369,9 +358,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     def create_api_key(uid_: str, body: dict[str, Any] | None = None, db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("users.manage")
         body = body or {}
-        user = db.get(User, uid_)
-        if not user:
-            raise HTTPException(404, "User not found")
+        user = authz.require_object(db, principal, "user", uid_, "manage")
         raw, key_hash, prefix = new_api_key()
         row = ApiKey(
             id=uid("key"),
@@ -414,11 +401,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     # ---------- sites / areas (optional permission scope) ----------
     @router.get("/api/sites", tags=["users"])
     def list_sites(db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        if not (principal.can("users.manage") or principal.can("equipment.read")):
-            principal.require("equipment.read")
-        query = db.query(Site).options(selectinload(Site.areas)).order_by(Site.name)
-        if principal.site_id:
-            query = query.filter(Site.id == principal.site_id)
+        authz.require_any(principal, "equipment.read", "users.manage")
+        query = authz.scope_query(db.query(Site), Site, principal).options(selectinload(Site.areas)).order_by(Site.name)
         result = [_site_dict(site) for site in query]
         if principal.area_id:
             for site in result:
@@ -463,8 +447,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     def update_site(sid: str, body: SiteUpdate, db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("users.manage")
         site = db.get(Site, sid, with_for_update=True)
-        if not site or (principal.site_id and principal.site_id != sid):
-            raise HTTPException(404, "Site not found")
+        authz.require_object(db, principal, "site", site, "manage")
         if "name" in body.model_fields_set:
             name = (body.name or "").strip()
             if not name:
@@ -485,9 +468,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.post("/api/sites/{sid}/areas", tags=["users"], status_code=201)
     def create_area(sid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("users.manage")
-        site = db.get(Site, sid)
-        if not site:
-            raise HTTPException(404, "Site not found")
+        site = authz.require_object(db, principal, "site", sid, "manage")
         name = (body.get("name") or "").strip()
         if not name:
             raise HTTPException(400, "name is required")
@@ -501,9 +482,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.delete("/api/sites/{sid}", tags=["users"])
     def delete_site(sid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("users.manage")
-        site = db.get(Site, sid)
-        if not site:
-            raise HTTPException(404, "Site not found")
+        site = authz.require_object(db, principal, "site", sid, "manage")
         areas = db.query(Area.id).filter_by(site_id=sid)
         if db.query(User.id).filter(User.site_id == sid).first() or db.query(User.id).filter(
             User.area_id.in_(areas.statement)

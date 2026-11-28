@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session, selectinload
 
+from logentra_server import authz
 from logentra_server import events, service
 from logentra_server.auth import Principal
 from logentra_server.models import (
@@ -169,30 +170,8 @@ def step_label(step) -> str:
     return role[:1].upper() + role[1:]
 
 
-def can_act_on_step(principal: Principal, step: DocumentApprovalStep) -> bool:
-    if principal.mode in ("open", "legacy_key"):
-        return True
-    if not principal.can("documents.approve"):
-        return False
-    if principal.role_name == "admin" or principal.can("users.manage"):
-        return True
-    if step.assignee_type == "user":
-        return bool(principal.user_id and principal.user_id == step.user_id)
-    if step.assignee_type == "role":
-        return (principal.role_name or "").lower() == (step.role_name or "").lower()
-    return False
-
-
-def is_waiting_on(principal: Principal, step: DocumentApprovalStep) -> bool:
-    """Whether this step is in this principal's approvals queue (not admin-wildcard)."""
-    if principal.mode in ("open", "legacy_key"):
-        return True
-    if step.assignee_type == "user":
-        return bool(principal.user_id and principal.user_id == step.user_id)
-    if step.assignee_type == "role":
-        return (principal.role_name or "").lower() == (step.role_name or "").lower()
-    return False
-
+can_act_on_step = authz.can_act_on_step
+is_waiting_on = authz.is_waiting_on
 
 def add_comment(
     db: Session,

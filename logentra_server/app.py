@@ -23,7 +23,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from logentra_server.export_safety import safe_cell
 from logentra_server.http_security import HTTPSecurity, read_request_body, read_upload
 
-from logentra_server import records as record_service
+from logentra_server import authz, records as record_service
 from logentra_server import __version__, demo, events, handovers as handover_service, migrate, mqtt_worker, seed, service
 from logentra_server.routers import auth_users, documents, handovers, qr, readings, shift_log, shifts, work_orders
 from logentra_server.config import Settings, load_settings
@@ -165,11 +165,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     get_principal = make_auth_dependency(settings, SessionLocal)
 
     def perm(*names: str, scoped: bool = False):
-        def _dep(principal: Principal = Depends(get_principal)) -> Principal:
-            if not scoped:
-                principal.require_global()
-            principal.require(*names)
-            return principal
+        def _dep(request: Request, principal: Principal = Depends(get_principal)) -> Principal:
+            return authz.require_route(principal, request.method, request.scope["route"].path, *names, scoped=scoped)
         return [Depends(_dep)]
 
     def actor_name(request: Request) -> str:
@@ -367,8 +364,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/equipment/{eid}", tags=["equipment"], dependencies=perm("equipment.read", scoped=True))
     def get_equipment(eid: str, request: Request, db: Session = Depends(get_db)):
         eq = service.get_equipment(db, equipment_id=eid, tag=eid)
-        if not eq or not request.state.principal.allows_scope(eq.site_id, eq.area_id):
-            raise HTTPException(404, "Equipment not found")
+        authz.require_object(db, request.state.principal, "equipment", eq, "access")
         return service.equipment_to_ui(eq)
 
     @app.post("/api/equipment", tags=["equipment"], dependencies=perm("equipment.write", scoped=True), status_code=201)
@@ -397,8 +393,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                          catalog_revision: str | None = Header(None, alias="If-Match")):
         service.advance_catalog(db, catalog_revision)
         eq = db.get(Equipment, eid) or service.get_equipment(db, tag=eid)
-        if not eq or not request.state.principal.allows_scope(eq.site_id, eq.area_id):
-            raise HTTPException(404, "Equipment not found")
+        authz.require_object(db, request.state.principal, "equipment", eq, "access")
         if db.query(Signoff).join(Record).filter(Record.equipment_id == eq.id).first():
             raise HTTPException(409, "Equipment is linked to signed evidence")
         if db.query(Record.id).filter(Record.equipment_id == eq.id, Record.status == "submitted").first():
@@ -506,7 +501,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # -------------- export --------------
     @app.get("/api/export/json", tags=["export"], summary="Full JSON backup (v0.2-compatible shape)", dependencies=read_rd)
     def export_json(request: Request, db: Session = Depends(get_db)):
-        request.state.principal.require("equipment.read", "records.read", "templates.read")
         state = service.bootstrap(db, backend=_backend_name(settings.database_url), equipment_cap=10**9)
         return JSONResponse(
             state,

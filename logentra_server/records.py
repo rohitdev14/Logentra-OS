@@ -6,8 +6,9 @@ from datetime import date, datetime, timedelta
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from logentra_server import authz
 from logentra_server import events, service
-from logentra_server.models import AuditLog, Record, Signoff, User
+from logentra_server.models import AuditLog, Signoff, User
 from logentra_server.sitetime import utc_iso_z
 from logentra_server.utils import loads, uid, utcnow_iso
 
@@ -113,11 +114,7 @@ def return_record(db, rid, principal, revision, comment):
 
 
 def get_scoped(db, rid, principal):
-    record = db.get(Record, rid)
-    if not record:
-        raise HTTPException(404, "Record not found")
-    service.require_record_scope(db, principal, rid)
-    return record
+    return authz.require_object(db, principal, "record", rid, "access")
 
 
 def sign_record(db, record, name, signed_at, *, actor, user_id):

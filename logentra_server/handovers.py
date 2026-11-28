@@ -8,6 +8,7 @@ from threading import Event, Thread
 from fastapi import HTTPException
 from sqlalchemy import update
 
+from logentra_server import authz
 from logentra_server import events, service, shifts
 from logentra_server.models import Annotation, AuditLog, Equipment, Parameter, Punch, Reading, Record, WorkOrder
 from logentra_server.routers.shift_log import latest_entries
@@ -29,48 +30,13 @@ def lock_shift(db, shift_id):
     db.expire_all()
 
 
-def require_lead(principal, shift, *, allow_manager=True):
-    if principal.mode == "open" or (allow_manager and principal.can("shifts.manage")):
-        return
-    principal.require("handover.act")
-    if not shift or not principal.user_id or principal.user_id != shift.lead_user_id:
-        raise HTTPException(403, "This action requires the rostered shift lead")
-
-
-def can_act(principal, shift, *, allow_manager=True):
-    return (
-        principal.mode == "open"
-        or (allow_manager and principal.can("shifts.manage"))
-        or bool(shift and principal.can("handover.act") and principal.user_id
-                and principal.user_id == shift.lead_user_id)
-    )
-
-
-def can_act_incoming(db, principal, handover, *, allow_manager=True, now=None):
-    incoming = db.get(Shift, handover.incoming_shift_id) if handover.incoming_shift_id else None
-    if can_act(principal, incoming, allow_manager=allow_manager):
-        return True
-    if incoming or not principal.can("handover.act") or not principal.user_id:
-        return False
-    timestamp = shifts.utc_text(now or datetime.now(timezone.utc))
-    return db.query(Shift.id).filter(
-        Shift.site_id == handover.site_id, Shift.area_id == handover.area_id,
-        Shift.lead_user_id == principal.user_id, Shift.id != handover.outgoing_shift_id,
-        Shift.starts_at <= timestamp, Shift.ends_at > timestamp,
-    ).first() is not None
-
-
-def require_incoming(db, principal, handover, *, allow_manager=True):
-    if not can_act_incoming(db, principal, handover, allow_manager=allow_manager):
-        raise HTTPException(403, "This action requires the rostered incoming lead")
+can_act = authz.can_act
+can_act_incoming = authz.can_act_incoming
 
 
 def allowed(db, principal, row, *, incoming=False, allow_manager=True):
-    shifts.scoped(principal, row.site_id, row.area_id)
-    if incoming:
-        require_incoming(db, principal, row, allow_manager=allow_manager)
-    else:
-        require_lead(principal, db.get(Shift, row.outgoing_shift_id), allow_manager=allow_manager)
+    action = "outgoing" if not incoming else "incoming" if allow_manager else "return"
+    authz.require_object(db, principal, "handover", row, action)
 
 
 def require_state(handover, states):

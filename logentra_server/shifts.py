@@ -6,8 +6,9 @@ from fastapi import HTTPException
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from logentra_server import authz
 from logentra_server import service
-from logentra_server.models import Area, Site, User
+from logentra_server.models import Area, User
 from logentra_server.shift_models import Crew, CrewMember, RosterEntry, Shift, ShiftDefinition, ShiftPattern
 from logentra_server.sitetime import INVALID_TIMEZONE
 from logentra_server.utils import utcnow_iso, uid
@@ -34,16 +35,11 @@ def timezone_for(value):
         raise HTTPException(422, INVALID_TIMEZONE) from None
 
 
-def scoped(principal, site_id, area_id=None):
-    if not principal.allows_scope(site_id, area_id):
-        raise HTTPException(403, "You are not allowed to access this area")
+scoped = authz.require_location
 
 
 def site_for(db, site_id, principal):
-    site = load(db, Site, site_id, "Site")
-    if principal.site_id and principal.site_id != site.id:
-        raise HTTPException(403, "You are not allowed to access this site")
-    return site
+    return authz.require_object(db, principal, "site", site_id, "access")
 
 
 def load(db, model, identifier, label):

@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from logentra_server import authz
 from logentra_server import documents as docs, service
 from logentra_server.auth import Principal
 from logentra_server.http_security import read_upload
-from logentra_server.models import ApprovalRoute, Equipment, Record, WorkOrder
+from logentra_server.models import ApprovalRoute
 from logentra_server.upload_safety import PREVIEW_TYPES, detect_upload_mime, extension, preview_mime
 
 
@@ -21,32 +22,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         return principal
 
     def _doc(db: Session, did: str, principal: Principal):
-        row = docs.get_document(db, did, principal)
-        if not row:
-            raise HTTPException(404, "Document not found")
-        if not principal.allows_scope(row.site_id, row.area_id):
-            raise HTTPException(404, "Document not found")
-        return row
+        return authz.require_object(db, principal, "document", docs.get_document(db, did), "access")
 
-    def check_links(db, principal, data):
-        if not principal.scoped:
-            return
-        for key, model, permission in (
-            ("equipment_id", Equipment, "equipment.read"),
-            ("record_id", Record, "records.read"),
-            ("work_order_id", WorkOrder, "workorders.read"),
-        ):
-            if identifier := data.get(key):
-                principal.require(permission)
-                linked = db.get(model, identifier)
-                if isinstance(linked, Record):
-                    linked = linked.equipment
-                if model is WorkOrder and not service.apply_evidence_scope(
-                    db, db.query(WorkOrder.id).filter_by(id=identifier), WorkOrder, principal
-                ).first():
-                    raise HTTPException(404, "Linked object not found")
-                if not linked or not principal.allows_scope(linked.site_id, linked.area_id):
-                    raise HTTPException(404, "Linked object not found")
 
     def _err(exc: Exception):
         if isinstance(exc, PermissionError):
@@ -165,10 +142,9 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             db, site_id=site_id, area_id=area_id, equipment_id=equipment_id,
         )
         site_id, area_id = site_id or principal.site_id, area_id or principal.area_id
-        if not principal.allows_scope(site_id, area_id):
-            raise HTTPException(403, "Document location is outside your scope")
+        authz.require_location(principal, site_id, area_id, detail="Document location is outside your scope")
         service.validate_location(db, site_id, area_id)
-        check_links(db, principal, {"equipment_id": equipment_id, "record_id": record_id, "work_order_id": work_order_id})
+        authz.check_document_links(db, principal, {"equipment_id": equipment_id, "record_id": record_id, "work_order_id": work_order_id})
         data = await read_upload(file, settings.upload_limit_bytes)
         mime = detect_upload_mime(file.filename, data, settings.attachment_extensions)
         try:
@@ -209,6 +185,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         if principal.scoped:
             if set(body) - {"title", "document_type", "documentType"}:
                 raise HTTPException(403, "Changing document links or location requires unscoped access")
+        authz.check_document_links(db, principal, body, existing=row)
         try:
             row = docs.update_document(db, row, body, actor=principal.actor, user_id=principal.user_id)
         except ValueError as exc:

@@ -8,9 +8,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
+from logentra_server import authz
 from logentra_server import service, workorders as wo
 from logentra_server.auth import Principal
-from logentra_server.models import AutoWorkOrderRule, Document, Equipment, User, WorkOrder
+from logentra_server.models import AutoWorkOrderRule, Document, WorkOrder
 from logentra_server.utils import uid
 from logentra_server.documents import safe_filename
 from logentra_server.http_security import read_request_body, read_upload
@@ -26,22 +27,8 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     def current(principal: Principal = Depends(get_principal)) -> Principal:
         return principal
 
-    def _get(db: Session, wid: str, principal: Principal) -> WorkOrder:
-        row = wo.get_work_order(db, wid, principal)
-        if not row:
-            raise HTTPException(404, "Work order not found")
-        if not principal.allows_scope(row.site_id, row.area_id):
-            raise HTTPException(404, "Work order not found")
-        return row
-
-    def check_assignee(db, principal, assignee):
-        if assignee is None:
-            return
-        principal.require("workorders.assign")
-        if principal.scoped:
-            user = db.get(User, assignee)
-            if not user or not user.is_active or not principal.allows_scope(user.site_id, user.area_id):
-                raise HTTPException(404, "Assignee not found")
+    def _get(db: Session, wid: str, principal: Principal, action="access") -> WorkOrder:
+        return authz.require_object(db, principal, "work_order", wo.get_work_order(db, wid), action)
 
     @router.get("/api/work-orders", tags=["work-orders"])
     def list_work_orders(
@@ -67,7 +54,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
     @router.post("/api/work-orders", tags=["work-orders"], status_code=201)
     def create_work_order(body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
         principal.require("workorders.create")
-        check_assignee(db, principal, body.get("assignee_id") or body.get("assigneeId"))
+        authz.check_work_order_assignee(db, principal, body.get("assignee_id") or body.get("assigneeId"))
         if principal.scoped:
             allowed = {"id", "title", "description", "priority", "equipment_id", "equipmentId", "due_at", "dueAt",
                        "due_date", "site_id", "siteId", "area_id", "areaId", "assignee_id", "assigneeId"}
@@ -77,14 +64,11 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             area = body.get("area_id") or body.get("areaId") or principal.area_id
             equipment = body.get("equipment_id") or body.get("equipmentId")
             if equipment:
-                row = db.get(Equipment, equipment)
-                if not row or not principal.allows_scope(row.site_id, row.area_id):
-                    raise HTTPException(404, "Equipment not found")
+                row = authz.require_object(db, principal, "equipment", equipment, "access")
                 site, area = site or row.site_id, area or row.area_id
                 if (site, area) != (row.site_id, row.area_id):
                     raise HTTPException(403, "Work order location must match its equipment")
-            if not principal.allows_scope(site, area):
-                raise HTTPException(403, "Work order location is outside your scope")
+            authz.require_location(principal, site, area, detail="Work order location is outside your scope")
             service.validate_location(db, site, area)
             body = {**body, "site_id": site, "area_id": area}
         if body.get("id") and db.get(WorkOrder, body["id"]) is not None:
@@ -112,18 +96,11 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             raise HTTPException(403, "Changing work order links or location requires unscoped access")
         if "assignee_id" in body or "assigneeId" in body:
             principal.require("workorders.assign")
-            check_assignee(db, principal, body.get("assignee_id") or body.get("assigneeId"))
-        if "status" in body and body.get("status"):
-            target = str(body.get("status")).lower()
-            if target in ("closed", "close"):
-                principal.require("workorders.close")
-            else:
-                # moving along the workflow is allowed for anyone who can create or assign
-                if not (principal.can("workorders.create") or principal.can("workorders.assign") or principal.can("workorders.close")):
-                    principal.require("workorders.create")
+            authz.check_work_order_assignee(db, principal, body.get("assignee_id") or body.get("assigneeId"))
+        if body.get("status"):
+            authz.require_work_order_transition(principal, body["status"])
         elif not ("assignee_id" in body or "assigneeId" in body):
-            if not (principal.can("workorders.create") or principal.can("workorders.assign")):
-                principal.require("workorders.create")
+            authz.require_work_order_edit(principal)
         try:
             row = wo.update_work_order(
                 db, row, body, actor=principal.actor, user_id=principal.user_id,
@@ -139,10 +116,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         status = body.get("status")
         if not status:
             raise HTTPException(400, "status is required")
-        if str(status).lower() in ("closed", "close"):
-            principal.require("workorders.close")
-        elif not (principal.can("workorders.create") or principal.can("workorders.assign") or principal.can("workorders.close")):
-            principal.require("workorders.create")
+        authz.require_work_order_transition(principal, status)
         try:
             row = wo.update_work_order(
                 db, row, {"status": status}, actor=principal.actor, user_id=principal.user_id,
@@ -157,7 +131,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         principal.require("workorders.assign")
         row = _get(db, wid, principal)
         assignee = body.get("assignee_id") or body.get("assigneeId")
-        check_assignee(db, principal, assignee)
+        authz.check_work_order_assignee(db, principal, assignee)
         row = wo.update_work_order(
             db, row, {"assignee_id": assignee}, actor=principal.actor, user_id=principal.user_id,
         )
@@ -165,8 +139,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.post("/api/work-orders/{wid}/comments", tags=["work-orders"], status_code=201)
     def add_comment(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        if not (principal.can("workorders.create") or principal.can("workorders.assign") or principal.can("workorders.close")):
-            principal.require("workorders.create")
+        authz.require_any(principal, "workorders.create", "workorders.assign", "workorders.close")
         row = _get(db, wid, principal)
         try:
             c = wo.add_comment(db, row, body.get("body") or "", author=principal.username, user_id=principal.user_id)
@@ -176,8 +149,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.post("/api/work-orders/{wid}/labour", tags=["work-orders"], status_code=201)
     def add_labour(wid: str, body: dict[str, Any], db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        if not (principal.can("workorders.create") or principal.can("workorders.assign")):
-            principal.require("workorders.create")
+        authz.require_any(principal, "workorders.create", "workorders.assign")
         row = _get(db, wid, principal)
         try:
             e = wo.add_labour(
@@ -197,8 +169,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         principal: Principal = Depends(current),
         file: UploadFile | None = File(default=None),
     ):
-        if not (principal.can("workorders.create") or principal.can("workorders.assign")):
-            principal.require("workorders.create")
+        authz.require_work_order_edit(principal)
         row = _get(db, wid, principal)
         storage_path = None
         filename = None
@@ -251,9 +222,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
 
     @router.delete("/api/work-orders/{wid}", tags=["work-orders"])
     def delete_work_order(wid: str, db: Session = Depends(get_db), principal: Principal = Depends(current)):
-        row = _get(db, wid, principal)
-        if not (principal.can("users.manage") or (principal.can("workorders.create") and row.status == "open" and row.created_by_id == principal.user_id)):
-            principal.require("users.manage")
+        row = _get(db, wid, principal, "delete")
         service.audit(db, "delete", actor=principal.actor, user_id=principal.user_id, entity_type="work_order", entity_id=wid)
         service.protect_document_links(db, Document.work_order_id, wid)
         db.delete(row)

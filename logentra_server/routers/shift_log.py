@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
+from logentra_server import authz
 from logentra_server import qr_entries, service, shifts
 from logentra_server.documents import safe_filename
 from logentra_server.http_security import read_upload
@@ -63,14 +64,12 @@ def actor(principal, author_name=None):
 
 
 def shift_for(db, shift_id, principal):
-    row = shifts.load(db, Shift, shift_id, "Shift")
-    shifts.scoped(principal, row.site_id, row.area_id)
-    return row
+    return authz.require_object(db, principal, "shift", shift_id, "access")
 
 
 def entry_for(db, entry_id, principal):
-    row = shifts.load(db, ShiftLogEntry, entry_id, "Shift log entry")
-    return row, shift_for(db, row.shift_id, principal)
+    row = authz.require_object(db, principal, "shift_log_entry", entry_id, "access")
+    return row, db.get(Shift, row.shift_id)
 
 
 def add_audit(db, principal, name, action, entry, detail=None):

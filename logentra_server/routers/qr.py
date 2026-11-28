@@ -13,9 +13,10 @@ from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from logentra_server import authz
 from logentra_server import qr_entries, qr_phone, service, workorders
 from logentra_server.auth import Principal, create_session, hash_token
-from logentra_server.models import Area, Equipment, QREntry, QRRetiredCode, Reading, ReadingPhoto, SessionToken, Setting, Site, User
+from logentra_server.models import Area, Equipment, QRRetiredCode, Reading, ReadingPhoto, SessionToken, Setting, Site
 from logentra_server.phone_auth import PHONE_COOKIE, phone_principal, require_csrf
 from logentra_server.routers.auth_users import LoginIn, verify_login
 from logentra_server import sitetime
@@ -68,12 +69,7 @@ def rotate_code(db, equipment, principal):
 
 
 def equipment_for(db, eid, principal):
-    equipment = db.get(Equipment, eid)
-    if not equipment:
-        raise HTTPException(404, "Equipment not found")
-    if not principal.allows_scope(equipment.site_id, equipment.area_id):
-        raise HTTPException(403, "You are not allowed to access this area")
-    return equipment
+    return authz.require_object(db, principal, "equipment", eid, "qr_access")
 
 
 def public_url(db, settings):
@@ -117,9 +113,7 @@ def current_equipment(db, code, principal):
         if retired and retired.equipment_id:
             raise HTTPException(410, "This tag was replaced")
         raise HTTPException(404, "QR tag not found")
-    if not principal.allows_scope(equipment.site_id, equipment.area_id):
-        raise HTTPException(403, "You are not allowed to access this area")
-    return equipment
+    return authz.require_object(db, principal, "equipment", equipment, "qr_access")
 
 
 def render_label(db, equipment, base_url, *, preview=False):
@@ -327,8 +321,8 @@ def build_router(get_db, get_principal, settings):
         principal = phone_principal(db, request, settings, write=True)
         principal.require("workorders.create")
         equipment = current_equipment(db, code, principal)
-        receipt = db.get(QREntry, str(body.entry_id))
-        if not receipt or receipt.equipment_id != equipment.id:
+        receipt = authz.require_object(db, principal, "qr_entry", str(body.entry_id), "access")
+        if receipt.equipment_id != equipment.id:
             raise HTTPException(404, "Quick entry not found")
         reading = db.query(Reading).filter_by(entry_id=receipt.id, equipment_id=equipment.id, source="qr").order_by(
             Reading.out_of_range.desc(), Reading.id
@@ -438,8 +432,7 @@ def build_router(get_db, get_principal, settings):
     @router.get("/api/users/{user_id}/sessions")
     def user_sessions(user_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_principal)):
         principal.require("users.manage")
-        if not db.get(User, user_id):
-            raise HTTPException(404, "User not found")
+        authz.require_object(db, principal, "user", user_id, "manage")
         return list_phones(db, user_id)
 
     @router.delete("/api/users/{user_id}/sessions/{sid}")

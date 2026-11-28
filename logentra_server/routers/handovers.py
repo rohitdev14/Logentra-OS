@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from logentra_server import authz
 from logentra_server import handovers, service, shifts
 from logentra_server.export_safety import safe_cell
 from logentra_server.pagination import count_rows, page_result
@@ -97,8 +98,7 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
         return principal
 
     def get_handover(db, identifier, principal, *, lock=False):
-        row = shifts.load(db, Handover, identifier, "Handover")
-        shifts.scoped(principal, row.site_id, row.area_id)
+        row = authz.require_object(db, principal, "handover", identifier, "access")
         if lock:
             handovers.lock_shift(db, row.outgoing_shift_id)
         return row
@@ -143,15 +143,11 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
                 continue
             outgoing = db.get(Shift, row.outgoing_shift_id)
             incoming_shift = db.get(Shift, row.incoming_shift_id) if row.incoming_shift_id else None
+            if not authz.can_see_handover_notification(principal, row, outgoing, incoming_shift):
+                continue
             if row.status == "signed_off":
-                direct = incoming_shift and principal.user_id and incoming_shift.lead_user_id == principal.user_id
-                allowed = direct or (row.escalated_to and principal.role_name == row.escalated_to)
-                if not (allowed or principal.mode == "open" or not incoming_shift and principal.can("shifts.manage")):
-                    continue
                 kind = "overdue" if row.ack_due_at < shifts.utc_text(clock()) else "waiting"
             else:
-                if not (principal.mode == "open" or principal.user_id and outgoing.lead_user_id == principal.user_id):
-                    continue
                 if row.status == "returned":
                     if handovers.active_version(db, outgoing.id).status != "draft":
                         continue

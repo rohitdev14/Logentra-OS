@@ -10,6 +10,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from fastapi import HTTPException
 
+from logentra_server import authz
 from logentra_server import events, sitetime
 from logentra_server.models import (
     Annotation,
@@ -35,7 +36,6 @@ from logentra_server.models import (
     Template,
     TemplateColumn,
     TemplateItem,
-    WorkOrder,
 )
 from logentra_server.branding import APP_VERSION, PRODUCT_NAME
 from logentra_server.pagination import clamp_page, count_rows, page_result
@@ -108,47 +108,8 @@ def equipment_index_row(eq: Equipment) -> dict[str, Any]:
     return {"id": eq.id, "tag": eq.tag, "site_id": eq.site_id, "area_id": eq.area_id}
 
 
-def apply_scope(query, model, principal) -> Any:
-    """Limit a query to the caller's site/area when those are set on the user."""
-    if principal is None:
-        return query
-    site_id = getattr(principal, "site_id", None)
-    area_id = getattr(principal, "area_id", None)
-    if site_id and hasattr(model, "site_id"):
-        query = query.filter(model.site_id == site_id)
-    if area_id and hasattr(model, "area_id"):
-        query = query.filter(model.area_id == area_id)
-    return query
-
-
-def apply_evidence_scope(db, query, model, principal):
-    """Fail closed on historical links whose current scope disagrees with the parent."""
-    query = apply_scope(query, model, principal)
-    if not principal or not principal.scoped:
-        return query
-    assets = apply_scope(db.query(Equipment.id), Equipment, principal).statement
-    records = db.query(Record.id).filter(Record.equipment_id.in_(assets)).statement
-
-    def permits(column, ids):
-        return or_(column.is_(None), column.in_(ids))
-
-    def scoped_work(orders):
-        readings = db.query(Reading.id).filter(Reading.equipment_id.in_(assets)).statement
-        annotations = db.query(Annotation.id).filter(Annotation.reading_id.in_(readings)).statement
-        punches = db.query(Punch.id).filter(Punch.record_id.in_(records)).statement
-        return orders.filter(
-            permits(WorkOrder.equipment_id, assets), permits(WorkOrder.linked_record_id, records),
-            permits(WorkOrder.linked_reading_id, readings), permits(WorkOrder.linked_annotation_id, annotations),
-            permits(WorkOrder.linked_punch_id, punches),
-        )
-
-    if model is WorkOrder:
-        return scoped_work(query)
-    orders = scoped_work(apply_scope(db.query(WorkOrder.id), WorkOrder, principal)).statement
-    return query.filter(permits(Document.equipment_id, assets), permits(Document.record_id, records),
-                        permits(Document.work_order_id, orders))
-
-
+apply_scope = authz.scope_query
+apply_evidence_scope = authz.scope_evidence
 
 def substring_match(term: str, *columns, extra=None):
     """Match an exact value or a case-insensitive substring (btree + pg_trgm)."""
@@ -887,35 +848,8 @@ def upsert_presets(db: Session, presets: dict[str, list]) -> None:
     db.flush()
 
 
-def scoped_equipment_input(db, principal, payload):
-    if not principal.scoped:
-        return payload
-    existing = db.get(Equipment, payload["id"]) if payload.get("id") else None
-    if existing and not principal.allows_scope(existing.site_id, existing.area_id):
-        raise HTTPException(404, "Equipment not found")
-    old_site, old_area = (existing.site_id, existing.area_id) if existing else (principal.site_id, principal.area_id)
-    site = payload.get("site_id", old_site)
-    area = payload.get("area_id", old_area)
-    if not principal.allows_scope(site, area):
-        raise HTTPException(403, "Equipment location is outside your scope")
-    if existing and (site, area) != (old_site, old_area):
-        raise HTTPException(403, "Changing equipment location requires unscoped access")
-    return {**payload, "site_id": site, "area_id": area}
-
-def require_record_scope(db, principal, record_id, equipment_id=None):
-    if not principal.scoped:
-        return
-    existing = db.get(Record, record_id) if record_id else None
-    if existing and (not existing.equipment or not principal.allows_scope(
-        existing.equipment.site_id, existing.equipment.area_id
-    )):
-        raise HTTPException(404, "Record not found")
-    if existing and existing.status != "approved" and equipment_id and equipment_id != existing.equipment_id:
-        raise HTTPException(403, "Moving records requires unscoped access")
-    if not existing:
-        equipment = db.get(Equipment, equipment_id) if equipment_id else None
-        if not equipment or not principal.allows_scope(equipment.site_id, equipment.area_id):
-            raise HTTPException(404, "Equipment not found")
+scoped_equipment_input = authz.scoped_equipment_input
+require_record_scope = authz.require_record_scope
 
 def sync_catalog(db: Session, state: dict[str, Any], *, actor: str = "ui",
                  expected: str | None = None, commit: bool = True, principal=None,

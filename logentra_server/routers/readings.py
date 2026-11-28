@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
+from logentra_server import authz
 from logentra_server import importers, service
 from logentra_server.http_security import read_upload
 from logentra_server.models import Annotation, Equipment, FieldDefinition, Reading
@@ -23,13 +24,11 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
 
 
 
-    def check_reading_scope(reading, request):
+    def check_reading_scope(db, reading, request):
         principal = request.state.principal
-        if principal.scoped and (
-            not reading or not reading.equipment
-            or not principal.allows_scope(reading.equipment.site_id, reading.equipment.area_id)
-        ):
-            raise HTTPException(404, "Reading not found")
+        if principal.scoped:
+            authz.require_object(db, principal, "reading", reading, "access")
+
 
     def grouped_reading(db, request, entry_id, parameter):
         query = db.query(Reading).filter_by(entry_id=entry_id, parameter_key=parameter)
@@ -82,7 +81,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
     def delete_reading(rid: str, request: Request, db: Session = Depends(get_db)):
         r = db.get(Reading, rid)
         if r:
-            check_reading_scope(r, request)
+            check_reading_scope(db, r, request)
         elif request.state.principal.scoped:
             raise HTTPException(404, "Reading not found")
         if not r:
@@ -102,7 +101,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
 
     @router.put("/api/readings/{rid}/annotation", tags=["readings"], summary="Add or edit an annotation", dependencies=write_ann)
     def put_annotation(rid: str, body: AnnotationIn, request: Request, db: Session = Depends(get_db)):
-        check_reading_scope(db.get(Reading, rid), request)
+        check_reading_scope(db, db.get(Reading, rid), request)
         try:
             an = service.upsert_annotation(db, rid, body.model_dump(), actor=actor_name(request))
         except KeyError:
@@ -134,7 +133,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         an = db.get(Annotation, aid)
         if not an:
             raise HTTPException(404, "Annotation not found")
-        check_reading_scope(db.get(Reading, an.reading_id), request)
+        check_reading_scope(db, db.get(Reading, an.reading_id), request)
         db.delete(an)
         service.audit(db, "delete", actor=actor_name(request), entity_type="annotation", entity_id=aid)
         db.commit()
