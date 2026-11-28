@@ -13,6 +13,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from logentra_server import handovers, service, shifts
+from logentra_server.export_safety import safe_cell
 from logentra_server.pagination import count_rows, page_result
 from logentra_server.routers.shift_log import MessageIn, Severity, actor, nonblank, shift_for
 from logentra_server.shift_models import Handover, HandoverComment, HandoverItem, Shift, ShiftLogCategory, ShiftLogEntry
@@ -200,11 +201,10 @@ def build_router(get_db, get_principal, clock=lambda: datetime.now(timezone.utc)
         writer = csv.writer(stream)
         writer.writerow(["Shift", "Area", "Version", "Status", "Summary", "Signed off", "Acknowledged", "Unseen", "SHA-256"])
         for row in history_query(db, principal, date_from, date_to, area, crew, status, q).order_by(Shift.starts_at.desc()):
-            def cell(value):
-                return "'" + value if isinstance(value, str) and value.lstrip()[:1] in ("=", "+", "-", "@") else value
-
-            writer.writerow([cell(value) for value in (row.outgoing_shift_id, row.area_id, row.version, row.status,
-                            row.summary, row.signed_off_at, row.acknowledged_at, row.unseen_count, row.snapshot_sha256)])
+            writer.writerow(map(safe_cell, (
+                row.outgoing_shift_id, row.area_id, row.version, row.status, row.summary,
+                row.signed_off_at, row.acknowledged_at, row.unseen_count, row.snapshot_sha256,
+            )))
         return Response(stream.getvalue(), media_type="text/csv",
                         headers={"Content-Disposition": 'attachment; filename="handovers.csv"'})
 

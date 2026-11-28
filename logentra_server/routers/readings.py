@@ -9,6 +9,7 @@ from logentra_server import importers, service
 from logentra_server.http_security import read_upload
 from logentra_server.models import Annotation, Equipment, FieldDefinition, Reading
 from logentra_server.schemas import AnnotationIn, BulkReadingsIn, ReadingIn
+from logentra_server.upload_safety import XLSX_MIME, detect_upload_mime
 from logentra_server.utils import loads, uid
 
 
@@ -228,14 +229,12 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
         if create_missing_equipment or kind == "equipment":
             request.state.principal.require("equipment.write")
         raw = await read_upload(file, settings.upload_limit_bytes)
-        name = file.filename or "upload"
+        mime = detect_upload_mime(file.filename, raw, settings.table_import_extensions)
         try:
-            if name.lower().endswith(".xlsx"):
+            if mime == XLSX_MIME:
                 _sheet, rows = importers.parse_xlsx_bytes(raw, max_expanded_bytes=settings.upload_limit_bytes * 4)
-            elif name.lower().endswith(".csv"):
-                rows = importers.parse_csv_bytes(raw)
             else:
-                raise HTTPException(415, "Expected a CSV or XLSX file")
+                rows = importers.parse_csv_bytes(raw)
         except (ValueError, OSError) as exc:
             raise HTTPException(400, "Invalid import file") from exc
         map_obj = loads(mapping, None) if mapping else None
@@ -264,7 +263,7 @@ def build_router(get_db, perm, settings, actor_name) -> APIRouter:
                     values[fields["tag"].id] = values.get(fields["tag"].id) or norm["tag"]
                 items.append({"values": values, "params": []})
             service.upsert_equipment_list(db, items)
-            service.audit(db, "ingest", actor=actor_name(request), entity_type="equipment", detail={"n": len(items), "file": name})
+            service.audit(db, "ingest", actor=actor_name(request), entity_type="equipment", detail={"n": len(items), "file": file.filename})
             db.commit()
             return {"ok": True, "kind": "equipment", "added": len(items)}
         # logs — long mode uses header names tag, date, time, parameter, value

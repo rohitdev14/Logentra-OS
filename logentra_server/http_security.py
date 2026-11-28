@@ -175,3 +175,12 @@ async def read_upload(file, limit: int) -> bytes:
     if not data:
         raise HTTPException(400, "Upload is empty")
     return data
+
+
+async def read_request_body(request, limit: int) -> bytearray:
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(chunk) > limit - len(data):
+            raise HTTPException(413, "Upload too large")
+        data.extend(chunk)
+    return data

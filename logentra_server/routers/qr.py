@@ -19,6 +19,7 @@ from logentra_server.models import Area, Equipment, QREntry, QRRetiredCode, Read
 from logentra_server.phone_auth import PHONE_COOKIE, phone_principal, require_csrf
 from logentra_server.routers.auth_users import LoginIn, verify_login
 from logentra_server import sitetime
+from logentra_server.upload_safety import preview_mime
 from logentra_server.utils import utcnow_iso
 
 QR_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -354,8 +355,9 @@ def build_router(get_db, get_principal, settings):
         path = qr_entries.attachment_path(photo.storage_path, "readings")
         if not path.is_file():
             raise HTTPException(404, "Photo not found")
-        return FileResponse(path, media_type=photo.content_type, filename=photo.filename,
-                            content_disposition_type="inline")
+        mime = preview_mime(path, photo.content_type, qr_entries.PHOTO_TYPES.values())
+        return FileResponse(path, media_type=mime or "application/octet-stream", filename=photo.filename,
+                            content_disposition_type="inline" if mime else "attachment")
 
     @router.get("/api/storage")
     def storage(principal: Principal = Depends(get_principal)):

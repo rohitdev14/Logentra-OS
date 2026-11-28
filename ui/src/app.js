@@ -574,8 +574,8 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
   function csvEscape(v) {
-    const s = String(v ?? "");
-    if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    const s = String(XlsxUtil.safeCell(v) ?? "");
+    if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
   function toCSV(rows) { return rows.map((r) => r.map(csvEscape).join(",")).join("\n"); }

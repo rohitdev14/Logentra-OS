@@ -18,6 +18,7 @@ from logentra_server.pagination import count_rows, page_result
 from logentra_server.shift_models import (
     Handover, HandoverItem, Shift, ShiftLogAttachment, ShiftLogCategory, ShiftLogComment, ShiftLogEntry,
 )
+from logentra_server.upload_safety import detect_upload_mime
 from logentra_server.utils import uid, utcnow_iso
 
 Severity = Literal["info", "low", "medium", "high", "critical"]
@@ -281,6 +282,7 @@ def build_router(get_db, get_principal, settings):
                              principal=Depends(writer)):
         entry, _ = entry_for(db, entry_id, principal)
         data = await read_upload(file, settings.upload_limit_bytes)
+        mime = detect_upload_mime(file.filename, data, settings.attachment_extensions)
         identifier = uid("shift_file")
         now = utcnow_iso()
         relative = f"shiftlog/{now[:4]}/{now[5:7]}/{identifier}"
@@ -289,7 +291,7 @@ def build_router(get_db, get_principal, settings):
         name = actor(principal)
         row = ShiftLogAttachment(id=identifier, entry_id=entry_id, equipment_id=entry.equipment_id,
                                  size=len(data), filename=safe_filename(file.filename or "attachment"),
-                                 content_type="application/octet-stream", sha256=sha256(data).hexdigest(),
+                                 content_type=mime, sha256=sha256(data).hexdigest(),
                                  storage_path=relative, uploaded_by=name, user_id=principal.user_id, created_at=now)
         with path.open("xb") as target:
             try:
@@ -312,7 +314,8 @@ def build_router(get_db, get_principal, settings):
         path = qr_entries.attachment_path(row.storage_path, "shiftlog")
         if not path.is_file():
             raise HTTPException(404, "Attachment not found")
-        return FileResponse(path, media_type=row.content_type, filename=row.filename)
+        return FileResponse(path, media_type=row.content_type, filename=row.filename,
+                            content_disposition_type="attachment")
 
     @router.get("/shift-log-entries")
     def history(date_from: date | None = Query(None, alias="from"), date_to: date | None = Query(None, alias="to"),

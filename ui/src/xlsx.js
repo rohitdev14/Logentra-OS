@@ -249,6 +249,11 @@
     return { sheets };
   }
 
+  function safeCell(value) {
+    return typeof value === "string" && (/^[\t\r]/.test(value) || /^[=+@-]/.test(value.trimStart()))
+      ? "'" + value : value;
+  }
+
   function build(sheetName, rows) {
     const name = sheetName || "Sheet1";
     const maxCols = Math.max(1, ...rows.map((r) => r.length));
@@ -257,12 +262,12 @@
     rows.forEach((row, ri) => {
       let cells = "";
       for (let ci = 0; ci < maxCols; ci++) {
-        const val = row[ci] == null ? "" : String(row[ci]);
+        const val = String(safeCell(row[ci]) ?? "");
         const ref = colLetters(ci) + (ri + 1);
         if (val === "") continue;
         const asNum = val !== "" && isFinite(Number(val)) && val.trim() !== "" && !/^0\d+/.test(val.trim());
         if (asNum) cells += '<c r="' + ref + '"><v>' + xmlText(String(Number(val))) + "</v></c>";
-        else cells += '<c r="' + ref + '" t="inlineStr"><is><t>' + xmlText(val) + "</t></is></c>";
+        else cells += '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + xmlText(val).replace(/\r/g, "&#13;") + "</t></is></c>";
       }
       sheetBody += '<row r="' + (ri + 1) + '">' + cells + "</row>";
     });
@@ -298,5 +303,5 @@
     return new Blob([zip], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   }
 
-  global.XlsxUtil = { parse, build, colLetters };
+  global.XlsxUtil = { parse, build, colLetters, safeCell };
 })(typeof window !== "undefined" ? window : globalThis);

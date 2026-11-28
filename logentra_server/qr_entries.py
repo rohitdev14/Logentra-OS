@@ -100,7 +100,8 @@ async def save_entry(db, equipment, principal, settings, entry_id, values, note,
         raise HTTPException(422, f"Attach at most {settings.photos_per_entry} photos")
     if not (values or note or photos):
         raise HTTPException(422, "Enter a value, a note or a photo")
-    uploads = [(file, await photo_bytes(file, settings.photo_max_bytes)) for file in photos]
+    photo_limit = min(settings.photo_max_bytes, settings.upload_limit_bytes)
+    uploads = [(file, await photo_bytes(file, photo_limit)) for file in photos]
     now = utcnow_iso()
     insert = sqlite_insert if db.get_bind().dialect.name == "sqlite" else postgres_insert
     statement = insert(QREntry).values(id=entry_id, equipment_id=equipment.id, note=note,

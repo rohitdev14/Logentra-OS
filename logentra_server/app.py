@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,7 +20,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.exc import StaleDataError
-from logentra_server.http_security import HTTPSecurity, read_upload
+from logentra_server.export_safety import safe_cell
+from logentra_server.http_security import HTTPSecurity, read_request_body, read_upload
 
 from logentra_server import records as record_service
 from logentra_server import __version__, demo, events, handovers as handover_service, migrate, mqtt_worker, seed, service
@@ -39,6 +41,7 @@ from logentra_server.models import (
     Template,
     WebhookDelivery,
 )
+from logentra_server.upload_safety import load_json_upload
 from logentra_server.utils import dumps, loads, uid, utcnow_iso
 
 log = logging.getLogger("logentra")
@@ -303,7 +306,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         replace: bool = Query(True),
     ):
         try:
-            data = await request.json()
+            data = json.loads(await read_request_body(request, settings.upload_limit_bytes))
             return migrate.migrate_v2(db, data, replace=replace, actor=actor_name(request), user_id=actor_user_id(request))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -315,9 +318,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         replace: bool = Query(True),
         file: UploadFile = File(...),
     ):
-        import json as _json
+        raw = await read_upload(file, settings.upload_limit_bytes)
+        data = load_json_upload(file.filename, raw, settings.backup_import_extensions)
         try:
-            data = _json.loads((await read_upload(file, settings.upload_limit_bytes)).decode("utf-8-sig"))
             return migrate.migrate_v2(db, data, replace=replace, actor=actor_name(request), user_id=actor_user_id(request))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -527,22 +530,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "annot_cause", "annot_action", "annot_by", "annot_at", "reading_id", "entry_id"])
         for r in rows:
             an = r.get("annotation") or {}
-            w.writerow([
+            w.writerow(map(safe_cell, [
                 r.get("tag"), r["equipment_id"], r["date"], r["time"], r["ts"], r["parameter"], r["value"],
                 r.get("min"), r.get("max"), int(r["out_of_range"]), int(r["unacknowledged"]),
                 r.get("remarks"), r.get("entered_by"), r.get("source"),
                 an.get("cause"), an.get("action"), an.get("by"), an.get("at"),
                 r["id"], r["entry_id"],
-            ])
+            ]))
         if not parameter:
             notes = service.note_log_query(db, request.state.principal, tag=tag, ts_from=ts_from, ts_to=ts_to)
             notes = notes.options(selectinload(QREntry.equipment).selectinload(Equipment.site))
             notes = notes.add_columns(Equipment.tag).order_by(QREntry.created_at, QREntry.id)
             for receipt, equipment_tag in notes:
                 entry = service.note_log_entry(db, receipt)
-                w.writerow([equipment_tag, receipt.equipment_id, entry["date"], entry["time"], entry["ts"],
+                w.writerow(map(safe_cell, [equipment_tag, receipt.equipment_id, entry["date"], entry["time"], entry["ts"],
                             "Note", None, None, None, 0, 0, receipt.note, receipt.entered_by, "qr",
-                            None, None, None, None, None, receipt.id])
+                            None, None, None, None, None, receipt.id]))
         data = buf.getvalue().encode("utf-8-sig")
         return StreamingResponse(
             io.BytesIO(data), media_type="text/csv",
@@ -555,9 +558,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         equipment = service.list_equipment(db, principal=request.state.principal)
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow([f["label"] for f in fields])
+        w.writerow(safe_cell(f["label"]) for f in fields)
         for e in equipment:
-            w.writerow([e.get("values", {}).get(f["id"], "") for f in fields])
+            w.writerow(safe_cell(e.get("values", {}).get(f["id"], "")) for f in fields)
         data = buf.getvalue().encode("utf-8-sig")
         return StreamingResponse(
             io.BytesIO(data), media_type="text/csv",

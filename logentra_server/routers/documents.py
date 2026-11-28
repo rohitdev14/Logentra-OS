@@ -11,6 +11,7 @@ from logentra_server import documents as docs, service
 from logentra_server.auth import Principal
 from logentra_server.http_security import read_upload
 from logentra_server.models import ApprovalRoute, Equipment, Record, WorkOrder
+from logentra_server.upload_safety import PREVIEW_TYPES, detect_upload_mime, extension, preview_mime
 
 
 def build_router(get_db, get_principal, settings) -> APIRouter:
@@ -169,6 +170,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         service.validate_location(db, site_id, area_id)
         check_links(db, principal, {"equipment_id": equipment_id, "record_id": record_id, "work_order_id": work_order_id})
         data = await read_upload(file, settings.upload_limit_bytes)
+        mime = detect_upload_mime(file.filename, data, settings.attachment_extensions)
         try:
             if route_id:
                 docs.match_route(db, route_id=route_id, site_id=site_id)
@@ -177,7 +179,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
                 title=title or file.filename or "Untitled",
                 filename=file.filename or "upload.bin",
                 data=data,
-                mime=file.content_type,
+                mime=mime,
                 document_type=document_type,
                 equipment_id=equipment_id,
                 record_id=record_id,
@@ -223,10 +225,11 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         principal.require("documents.upload")
         row = _doc(db, did, principal)
         data = await read_upload(file, settings.upload_limit_bytes)
+        mime = detect_upload_mime(file.filename, data, settings.attachment_extensions)
         try:
             row = docs.add_version(
                 db, row, filename=file.filename or "upload.bin", data=data,
-                mime=file.content_type, actor=principal.actor, user_id=principal.user_id,
+                mime=mime, actor=principal.actor, user_id=principal.user_id,
             )
         except ValueError as exc:
             _err(exc)
@@ -252,19 +255,10 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             path = docs.verify_version(ver)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
-        from pathlib import Path
-        preview_types = {
-            ".pdf": ("application/pdf", b"%PDF-"),
-            ".png": ("image/png", b"\x89PNG\r\n\x1a\n"),
-            ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
-            ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
-        }
-        mime, signature = preview_types.get(Path(ver.filename).suffix.lower(), ("application/octet-stream", b""))
-        with path.open("rb") as handle:
-            preview = bool(signature and handle.read(len(signature)) == signature)
+        mime = preview_mime(path, PREVIEW_TYPES.get(extension(ver.filename)), PREVIEW_TYPES.values())
         return FileResponse(
-            path, media_type=mime if preview else "application/octet-stream", filename=ver.filename,
-            content_disposition_type="inline" if preview else "attachment",
+            path, media_type=mime or "application/octet-stream", filename=ver.filename,
+            content_disposition_type="inline" if mime else "attachment",
             headers={"Content-Security-Policy": "sandbox", "X-Frame-Options": "SAMEORIGIN"},
         )
 

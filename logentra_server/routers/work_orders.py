@@ -1,6 +1,7 @@
 """Work-order REST API."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,8 @@ from logentra_server.auth import Principal
 from logentra_server.models import AutoWorkOrderRule, Document, Equipment, User, WorkOrder
 from logentra_server.utils import uid
 from logentra_server.documents import safe_filename
-from logentra_server.http_security import read_upload
+from logentra_server.http_security import read_request_body, read_upload
+from logentra_server.upload_safety import detect_upload_mime, require_extension
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 ATTACH_DIR = ROOT / "data" / "attachments"
@@ -202,10 +204,10 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         filename = None
         content_type = None
         size = None
-        if file is not None and file.filename:
-            filename = safe_filename(file.filename)
-            content_type = file.content_type
+        if file is not None:
             data = await read_upload(file, settings.upload_limit_bytes)
+            content_type = detect_upload_mime(file.filename, data, settings.attachment_extensions)
+            filename = safe_filename(file.filename)
             size = len(data)
             dest_dir = (ATTACH_DIR / safe_filename(row.id)).resolve()
             if not dest_dir.is_relative_to(ATTACH_DIR.resolve()):
@@ -216,16 +218,24 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             storage_path = str(stored.relative_to(ROOT))
         else:
             try:
-                body = await request.json()
-            except Exception:
+                body = json.loads(await read_request_body(request, settings.upload_limit_bytes))
+            except (ValueError, RecursionError, RuntimeError):
                 body = {}
             if not isinstance(body, dict):
                 body = {}
             filename = body.get("filename")
-            content_type = body.get("content_type")
             size = body.get("size")
             if body.get("storage_path"):
                 raise HTTPException(400, "Upload the attachment contents")
+            if filename:
+                if not isinstance(filename, str):
+                    raise HTTPException(400, "filename must be text")
+                require_extension(filename, settings.attachment_extensions)
+            if size is not None:
+                if type(size) is not int or size < 0:
+                    raise HTTPException(400, "size must be a non-negative integer")
+                if size > settings.upload_limit_bytes:
+                    raise HTTPException(413, "Upload too large")
         try:
             att = wo.add_attachment(
                 db, row, filename=filename or "", content_type=content_type,

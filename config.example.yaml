@@ -7,6 +7,10 @@ profile: standalone
 cors_origins: []
 request_limit_bytes: 31457280
 upload_limit_bytes: 26214400
+# Restrict these lists to the extensions enabled for each upload kind.
+attachment_extensions: [pdf, png, jpg, jpeg, gif, webp, txt, csv, xlsx, docx]
+table_import_extensions: [csv, xlsx]
+backup_import_extensions: [json]
 login_attempts_per_minute: 10
 api_key_days: 90
 webhook_attempts: 5

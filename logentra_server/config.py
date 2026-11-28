@@ -36,6 +36,10 @@ class OutboundWebhookConfig(BaseModel):
     secret: str = ""
 
 
+AttachmentExtension = Literal["pdf", "png", "jpg", "jpeg", "gif", "webp", "txt", "csv", "xlsx", "docx"]
+TableExtension = Literal["csv", "xlsx"]
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(hide_input_in_errors=True)
 
@@ -43,6 +47,11 @@ class Settings(BaseModel):
     cors_origins: list[str] = Field(default_factory=list)
     request_limit_bytes: int = Field(30 * 1024 * 1024, ge=1024)
     upload_limit_bytes: int = Field(25 * 1024 * 1024, ge=1)
+    attachment_extensions: tuple[AttachmentExtension, ...] = (
+        "pdf", "png", "jpg", "jpeg", "gif", "webp", "txt", "csv", "xlsx", "docx",
+    )
+    table_import_extensions: tuple[TableExtension, ...] = ("csv", "xlsx")
+    backup_import_extensions: tuple[Literal["json"], ...] = ("json",)
     login_attempts_per_minute: int = Field(10, ge=1, le=1000)
     # Reverse proxies (IPs or CIDR ranges) whose X-Forwarded-For is trusted for
     # per-client login throttling, e.g. the nginx container network.
@@ -138,6 +147,9 @@ _ENV_FIELDS: list[tuple[str, tuple[str, ...], str]] = [
     ("login_attempts_per_minute", ("LOGENTRA_LOGIN_ATTEMPTS_PER_MINUTE",), "int"),
     ("request_limit_bytes", ("LOGENTRA_REQUEST_LIMIT_BYTES",), "int"),
     ("upload_limit_bytes", ("LOGENTRA_UPLOAD_LIMIT_BYTES",), "int"),
+    ("attachment_extensions", ("LOGENTRA_ATTACHMENT_EXTENSIONS",), "list"),
+    ("table_import_extensions", ("LOGENTRA_TABLE_IMPORT_EXTENSIONS",), "list"),
+    ("backup_import_extensions", ("LOGENTRA_BACKUP_IMPORT_EXTENSIONS",), "list"),
     ("host", ("LOGENTRA_HOST", "LOGBOOK_HOST"), "str"),
     ("port", ("LOGENTRA_PORT", "LOGBOOK_PORT"), "int"),
     ("open_browser", ("LOGENTRA_OPEN_BROWSER", "LOGBOOK_OPEN_BROWSER"), "bool"),
