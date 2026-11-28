@@ -41,6 +41,7 @@ from logentra_server.models import (
     Template,
     WebhookDelivery,
 )
+from logentra_server.storage import LocalStorage
 from logentra_server.upload_safety import load_json_upload
 from logentra_server.utils import dumps, loads, uid, utcnow_iso
 
@@ -76,6 +77,8 @@ def background_jobs(settings: Settings, session_factory):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    attachment_storage = LocalStorage(settings.attachments_dir)
+    attachment_storage.initialize()
     engine = make_engine(
         settings.sqlalchemy_url,
         pool_size=None if settings.sqlalchemy_url.startswith("sqlite") else settings.db_pool_size,
@@ -155,6 +158,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"detail": record_service.REVISION_CONFLICT}, status_code=409)
 
     app.state.settings = settings
+    app.state.storage = attachment_storage
     app.state.engine = engine
     app.state.SessionLocal = SessionLocal
 
@@ -248,13 +252,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     read_audit = perm("audit.read")
 
     app.include_router(auth_users.build_router(get_db, get_principal, settings))
-    app.include_router(qr.build_router(get_db, get_principal, settings))
+    app.include_router(qr.build_router(get_db, get_principal, settings, attachment_storage))
     app.include_router(shifts.build_router(get_db, get_principal))
-    app.include_router(shift_log.build_router(get_db, get_principal, settings))
+    app.include_router(shift_log.build_router(get_db, get_principal, settings, attachment_storage))
     app.include_router(handovers.build_router(get_db, get_principal))
-    app.include_router(work_orders.build_router(get_db, get_principal, settings))
+    app.include_router(work_orders.build_router(get_db, get_principal, settings, attachment_storage))
     app.include_router(readings.build_router(get_db, perm, settings, actor_name))
-    app.include_router(documents.build_router(get_db, get_principal, settings))
+    app.include_router(documents.build_router(get_db, get_principal, settings, attachment_storage))
 
     # -------------- bootstrap / catalog --------------
     @app.get("/api/bootstrap", tags=["catalog"], summary="Full app state (UI-compatible)", dependencies=perm("equipment.read", scoped=True))
@@ -300,7 +304,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/demo", tags=["catalog"], summary="Replace catalog+readings with the fictional generic-plant demo", dependencies=manage_settings)
     def post_demo(request: Request, db: Session = Depends(get_db)):
-        return demo.load_demo(db, actor=actor_name(request), user_id=actor_user_id(request))
+        return demo.load_demo(db, storage=attachment_storage, actor=actor_name(request), user_id=actor_user_id(request))
 
     @app.delete("/api/data", tags=["catalog"], summary="Clear all user data (keeps empty default columns, users, and roles)", dependencies=manage_settings)
     def delete_data(request: Request, db: Session = Depends(get_db)):

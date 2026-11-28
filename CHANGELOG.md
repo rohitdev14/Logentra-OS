@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## Unreleased
 
 - **Migrate command and process role.** Apply or check migrations with `python run.py migrate [--check]`, choose which processes serve HTTP and run background jobs, and let production Compose migrate before starting the app.
+- **Local attachment storage.** Configure the local directory shared by uploads, downloads, evidence verification and recovery. Existing attachment keys and file layout are preserved.
 
 ## 0.8.0 – Security and reading format
 

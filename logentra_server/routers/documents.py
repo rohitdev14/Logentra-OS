@@ -12,10 +12,11 @@ from logentra_server import documents as docs, service
 from logentra_server.auth import Principal
 from logentra_server.http_security import read_upload
 from logentra_server.models import ApprovalRoute
+from logentra_server.storage import Storage
 from logentra_server.upload_safety import PREVIEW_TYPES, detect_upload_mime, extension, preview_mime
 
 
-def build_router(get_db, get_principal, settings) -> APIRouter:
+def build_router(get_db, get_principal, settings, storage: Storage) -> APIRouter:
     router = APIRouter()
 
     def current(principal: Principal = Depends(get_principal)) -> Principal:
@@ -152,6 +153,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
                 docs.match_route(db, route_id=route_id, site_id=site_id)
             row = docs.create_document(
                 db,
+                storage=storage,
                 title=title or file.filename or "Untitled",
                 filename=file.filename or "upload.bin",
                 data=data,
@@ -168,7 +170,9 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
                 commit=not submit,
             )
             if submit:
-                row = docs.submit_document(db, row, route_id=route_id, actor=principal.actor, user_id=principal.user_id)
+                row = docs.submit_document(
+                    db, row, storage=storage, route_id=route_id, actor=principal.actor, user_id=principal.user_id,
+                )
         except ValueError as exc:
             _err(exc)
         return docs.to_dict(docs.get_document(db, row.id) or row, db, detail=True)
@@ -205,7 +209,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         mime = detect_upload_mime(file.filename, data, settings.attachment_extensions)
         try:
             row = docs.add_version(
-                db, row, filename=file.filename or "upload.bin", data=data,
+                db, row, storage=storage, filename=file.filename or "upload.bin", data=data,
                 mime=mime, actor=principal.actor, user_id=principal.user_id,
             )
         except ValueError as exc:
@@ -229,7 +233,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         if not ver:
             raise HTTPException(404, "File not found")
         try:
-            path = docs.verify_version(ver)
+            path = docs.verify_version(storage, ver)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         mime = preview_mime(path, PREVIEW_TYPES.get(extension(ver.filename)), PREVIEW_TYPES.values())
@@ -246,7 +250,7 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         body = body or {}
         try:
             row = docs.submit_document(
-                db, row, route_id=body.get("route_id") or body.get("routeId"),
+                db, row, storage=storage, route_id=body.get("route_id") or body.get("routeId"),
                 actor=principal.actor, user_id=principal.user_id,
             )
         except ValueError as exc:
@@ -259,7 +263,9 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
         row = _doc(db, did, principal)
         body = body or {}
         try:
-            row = docs.approve_document(db, row, principal, comment=body.get("comment") or body.get("body"))
+            row = docs.approve_document(
+                db, row, principal, storage=storage, comment=body.get("comment") or body.get("body"),
+            )
         except (ValueError, PermissionError) as exc:
             _err(exc)
         return docs.to_dict(row, db, detail=True)

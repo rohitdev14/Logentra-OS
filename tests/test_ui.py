@@ -23,7 +23,8 @@ def _start_server(db_path: Path, port: int):
     from logentra_server.app import create_app
     from logentra_server.config import Settings
 
-    settings = Settings(database_url=f"sqlite:///{db_path}", open_browser=False, host="127.0.0.1", port=port)
+    settings = Settings(database_url=f"sqlite:///{db_path}", attachments_dir=db_path.parent / "attachments",
+                        open_browser=False, host="127.0.0.1", port=port)
     app = create_app(settings)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
@@ -316,16 +317,13 @@ def test_browser_retains_catalog_edit_on_conflict(live_url):
         browser.close()
 
 
-def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monkeypatch):
+def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path):
     import socket
     from datetime import datetime, timedelta
     from io import BytesIO
     from zoneinfo import ZoneInfo
     from uuid import uuid4
     from PIL import Image
-    from logentra_server import qr_entries
-
-    monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path / "attachments")
 
     from fastapi.testclient import TestClient
     from playwright.sync_api import expect, sync_playwright
@@ -336,7 +334,8 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
     if os.environ.get("PLAYWRIGHT_SKIP") == "1":
         pytest.skip("PLAYWRIGHT_SKIP=1")
     app = create_app(Settings(database_url=f"sqlite:///{tmp_path}/scoped-browser.db", profile="production",
-                              bootstrap_admin_username="admin", bootstrap_admin_password="synthetic-scoped-browser"))
+                              attachments_dir=tmp_path / "attachments", bootstrap_admin_username="admin",
+                              bootstrap_admin_password="synthetic-scoped-browser"))
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         token = client.post("/api/auth/login", json={
             "username": "admin", "password": "synthetic-scoped-browser",
@@ -534,13 +533,11 @@ def test_scoped_logbook_handover_and_record_approval_in_chromium(tmp_path, monke
         thread.join(timeout=10)
 
 
-def test_qr_print_and_phone_quick_entry(live_url, tmp_path, monkeypatch):
+def test_qr_print_and_phone_quick_entry(live_url):
     from io import BytesIO
     from openpyxl import load_workbook
     from PIL import Image
-    from logentra_server import qr_entries
 
-    monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path)
     from playwright.sync_api import expect, sync_playwright
 
     shots = SHOT / "v0.7"

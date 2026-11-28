@@ -169,7 +169,7 @@ def test_document_checksum(client):
     try:
         with client.app.state.SessionLocal() as db:
             version = documents.current_version(documents.get_document(db, doc_id))
-            path = documents.absolute_path(version.storage_path)
+            path = client.app.state.storage.safe_key(version.storage_path)
         assert client.get(f"/api/documents/{doc_id}/file").content == b"evidence"
         path.write_bytes(b"tampered")
         assert client.get(f"/api/documents/{doc_id}/file").status_code == 409
@@ -180,14 +180,11 @@ def test_document_checksum(client):
 
 
 @pytest.mark.parametrize("backend", ["sqlite", "postgresql"])
-def test_checkpoint_upgrade_and_recovery(tmp_path, backend, monkeypatch):
+def test_checkpoint_upgrade_and_recovery(tmp_path, backend):
     from scripts import verify_evidence
 
     origin = tmp_path / "origin"
     attachments = origin / "attachments"
-    monkeypatch.setattr(documents, "ROOT", origin)
-    monkeypatch.setattr(documents, "ATTACH_DIR", attachments / "documents")
-    monkeypatch.setattr(verify_evidence, "ATTACH_DIR", attachments / "documents")
     if backend == "sqlite":
         source = f"sqlite:///{tmp_path}/legacy.db"
         destination = f"sqlite:///{tmp_path}/restored.db"
@@ -202,7 +199,7 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend, monkeypatch):
         config.attributes["connection"] = conn
         command.upgrade(config, "0003_v05")
         conn.execute(text("INSERT INTO equipment (id, tag, created_at, updated_at) VALUES ('old_asset', 'OLD-1', '2025', '2025')"))
-    with make_client(Settings(database_url=source)) as client:
+    with make_client(Settings(database_url=source, attachments_dir=attachments)) as client:
         assert client.get("/api/equipment/old_asset").json()["id"] == "old_asset"
         record = client.post("/api/records", json={
             "id": "new_record", "notes": "preserve",
@@ -240,7 +237,7 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend, monkeypatch):
             delivery = db.query(WebhookDelivery).one()
             delivery.available_at = time.time() + 3600
             pending_id = delivery.id
-            snapshot = verify_evidence.inspect_evidence(db)
+            snapshot = verify_evidence.inspect_evidence(db, client.app.state.storage)
     for statement in ("UPDATE audit_log SET detail = 'tampered'", "DELETE FROM audit_log"):
         with pytest.raises(DBAPIError), engine.begin() as conn:
             conn.execute(text(statement))
@@ -256,10 +253,7 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend, monkeypatch):
     started = time.monotonic()
     restore(bundle, destination, restored_attachments)
     assert (restored_attachments / "evidence.txt").read_text(encoding="utf-8") == "document evidence"
-    monkeypatch.setattr(documents, "ROOT", restored_root)
-    monkeypatch.setattr(documents, "ATTACH_DIR", restored_attachments / "documents")
-    monkeypatch.setattr(verify_evidence, "ATTACH_DIR", restored_attachments / "documents")
-    with make_client(Settings(database_url=destination)) as client:
+    with make_client(Settings(database_url=destination, attachments_dir=restored_attachments)) as client:
         assert client.get("/api/equipment/old_asset").json()["id"] == "old_asset"
         record = client.get("/api/records").json()[0]
         assert record["notes"] == "preserve" and record["revision"] == 3
@@ -269,11 +263,11 @@ def test_checkpoint_upgrade_and_recovery(tmp_path, backend, monkeypatch):
         assert client.get(f"/api/documents/{did}/file").content == b"approved evidence"
         assert client.get(f"/api/documents/{did}").json()["status"] == "approved"
         with client.app.state.SessionLocal() as db:
-            assert verify_evidence.inspect_evidence(db) == snapshot
+            assert verify_evidence.inspect_evidence(db, client.app.state.storage) == snapshot
             assert db.get(WebhookDelivery, pending_id).state == "pending"
             assert db.get(OutboundWebhook, hook_id).enabled
     print(f"{backend} isolated recovery from restore start to verified evidence: {time.monotonic()-started:.3f} s")
-    with make_client(Settings(database_url=destination, auth_mode="users")) as client:
+    with make_client(Settings(database_url=destination, attachments_dir=restored_attachments, auth_mode="users")) as client:
         login = client.post("/api/auth/login", json={
             "username": "recovery-viewer", "password": "synthetic-recovery-password",
         })

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -11,17 +10,15 @@ from sqlalchemy.orm import Session
 from logentra_server import authz
 from logentra_server import service, workorders as wo
 from logentra_server.auth import Principal
+from logentra_server.config import DEFAULT_ATTACHMENTS_DIR
 from logentra_server.models import AutoWorkOrderRule, Document, WorkOrder
 from logentra_server.utils import uid
 from logentra_server.documents import safe_filename
 from logentra_server.http_security import read_request_body, read_upload
+from logentra_server.storage import InvalidStorageKey, Storage
 from logentra_server.upload_safety import detect_upload_mime, require_extension
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-ATTACH_DIR = ROOT / "data" / "attachments"
-
-
-def build_router(get_db, get_principal, settings) -> APIRouter:
+def build_router(get_db, get_principal, settings, storage: Storage) -> APIRouter:
     router = APIRouter()
 
     def current(principal: Principal = Depends(get_principal)) -> Principal:
@@ -185,13 +182,12 @@ def build_router(get_db, get_principal, settings) -> APIRouter:
             content_type = detect_upload_mime(file.filename, data, settings.attachment_extensions)
             filename = safe_filename(file.filename)
             size = len(data)
-            dest_dir = (ATTACH_DIR / safe_filename(row.id)).resolve()
-            if not dest_dir.is_relative_to(ATTACH_DIR.resolve()):
-                raise HTTPException(400, "Invalid attachment path")
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            stored = dest_dir / f"{uid('att')}_{filename}"
-            stored.write_bytes(data)
-            storage_path = str(stored.relative_to(ROOT))
+            folder = safe_filename(row.id)
+            storage_path = str(DEFAULT_ATTACHMENTS_DIR / folder / f"{uid('att')}_{filename}")
+            try:
+                storage.put(storage_path, data, category=folder)
+            except InvalidStorageKey as exc:
+                raise HTTPException(400, "Invalid attachment path") from exc
         else:
             try:
                 body = json.loads(await read_request_body(request, settings.upload_limit_bytes))

@@ -11,13 +11,12 @@ from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from logentra_server import reading_contract, service
-from logentra_server.config import ROOT
 from logentra_server.http_security import read_upload
 from logentra_server.models import QREntry, Reading, ReadingPhoto
 from logentra_server.documents import safe_filename
+from logentra_server.storage import InvalidStorageKey, Storage
 from logentra_server.utils import uid, utcnow_iso
 
-ATTACHMENTS = ROOT / "data" / "attachments"
 PHOTO_TYPES = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}
 
 
@@ -62,14 +61,6 @@ async def photo_bytes(upload, limit):
     return data, content_type, width, height
 
 
-def attachment_path(relative, category):
-    root = (ATTACHMENTS / category).resolve()
-    path = (ATTACHMENTS / relative).resolve()
-    if not path.is_relative_to(root):
-        raise HTTPException(404, "Attachment not found")
-    return path
-
-
 def entry_result(db, entry):
     rows = db.query(Reading).filter_by(entry_id=entry.id, equipment_id=entry.equipment_id, source="qr").all()
     photos = db.query(ReadingPhoto.id).filter_by(entry_id=entry.id, equipment_id=entry.equipment_id)
@@ -81,7 +72,7 @@ def entry_result(db, entry):
     }
 
 
-async def save_entry(db, equipment, principal, settings, entry_id, values, note, entered_by, photos):
+async def save_entry(db, equipment, principal, settings, storage: Storage, entry_id, values, note, entered_by, photos):
     try:
         entry_id = str(UUID(entry_id))
     except ValueError:
@@ -119,16 +110,16 @@ async def save_entry(db, equipment, principal, settings, entry_id, values, note,
              for key, value in values.items()],
         source="qr", actor=actor, principal=principal, commit=False,
     )
-    paths = []
+    keys = []
     try:
         for upload, (data, content_type, width, height) in uploads:
             pid = uid("photo")
             relative = f"readings/{now[:4]}/{now[5:7]}/{pid}"
-            path = attachment_path(relative, "readings")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("xb") as output:
-                paths.append(path)
-                output.write(data)
+            try:
+                storage.put(relative, data, category="readings")
+            except InvalidStorageKey as exc:
+                raise HTTPException(404, "Attachment not found") from exc
+            keys.append(relative)
             db.add(ReadingPhoto(id=pid, entry_id=entry_id, equipment_id=equipment.id,
                                 filename=safe_filename(upload.filename or "photo"), content_type=content_type,
                                 size=len(data), width=width, height=height, sha256=sha256(data).hexdigest(),
@@ -142,7 +133,7 @@ async def save_entry(db, equipment, principal, settings, entry_id, values, note,
         response = entry_result(db, entry)
         db.commit()
     except Exception:
-        for path in paths:
-            path.unlink(missing_ok=True)
+        for key in keys:
+            storage.delete(key)
         raise
     return response

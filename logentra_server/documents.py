@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
-import os
-from tempfile import NamedTemporaryFile
 import re
 from pathlib import Path
 from typing import Any
@@ -14,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 from logentra_server import authz
 from logentra_server import events, service
 from logentra_server.auth import Principal
+from logentra_server.config import DEFAULT_ATTACHMENTS_DIR
 from logentra_server.models import (
     ApprovalRoute,
     ApprovalRouteStep,
@@ -28,10 +27,8 @@ from logentra_server.models import (
 )
 from logentra_server.pagination import clamp_page, count_rows, page_meta
 from logentra_server import sitetime
+from logentra_server.storage import Storage
 from logentra_server.utils import uid, utcnow_iso
-
-ROOT = Path(__file__).resolve().parent.parent
-ATTACH_DIR = ROOT / "data" / "attachments" / "documents"
 
 STATUSES = ("draft", "in_review", "approved", "rejected", "returned")
 
@@ -44,49 +41,21 @@ def safe_filename(name: str) -> str:
     return cleaned[:180]
 
 
-def store_file(document_id: str, version_no: int, filename: str, data: bytes) -> tuple[str, str]:
-    """Write bytes to disk; return (relative_storage_path, sha256_hex)."""
+def store_file(storage: Storage, document_id: str, version_no: int, filename: str, data: bytes) -> tuple[str, str]:
+    """Write bytes and return the legacy storage key and SHA-256 digest."""
     digest = hashlib.sha256(data).hexdigest()
-    dest_dir = absolute_path(str(ATTACH_DIR / safe_filename(document_id)))
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    stored = dest_dir / f"v{version_no}_{digest[:12]}_{uid('file')}_{safe_filename(filename)}"
-    staging = None
-    try:
-        with NamedTemporaryFile(dir=dest_dir, prefix=".upload-", delete=False) as handle:
-            staging = Path(handle.name)
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.link(staging, stored)
-        if os.name == "posix":
-            for directory in (dest_dir, dest_dir.parent):
-                descriptor = os.open(directory, os.O_RDONLY)
-                try:
-                    os.fsync(descriptor)
-                finally:
-                    os.close(descriptor)
-    finally:
-        if staging:
-            staging.unlink(missing_ok=True)
-    return str(stored.relative_to(ROOT)), digest
+    name = f"v{version_no}_{digest[:12]}_{uid('file')}_{safe_filename(filename)}"
+    key = str(DEFAULT_ATTACHMENTS_DIR / "documents" / safe_filename(document_id) / name)
+    storage.put(key, data, category="documents", durable=True)
+    return key, digest
 
 
-def absolute_path(storage_path: str) -> Path:
-    path = Path(storage_path)
-    if not path.is_absolute():
-        path = ROOT / path
-    path = path.resolve()
-    if not path.is_relative_to(ATTACH_DIR.resolve()):
-        raise ValueError("Invalid document storage path")
-    return path
-
-
-def verify_version(version) -> Path:
+def verify_version(storage: Storage, version) -> Path:
     if not version:
         raise ValueError("Upload a file before submitting")
-    path = absolute_path(version.storage_path)
+    path = storage.safe_key(version.storage_path, category="documents")
     try:
-        with path.open("rb") as handle:
+        with storage.open(version.storage_path, category="documents") as handle:
             digest = hashlib.file_digest(handle, "sha256").hexdigest()
     except OSError:
         raise ValueError("Document file is unavailable") from None
@@ -569,6 +538,7 @@ def inherit_location(
 def create_document(
     db: Session,
     *,
+    storage: Storage,
     title: str,
     filename: str,
     data: bytes,
@@ -612,7 +582,7 @@ def create_document(
     )
     db.add(doc)
     db.flush()
-    path, digest = store_file(doc.id, 1, filename, data)
+    path, digest = store_file(storage, doc.id, 1, filename, data)
     ver = DocumentVersion(
         id=uid("dv"),
         document_id=doc.id,
@@ -642,6 +612,7 @@ def add_version(
     db: Session,
     doc: Document,
     *,
+    storage: Storage,
     filename: str,
     data: bytes,
     mime: str | None = None,
@@ -656,7 +627,7 @@ def add_version(
         raise ValueError("A file is required")
     next_no = max((v.version_no for v in (doc.versions or [])), default=0) + 1
     now = utcnow_iso()
-    path, digest = store_file(doc.id, next_no, filename, data)
+    path, digest = store_file(storage, doc.id, next_no, filename, data)
     ver = DocumentVersion(
         id=uid("dv"),
         document_id=doc.id,
@@ -730,6 +701,7 @@ def submit_document(
     db: Session,
     doc: Document,
     *,
+    storage: Storage,
     route_id: str | None = None,
     actor: str = "api",
     user_id: str | None = None,
@@ -743,7 +715,7 @@ def submit_document(
     if doc.status not in ("draft", "returned"):
         raise ValueError(f"Cannot submit a document in status {doc.status}")
     ver = current_version(doc)
-    verify_version(ver)
+    verify_version(storage, ver)
     route = match_route(db, route_id=route_id or doc.route_id, document_type=doc.document_type, site_id=doc.site_id)
     if not route:
         raise ValueError("No matching approval route. Create a route or pass route_id.")
@@ -782,13 +754,14 @@ def approve_document(
     doc: Document,
     principal: Principal,
     *,
+    storage: Storage,
     comment: str | None = None,
 ) -> Document:
     if doc.locked or doc.status == "approved":
         raise ValueError("Document is already approved and locked")
     if doc.status != "in_review":
         raise ValueError("Only documents in review can be approved")
-    verify_version(current_version(doc))
+    verify_version(storage, current_version(doc))
     step = current_pending_step(doc)
     if not step:
         raise ValueError("No pending approval step")
