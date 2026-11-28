@@ -112,6 +112,12 @@ Set `LOGENTRA_ROLE` when starting `python run.py` to choose what the process run
 | `web` | HTTP only |
 | `worker` | Outbound webhook delivery, handover reminders and escalations, and the MQTT subscriber when enabled. Runs until SIGINT or SIGTERM without serving HTTP or opening a browser. |
 
+### Local attachment storage
+
+`LOGENTRA_STORAGE` defaults to `local`, the supported backend. `LOGENTRA_ATTACHMENTS_DIR` defaults to `data/attachments`. Relative directories resolve from the app root, and the app creates the directory at startup. In Compose, use a directory under the shared `/app/data` volume or mount the same directory in both the app and recovery services.
+
+Existing attachment keys resolve inside this directory with their existing subdirectories. When pointing the app at a different directory, preserve the attachment tree under that directory. The recovery CLI uses the configured directory unless you pass `--attachments`.
+
 `LOGENTRA_WORKERS` controls the number of Uvicorn processes for HTTP. With `LOGENTRA_ROLE=all` and more than one Uvicorn process, each process starts its own copy of the background jobs. Production Compose keeps the `all` role.
 
 ## Try the sample backup

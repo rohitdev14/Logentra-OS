@@ -20,6 +20,7 @@ from logentra_server.models import Area, Equipment, QRRetiredCode, Reading, Read
 from logentra_server.phone_auth import PHONE_COOKIE, phone_principal, require_csrf
 from logentra_server.routers.auth_users import LoginIn, verify_login
 from logentra_server import sitetime
+from logentra_server.storage import InvalidStorageKey, Storage
 from logentra_server.upload_safety import preview_mime
 from logentra_server.utils import utcnow_iso
 
@@ -163,7 +164,7 @@ class PhoneLogin(LoginIn):
     keep_signed_in: bool = True
 
 
-def build_router(get_db, get_principal, settings):
+def build_router(get_db, get_principal, settings, attachment_storage: Storage):
     router = APIRouter(tags=["qr"])
 
     @router.get("/api/equipment/qr-labels")
@@ -324,8 +325,8 @@ def build_router(get_db, get_principal, settings):
         principal = phone_principal(db, request, settings, write=True)
         principal.require("readings.write")
         equipment = current_equipment(db, code, principal)
-        return await qr_entries.save_entry(db, equipment, principal, settings, entry_id, values, note,
-                                           entered_by, photos)
+        return await qr_entries.save_entry(db, equipment, principal, settings, attachment_storage,
+                                           entry_id, values, note, entered_by, photos)
 
     @router.post("/api/qr/{code}/work-order", status_code=201)
     def raise_work_order(code: str, body: PhoneWorkOrder, request: Request, db: Session = Depends(get_db)):
@@ -357,9 +358,12 @@ def build_router(get_db, get_principal, settings):
         if not photo:
             raise HTTPException(404, "Photo not found")
         equipment_for(db, photo.equipment_id, principal)
-        path = qr_entries.attachment_path(photo.storage_path, "readings")
-        if not path.is_file():
-            raise HTTPException(404, "Photo not found")
+        try:
+            path = attachment_storage.safe_key(photo.storage_path, category="readings")
+            if not attachment_storage.exists(photo.storage_path, category="readings"):
+                raise HTTPException(404, "Photo not found")
+        except InvalidStorageKey as exc:
+            raise HTTPException(404, "Photo not found") from exc
         mime = preview_mime(path, photo.content_type, qr_entries.PHOTO_TYPES.values())
         return FileResponse(path, media_type=mime or "application/octet-stream", filename=photo.filename,
                             content_disposition_type="inline" if mime else "attachment")
@@ -370,8 +374,7 @@ def build_router(get_db, get_principal, settings):
         totals = {}
         for label, folder in (("reading_photos", "readings"), ("shift_log_attachments", "shiftlog"),
                               ("documents", "documents")):
-            root = qr_entries.ATTACHMENTS / folder
-            sizes = [file.stat().st_size for file in root.rglob("*") if file.is_file() and not file.is_symlink()]
+            sizes = [attachment_storage.size(key) for key in attachment_storage.files(folder)]
             totals[label] = {"files": len(sizes), "bytes": sum(sizes)}
         return totals
 

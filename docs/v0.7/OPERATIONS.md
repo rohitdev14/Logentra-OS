@@ -6,6 +6,8 @@ Back up the database and attachment tree together before starting an upgrade. In
 
 Use the usual startup command to apply pending revisions with the default `LOGENTRA_AUTO_MIGRATE=on`. With `LOGENTRA_AUTO_MIGRATE=off`, run `python run.py migrate` before starting the app. Use `python run.py migrate --check` to see the current and head revisions without applying migrations. The production Compose overlay handles the upgrade through its one-shot `migrate` service and starts the app after that service succeeds.
 
+On a later production upgrade, if the one-shot service already exited successfully, rerun it with `docker compose -f compose.yaml -f compose.production.yaml --profile postgres run --rm migrate` before starting the upgraded app.
+
 Alembic applies the 0.7 revisions in order.
 
 | Revision | Changes |

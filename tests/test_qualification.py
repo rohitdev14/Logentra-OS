@@ -120,17 +120,14 @@ def test_replay_preserves_event_and_requires_dead_state(client):
     assert any(row["action"] == "replay" for row in client.get("/api/audit").json())
 
 
-def test_sqlite_audit_and_upload_reconciliation(client, monkeypatch, tmp_path):
+def test_sqlite_audit_and_upload_reconciliation(client):
     from logentra_server import documents
-    from scripts import verify_evidence
 
-    monkeypatch.setattr(documents, "ROOT", tmp_path)
-    monkeypatch.setattr(documents, "ATTACH_DIR", tmp_path / "attachments")
-    monkeypatch.setattr(verify_evidence, "ATTACH_DIR", tmp_path / "attachments")
+    storage = client.app.state.storage
     assert client.post("/api/equipment", json={"values": {"fld_tag": "AUDIT"}}).status_code == 201
     factory = client.app.state.SessionLocal
     with factory() as db:
-        initial = inspect_evidence(db)["audit_sha256"]
+        initial = inspect_evidence(db, storage)["audit_sha256"]
     for statement in ("UPDATE audit_log SET detail = 'changed'", "DELETE FROM audit_log"):
         with pytest.raises(DBAPIError), factory.begin() as db:
             db.execute(text(statement))
@@ -138,9 +135,9 @@ def test_sqlite_audit_and_upload_reconciliation(client, monkeypatch, tmp_path):
                          files={"file": ("sheet.txt", b"orphan test")})
     assert failed.status_code == 400
     with factory() as db:
-        assert inspect_evidence(db)["audit_sha256"] == initial
-        documents.store_file("interrupted", 1, "sheet.txt", b"unreferenced")
-        result = inspect_evidence(db)
+        assert inspect_evidence(db, storage)["audit_sha256"] == initial
+        documents.store_file(storage, "interrupted", 1, "sheet.txt", b"unreferenced")
+        result = inspect_evidence(db, storage)
         assert len(result["unreferenced_files"]) == 1
         assert result["document_issues"] == []
 
@@ -258,14 +255,14 @@ def test_sustained_webhook_delivery(db_url):
 
 def test_failed_file_publication_removes_staging(monkeypatch, tmp_path):
     from logentra_server import documents
+    from logentra_server import storage as storage_module
 
-    monkeypatch.setattr(documents, "ROOT", tmp_path)
-    monkeypatch.setattr(documents, "ATTACH_DIR", tmp_path / "attachments")
+    storage = storage_module.LocalStorage(tmp_path)
 
     def fail_link(_source, _destination):
         raise OSError("synthetic publication failure")
 
-    monkeypatch.setattr(documents.os, "link", fail_link)
+    monkeypatch.setattr(storage_module.os, "link", fail_link)
     with pytest.raises(OSError, match="synthetic publication failure"):
-        documents.store_file("failed", 1, "sample.txt", b"draft")
-    assert not any(path.is_file() for path in (tmp_path / "attachments").rglob("*"))
+        documents.store_file(storage, "failed", 1, "sample.txt", b"draft")
+    assert not any(path.is_file() for path in tmp_path.rglob("*"))

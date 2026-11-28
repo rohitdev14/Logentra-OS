@@ -39,11 +39,9 @@ def rostered_shift(client, *, with_incoming=True):
     return current
 
 
-def test_roster_repeat_and_append_only_log(client, tmp_path, monkeypatch):
-    from logentra_server import qr_entries
+def test_roster_repeat_and_append_only_log(client):
     from logentra_server.shift_models import ShiftLogEntry
 
-    monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path)
     shift = rostered_shift(client)
     path = f"/shifts/{shift['id']}/entries"
     original = post(client, path, {"title":"Pump vibration", "body":"Check bearings", "author_name":"R. Operator"})

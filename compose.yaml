@@ -5,6 +5,8 @@ services:
     environment:
       LOGENTRA_PROFILE: production
       LOGENTRA_TIMEZONE: ${LOGENTRA_TIMEZONE:-UTC}
+      LOGENTRA_STORAGE: ${LOGENTRA_STORAGE:-local}
+      LOGENTRA_ATTACHMENTS_DIR: ${LOGENTRA_ATTACHMENTS_DIR:-data/attachments}
       LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:-sqlite:////app/data/logentra.db}
       LOGENTRA_CORS_ORIGINS: ${LOGENTRA_CORS_ORIGINS:-}
     ports:
@@ -35,6 +37,8 @@ services:
     entrypoint: ["python", "scripts/recovery.py"]
     command: ["--help"]
     environment:
+      LOGENTRA_STORAGE: ${LOGENTRA_STORAGE:-local}
+      LOGENTRA_ATTACHMENTS_DIR: ${LOGENTRA_ATTACHMENTS_DIR:-data/attachments}
       LOGENTRA_DATABASE_URL: ${LOGENTRA_DATABASE_URL:-sqlite:////app/data/logentra.db}
     volumes:
       - logentra-data:/app/data

@@ -5,14 +5,16 @@ import argparse
 import hashlib
 import hmac
 import json
+from pathlib import Path
 
 from logentra_server.config import load_settings
 from logentra_server.database import make_engine, make_session_factory
-from logentra_server.documents import ATTACH_DIR, verify_version
+from logentra_server.documents import verify_version
 from logentra_server.models import AuditLog, DocumentVersion
+from logentra_server.storage import InvalidStorageKey, LocalStorage, Storage
 
 
-def inspect_evidence(db):
+def inspect_evidence(db, storage: Storage):
     digest = hashlib.sha256()
     entries = 0
     for entry in db.query(AuditLog).order_by(AuditLog.id).yield_per(500):
@@ -24,23 +26,21 @@ def inspect_evidence(db):
     issues = []
     for version in db.query(DocumentVersion).yield_per(100):
         try:
-            path = verify_version(version)
+            path = verify_version(storage, version)
         except ValueError as exc:
             issues.append({"version": version.id, "error": str(exc)})
         else:
             referenced.add(path)
     # Corrupt but referenced files are evidence. Report them above and exclude them from orphan results.
-    from logentra_server.documents import absolute_path
-
     for (storage_path,) in db.query(DocumentVersion.storage_path).yield_per(500):
         try:
-            referenced.add(absolute_path(storage_path))
-        except ValueError:
+            referenced.add(storage.safe_key(storage_path, category="documents"))
+        except InvalidStorageKey:
             continue
-    root = ATTACH_DIR.resolve()
     orphans = sorted(
-        str(path.relative_to(root)) for path in root.rglob("*")
-        if path.is_file() and path.resolve() not in referenced
+        str(Path(key).relative_to("documents"))
+        for key in storage.files("documents", include_symlinks=True)
+        if storage.safe_key(key, category="documents") not in referenced
     )
     return {"audit_rows": entries, "audit_sha256": digest.hexdigest(), "document_issues": issues,
             "unreferenced_files": orphans}
@@ -50,10 +50,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-audit-sha256", help="Compare with a trusted fingerprint of the same snapshot")
     args = parser.parse_args()
-    engine = make_engine(load_settings().sqlalchemy_url)
+    settings = load_settings()
+    storage = LocalStorage(settings.attachments_dir)
+    engine = make_engine(settings.sqlalchemy_url)
     try:
         with make_session_factory(engine)() as db:
-            result = inspect_evidence(db)
+            result = inspect_evidence(db, storage)
     finally:
         engine.dispose()
     matches = not args.expected_audit_sha256 or hmac.compare_digest(args.expected_audit_sha256, result["audit_sha256"])

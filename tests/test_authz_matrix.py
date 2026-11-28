@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from logentra_server import authz, demo, documents, qr_entries
+from logentra_server import authz, demo
 from logentra_server.app import create_app
 from logentra_server.auth import BUILTIN_ROLES, create_session, hash_password, hash_token, new_api_key, principal_from_user
 from logentra_server.config import Settings
@@ -44,11 +44,9 @@ def add_shift(db, suffix, site, area, lead, now):
 @pytest.fixture(scope="module")
 def matrix(tmp_path_factory):
     root = tmp_path_factory.mktemp("authz-matrix")
-    patch = pytest.MonkeyPatch()
-    patch.setattr(documents, "ROOT", root)
-    patch.setattr(documents, "ATTACH_DIR", root / "attachments" / "documents")
-    patch.setattr(qr_entries, "ATTACHMENTS", root / "attachments")
-    app = create_app(Settings(database_url=f"sqlite:///{root / 'matrix.db'}", auth_mode="users"))
+    app = create_app(Settings(
+        database_url=f"sqlite:///{root / 'matrix.db'}", auth_mode="users", attachments_dir=root / "attachments",
+    ))
     password = token_urlsafe(16)
     password_hash = hash_password(password)
     now = datetime.now(timezone.utc)
@@ -56,7 +54,7 @@ def matrix(tmp_path_factory):
     headers = {"anonymous": {}}
     phones = {}
     with app.state.SessionLocal() as db:
-        demo.load_demo(db)
+        demo.load_demo(db, storage=app.state.storage)
         roles = {role.name: role for role in db.query(Role)}
         for actor in (*BUILTIN_ROLES, "scoped"):
             role = roles["technician" if actor == "scoped" else actor]
@@ -172,7 +170,6 @@ def matrix(tmp_path_factory):
     yield client, headers, password, phones, objects
     client.close()
     app.state.engine.dispose()
-    patch.undo()
 
 
 def sample(schema, components):

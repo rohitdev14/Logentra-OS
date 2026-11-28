@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from logentra_server.sitetime import INVALID_TIMEZONE
 
 ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_ATTACHMENTS_DIR = Path("data/attachments")
 DEFAULT_CONFIG = ROOT / "config.yaml"
 EXAMPLE_CONFIG = ROOT / "config.example.yaml"
 
@@ -69,6 +70,8 @@ class Settings(BaseModel):
     # open = single-user / standalone (no login). users = require login or a user-bound API key.
     auth_mode: Literal["open", "users"] = "open"
     api_docs: Literal["on", "off"] = "on"
+    storage: Literal["local"] = "local"
+    attachments_dir: Path = DEFAULT_ATTACHMENTS_DIR
     role: Literal["all", "web", "worker"] = "all"
     auto_migrate: Literal["on", "off"] = "on"
     phone_session_days: int = Field(7, ge=1, le=30)
@@ -161,6 +164,8 @@ _ENV_FIELDS: list[tuple[str, tuple[str, ...], str]] = [
     ("api_key", ("LOGENTRA_API_KEY", "LOGBOOK_API_KEY"), "str"),
     ("auth_mode", ("LOGENTRA_AUTH_MODE", "LOGBOOK_AUTH_MODE"), "auth"),
     ("api_docs", ("LOGENTRA_API_DOCS",), "str"),
+    ("storage", ("LOGENTRA_STORAGE",), "str"),
+    ("attachments_dir", ("LOGENTRA_ATTACHMENTS_DIR",), "str"),
     ("role", ("LOGENTRA_ROLE",), "str"),
     ("auto_migrate", ("LOGENTRA_AUTO_MIGRATE",), "str"),
     ("session_days", ("LOGENTRA_SESSION_DAYS", "LOGBOOK_SESSION_DAYS"), "int"),

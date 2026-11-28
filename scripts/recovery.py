@@ -16,6 +16,13 @@ from tempfile import TemporaryDirectory
 
 from sqlalchemy.engine import make_url
 
+# Keep the existing direct script entry point usable without a package install.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from logentra_server.config import load_settings
+from logentra_server.storage import LocalStorage
+
 
 def check_tree(root: Path) -> None:
     if root.is_symlink() or any(
@@ -248,7 +255,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("backup", "restore"))
     parser.add_argument("bundle", type=Path)
-    parser.add_argument("--attachments", type=Path, default=Path("data/attachments"))
+    parser.add_argument("--attachments", type=Path, help="Override the configured attachment directory")
     parser.add_argument(
         "--owner",
         default=None,
@@ -266,11 +273,14 @@ def main() -> None:
     if not database_url:
         parser.error("Set LOGENTRA_DATABASE_URL explicitly")
     try:
+        attachments = args.attachments
+        if attachments is None:
+            attachments = LocalStorage(load_settings().attachments_dir).root
         if args.operation == "backup":
-            backup(database_url, args.attachments, args.bundle)
+            backup(database_url, attachments, args.bundle)
             print(f"Backup written to {args.bundle}")
         else:
-            result = restore(args.bundle, database_url, args.attachments, owner=args.owner, replace=args.replace)
+            result = restore(args.bundle, database_url, attachments, owner=args.owner, replace=args.replace)
             print(f"Restored into {result['restored']}")
             for name, path in result["kept"].items():
                 print(f"Previous {name} kept at {path}")

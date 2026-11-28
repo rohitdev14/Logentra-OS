@@ -187,3 +187,37 @@ def test_cli_prints_message_instead_of_traceback(tmp_path):
     assert run.returncode == 2
     assert "No backup found" in run.stderr
     assert "Traceback" not in run.stderr
+
+
+def test_cli_uses_configured_attachment_root_for_backup_and_restore(tmp_path):
+    import sqlite3
+    import subprocess
+    import sys
+
+    source_db = tmp_path / "source.db"
+    with sqlite3.connect(source_db) as db:
+        db.execute("CREATE TABLE evidence (id INTEGER)")
+    source_tree = tmp_path / "attachment-source"
+    evidence = _write_restricted_tree(source_tree)
+    bundle = tmp_path / "backup"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "recovery.py"
+    env = {
+        **os.environ,
+        "LOGENTRA_DATABASE_URL": f"sqlite:///{source_db}",
+        "LOGENTRA_ATTACHMENTS_DIR": str(source_tree),
+        "LOGENTRA_STORAGE": "local",
+    }
+    saved = subprocess.run([sys.executable, str(script), "backup", str(bundle)],
+                           cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert saved.returncode == 0, saved.stderr
+
+    restored_tree = tmp_path / "attachment-restored"
+    restored_db = tmp_path / "restored.db"
+    env.update(LOGENTRA_ATTACHMENTS_DIR=str(restored_tree), LOGENTRA_DATABASE_URL=f"sqlite:///{restored_db}")
+    restored = subprocess.run(
+        [sys.executable, str(script), "restore", str(bundle), "--owner", f"{os.getuid()}:{os.getgid()}"],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+    )
+    assert restored.returncode == 0, restored.stderr
+    assert (restored_tree / evidence.relative_to(source_tree)).read_bytes() == evidence.read_bytes()
+    assert restored_db.is_file()

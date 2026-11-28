@@ -11,7 +11,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from logentra_server import authz
-from logentra_server import qr_entries, service, shifts
+from logentra_server import service, shifts
 from logentra_server.documents import safe_filename
 from logentra_server.http_security import read_upload
 from logentra_server.models import Equipment, Punch, Reading, WorkOrder
@@ -19,6 +19,7 @@ from logentra_server.pagination import count_rows, page_result
 from logentra_server.shift_models import (
     Handover, HandoverItem, Shift, ShiftLogAttachment, ShiftLogCategory, ShiftLogComment, ShiftLogEntry,
 )
+from logentra_server.storage import InvalidStorageKey, Storage
 from logentra_server.upload_safety import detect_upload_mime
 from logentra_server.utils import uid, utcnow_iso
 
@@ -152,7 +153,7 @@ def entry_data(db, shift, body, principal):
             "after_handover": after_handover}
 
 
-def build_router(get_db, get_principal, settings):
+def build_router(get_db, get_principal, settings, storage: Storage):
     router = APIRouter(prefix="/api", tags=["shift log"])
 
     def reader(principal=Depends(get_principal)):
@@ -285,34 +286,36 @@ def build_router(get_db, get_principal, settings):
         identifier = uid("shift_file")
         now = utcnow_iso()
         relative = f"shiftlog/{now[:4]}/{now[5:7]}/{identifier}"
-        path = qr_entries.attachment_path(relative, "shiftlog")
-        path.parent.mkdir(parents=True, exist_ok=True)
         name = actor(principal)
         row = ShiftLogAttachment(id=identifier, entry_id=entry_id, equipment_id=entry.equipment_id,
                                  size=len(data), filename=safe_filename(file.filename or "attachment"),
                                  content_type=mime, sha256=sha256(data).hexdigest(),
                                  storage_path=relative, uploaded_by=name, user_id=principal.user_id, created_at=now)
-        with path.open("xb") as target:
-            try:
-                target.write(data)
-                target.flush()
-                db.add(row)
-                add_audit(db, principal, name, "shiftlog.attachment_added", entry, {"attachment_id": identifier})
-                db.flush()
-                result = shifts.columns(row)
-                db.commit()
-            except Exception:
-                path.unlink(missing_ok=True)
-                raise
+        try:
+            storage.put(relative, data, category="shiftlog")
+        except InvalidStorageKey as exc:
+            raise HTTPException(404, "Attachment not found") from exc
+        try:
+            db.add(row)
+            add_audit(db, principal, name, "shiftlog.attachment_added", entry, {"attachment_id": identifier})
+            db.flush()
+            result = shifts.columns(row)
+            db.commit()
+        except Exception:
+            storage.delete(relative)
+            raise
         return result
 
     @router.get("/shift-log-attachments/{identifier}")
     def download(identifier: str, db: Session = Depends(get_db), principal=Depends(reader)):
         row = shifts.load(db, ShiftLogAttachment, identifier, "Attachment")
         entry_for(db, row.entry_id, principal)
-        path = qr_entries.attachment_path(row.storage_path, "shiftlog")
-        if not path.is_file():
-            raise HTTPException(404, "Attachment not found")
+        try:
+            path = storage.safe_key(row.storage_path, category="shiftlog")
+            if not storage.exists(row.storage_path, category="shiftlog"):
+                raise HTTPException(404, "Attachment not found")
+        except InvalidStorageKey as exc:
+            raise HTTPException(404, "Attachment not found") from exc
         return FileResponse(path, media_type=row.content_type, filename=row.filename,
                             content_disposition_type="attachment")
 

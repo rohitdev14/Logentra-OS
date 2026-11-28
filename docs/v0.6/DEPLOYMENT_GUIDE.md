@@ -32,7 +32,7 @@ The application image is built from `python:3.12.16-slim-trixie` and runs `apt-g
 ## Upgrade from v0.5
 
 1. Stop application and ingestion writers. Create a paired backup according to the recovery guide.
-2. Rehearse the upgrade against a restore. Apply migrations with one process via python -m alembic upgrade head or normal startup.
+2. Rehearse the upgrade against a restore. Apply migrations with one process using `python run.py migrate` or normal startup.
 3. Verify migration head 0007_performance and check equipment, readings, records, document downloads and work orders.
 4. Reissue API keys without expiry when moving to production. Verify webhook and broker configuration.
 5. Resume ingestion after verification. For rollback, use the paired pre-upgrade backup and v0.5 checkpoint.

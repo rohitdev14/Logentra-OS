@@ -48,10 +48,7 @@ def test_code_rotation_and_label_sheet(client):
     assert client.get("/q/ZZZZZZZZ").status_code == 404
 
 
-def test_quick_entry_photo_and_idempotency(client, tmp_path, monkeypatch):
-    from logentra_server import qr_entries
-
-    monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path)
+def test_quick_entry_photo_and_idempotency(client):
     _, code = equipment(client, count=7)
     assert client.get(f"/api/qr/{code}").json()["layout"] == "table"
     assert client.get(f"/q/{code}").status_code == 200
@@ -166,12 +163,10 @@ def test_demo_equipment_name_and_form_layout(client):
     assert "<p>Pump</p>" in client.get(f"/q/{code}").text
 
 
-def test_quick_entry_and_photos_respect_area_scope(client, monkeypatch, tmp_path):
-    from logentra_server import qr_entries
+def test_quick_entry_and_photos_respect_area_scope(client):
     from logentra_server.auth import create_session
     from logentra_server.models import Area, Role, Site, User
 
-    monkeypatch.setattr(qr_entries, "ATTACHMENTS", tmp_path)
     eq_id, code = equipment(client)
     now = utcnow_iso()
     headers = {}

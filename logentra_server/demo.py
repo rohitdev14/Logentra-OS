@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from logentra_server import service, sitetime
+from logentra_server.storage import Storage
 from logentra_server.utils import utcnow_iso
 
 
@@ -63,7 +64,7 @@ def _simple_pdf(title: str, lines: list[str]) -> bytes:
     return bytes(out)
 
 
-def load_demo(db: Session, *, actor: str = "ui", user_id: str | None = None) -> dict:
+def load_demo(db: Session, *, storage: Storage, actor: str = "ui", user_id: str | None = None) -> dict:
     service.clear_all(db, actor=actor)
     today = sitetime.today_local(sitetime.zone_for_site(db, "site_northbrook"))
     start = _add_days(today, -20)
@@ -327,6 +328,7 @@ def load_demo(db: Session, *, actor: str = "ui", user_id: str | None = None) -> 
     ])
     doc = docs.create_document(
         db,
+        storage=storage,
         title="P-101 Commissioning Test Sheet — Rev B",
         filename="test-sheet-P-101-revB.pdf",
         data=pdf,
@@ -336,7 +338,7 @@ def load_demo(db: Session, *, actor: str = "ui", user_id: str | None = None) -> 
         record_id="rec_demo_1",
         actor="Amir Rahman",
     )
-    docs.submit_document(db, doc, route_id=comm.id, actor="Amir Rahman")
+    docs.submit_document(db, doc, storage=storage, route_id=comm.id, actor="Amir Rahman")
 
     # A second document still in draft so the submit panel can be demonstrated
     photo_pdf = _simple_pdf("AHU-12 filter inspection photos (index, fictional)", [
@@ -345,6 +347,7 @@ def load_demo(db: Session, *, actor: str = "ui", user_id: str | None = None) -> 
     ])
     docs.create_document(
         db,
+        storage=storage,
         title="AHU-12 filter inspection photos",
         filename="ahu-12-filter-photos.pdf",
         data=photo_pdf,
